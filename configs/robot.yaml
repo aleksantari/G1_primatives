@@ -1,0 +1,27 @@
+# Robot / DDS transport configuration. The domain+interface live ONLY here.
+dds:
+  # Real robot: domain 0 + the NIC on this workstation wired to the G1 PC2.
+  # unitree_mujoco sim: domain 1, interface "lo".
+  domain_id: 0
+  interface: ""          # USER-PROVIDED: e.g. "enp5s0" (NIC to PC2). "" = default.
+
+# Control mode for the arm controller:
+#   debug  -> publishes rt/lowcmd, locks every non-arm joint at current q
+#             (correct for the suspended, back-plate-mounted robot)
+#   motion -> publishes rt/arm_sdk (weight via kNotUsedJoint0)
+#   sim    -> debug topics against a DDS sim; bypasses the velocity clip
+mode: debug
+
+model:
+  # Primary kinematic model (full Dex3 hands + head d435 + palm frames).
+  urdf: assets/g1/g1_body29_dex3.urdf
+  # Locked leg+waist reference posture (suspended robot). 15 values:
+  # 6 left leg, 6 right leg, [waist_yaw, waist_roll, waist_pitch]. All zero
+  # = nominal upright; refine if the mount tilts the pelvis.
+  locked_reference_deg: [0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0]
+
+# End-effector selection (factory registry key): dex3 | dex1
+hand: dex3
+
+# Conservative arm velocity limit (rad/s) used until Phase-5 hardware sign-off.
+arm_velocity_limit: 20.0

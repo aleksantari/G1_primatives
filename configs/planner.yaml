@@ -1,0 +1,25 @@
+# Motion planning + retiming. Switching planner is a one-line change here.
+planner: cartesian          # cartesian | curobo
+
+# Per-waypoint dual-arm IK + SE(3) interpolation (planner v1).
+cartesian:
+  samples_per_meter: 200    # SE(3) interp density along translation.
+  min_samples: 20           # floor on samples between two waypoints.
+  rot_samples_per_rad: 30
+  continuity_jump_rad: 0.35 # reject if consecutive IK q jump exceeds this (branch flip).
+
+# cuRobo adapter (planner v2, Phase 7 -- not installed in this pass).
+curobo:
+  enabled: false
+  use_ruckig_retime: true   # cuRobo trajectories are already timed; compare both.
+
+# Ruckig retiming limits (per arm joint). 14-vector or scalar broadcast.
+retimer:
+  control_hz: 250.0
+  max_velocity: 2.0         # rad/s
+  max_acceleration: 5.0     # rad/s^2
+  max_jerk: 30.0            # rad/s^3
+
+executor:
+  tracking_error_abort_rad: 0.20   # hold position if |q_cmd - q_meas| exceeds this.
+  startup_ramp_s: 3.0

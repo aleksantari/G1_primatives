@@ -1,0 +1,31 @@
+# Pick-and-place task parameters. All poses in the pelvis frame (meters/radians).
+home_q14_deg: [15, 10, 0, 30, 0, 0, 0,   15, -10, 0, 30, 0, 0, 0]  # L7 then R7
+
+# Table plane in the pelvis frame. Calibrate empirically (script 05) -- do NOT
+# assume z-up == table-up; the back-plate mount may tilt the pelvis.
+table:
+  height_z: 0.05           # USER-PROVIDED / calibrated table-top height (m).
+  normal: [0.0, 0.0, 1.0]  # pelvis-frame table normal (calibrated).
+
+# Workspace box (pelvis frame) -- Cartesian goals outside are rejected pre-plan.
+# z spans below the pelvis: the suspended pelvis sits above the table, so EE z is
+# often negative. Calibrate to the real table volume on hardware.
+workspace_box:
+  min: [0.05, -0.45, -0.20]
+  max: [0.65,  0.45,  0.60]
+
+grasp:
+  hover_offset_z: 0.10     # pregrasp hover above the block top (m).
+  descend_clearance: 0.005 # stop this far above the grasp point.
+  lift_height: 0.15        # vertical lift after grasp (m).
+  approach_axis: [0, 0, -1]  # top-down approach (pelvis frame).
+
+place:
+  # Target place pose (4x4 row-major) or xyz+rpy; here xyz+rpy in pelvis frame.
+  xyz: [0.40, -0.20, 0.12]
+  rpy: [3.14159, 0.0, 0.0]   # palm-down
+
+arm: "left"                 # which arm executes pick-place; other holds home.
+retries:
+  max_perception: 3
+  max_grasp: 2

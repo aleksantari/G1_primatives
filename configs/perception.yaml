@@ -1,0 +1,19 @@
+# AprilTag block detection.
+tag:
+  family: "tag36h11"
+  size_m: 0.030            # USER-PROVIDED: printed tag black-square edge length (m).
+  # Per-tag rigid offset from the tag frame to the block geometric center,
+  # expressed in the tag frame (x,y,z meters + rpy radians). Default: block
+  # center sits half a block-height below the tag face along -z_tag.
+  tag_to_block:
+    xyz: [0.0, 0.0, -0.02]
+    rpy: [0.0, 0.0, 0.0]
+  # Map of tag id -> semantic name (optional). Unlisted ids are ignored.
+  ids:
+    0: "block"
+
+filter:
+  median_frames: 5         # median over N frames before a pose is accepted.
+  max_stale_s: 0.5         # reject poses older than this.
+  max_reproj_err: 5.0      # pupil-apriltags decision_margin / ambiguity gate.
+  min_decision_margin: 30.0

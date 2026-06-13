@@ -1,0 +1,31 @@
+# End-effector grasp presets + verification thresholds.
+# Dex3 joint order per hand: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1].
+# PRESET VALUES ARE PLACEHOLDERS -- tune on hardware (HARDWARE_TODO): command each
+# preset with 04_hand_check.py and read back q to confirm open/closed geometry +
+# closing direction signs.
+dex3:
+  presets:
+    open:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    power_close: [0.8, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2]
+    pinch:       [0.6, 0.9, 0.9, 0.0, 0.0, 0.9, 0.9]
+  verify:
+    stall_margin_rad: 0.15   # fingers stalled this far short of the close target => object held
+    still_dq: 0.05           # |dq| below this => motion settled
+    tau_threshold: 0.30      # |tau_est| above on any joint => contact
+    press_threshold: 20.0    # press_sensor pressure above => contact
+    settle_s: 0.30
+    close_timeout_s: 2.0
+    open_timeout_s: 1.5
+    close_preset: power_close
+
+dex1:
+  presets:
+    open: 5.0                # motor position (rad) at fully open
+    close: 0.0
+  verify:
+    stall_margin: 0.5        # stopped this far short of close target => object held
+    still_dq: 0.05
+    tau_threshold: 0.5
+    settle_s: 0.30
+    close_timeout_s: 1.5
+    open_timeout_s: 1.5

@@ -1,0 +1,30 @@
+# Head RealSense (d435) intrinsics + extrinsics.
+#
+# Extrinsics: T_pelvis_camera is NOT hand-measured here -- it is derived by
+# forward kinematics to the URDF `d435_link` frame (transforms.py), since the
+# camera is a fixed joint on torso_link and the waist is locked. The optional
+# `extrinsic_correction` below is left-multiplied onto that FK result to absorb
+# any hand-eye refinement without editing the URDF.
+
+extrinsics:
+  source: "urdf:d435_link"     # FK frame used as the camera body frame.
+  # AprilTag returns pose in the OPTICAL frame (z forward, x right, y down).
+  # The URDF d435_link is a body/mount frame; apply the standard body->optical
+  # rotation. Set to "identity" if your d435_link is already optical-convention.
+  body_to_optical: "ros"       # "ros" => [[0,0,1],[-1,0,0],[0,-1,0]] ; or "identity"
+  # 4x4 row-major correction (pelvis-frame), left-multiplied onto T_pelvis_d435.
+  extrinsic_correction:
+    - [1, 0, 0, 0]
+    - [0, 1, 0, 0]
+    - [0, 0, 1, 0]
+    - [0, 0, 0, 1]
+
+# USER-PROVIDED intrinsics (from the image server / realsense). Pixels.
+intrinsics:
+  width: 640
+  height: 480
+  fx: 0.0
+  fy: 0.0
+  cx: 0.0
+  cy: 0.0
+  distortion: [0.0, 0.0, 0.0, 0.0, 0.0]   # k1,k2,p1,p2,k3

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g1_classical_manip"
+version = "0.1.0"
+description = "Classical pick/place/handover pipeline for the suspended Unitree G1 (29-DoF, Dex3-1)."
+requires-python = ">=3.10,<3.11"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+
+# NOTE: this project is normally run inside the `g1_classical_manip` conda env
+# (cloned from `tv`), which already provides pinocchio, casadi, meshcat and
+# unitree_sdk2py. The pins below exist to stop `pip install` from re-triggering
+# the numpy-2 ABI break that breaks pinocchio, and the rerun/numpy conflict.
+dependencies = [
+    "numpy>=1.24,<2",          # pinocchio 3.1.0 is built against numpy 1.x
+    "rerun-sdk==0.20.1",       # 0.29 requires numpy>=2; keep 1.x-compatible
+    "ruckig>=0.14",
+    "pupil-apriltags>=1.0",
+    "opencv-python",
+    "pyyaml",
+    "pyzmq",
+    "tyro",
+    "casadi",
+    "pin",                     # pinocchio
+    "meshcat",
+    "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git",
+]
+
+[tool.setuptools]
+packages = ["g1_classical_manip"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
