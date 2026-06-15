@@ -20,7 +20,7 @@ import yaml
 
 from g1_classical_manip.robot_control.robot_arm_ik import G1_29_ArmIK
 from g1_classical_manip.perception.transforms import Frames
-from g1_classical_manip.perception.apriltag_block import AprilTagBlockDetector
+from g1_classical_manip.perception.hub import PerceptionHub
 from g1_classical_manip.motion.cartesian_planner import CartesianPlanner
 from g1_classical_manip.motion.curobo_planner import CuRoboPlanner
 from g1_classical_manip.motion.executor import Executor
@@ -29,8 +29,8 @@ ARM_IK = {"G1_29": G1_29_ArmIK}
 PLANNERS = {"cartesian": CartesianPlanner, "curobo": CuRoboPlanner}
 
 _CONFIG_FILES = {
-    "robot": "robot.yaml", "camera": "camera.yaml", "perception": "perception.yaml",
-    "planner": "planner.yaml", "hands": "hands.yaml",
+    "robot": "robot.yaml", "camera": "camera.yaml", "cameras": "cameras.yaml",
+    "perception": "perception.yaml", "planner": "planner.yaml", "hands": "hands.yaml",
     "pick_place": "task_pick_place.yaml", "handover": "task_handover.yaml",
 }
 
@@ -53,7 +53,8 @@ class Robot:
     ik: G1_29_ArmIK
     frames: Frames
     planner: Any
-    perception: AprilTagBlockDetector
+    perception: Any                      # PerceptionHub (delegates AprilTag surface)
+    cameras: Any = None                  # CameraRig (hardware/sim image source)
     arm: Any = None
     hand: Any = None
     executor: Optional[Executor] = None
@@ -79,9 +80,13 @@ def _locked_reference_full_nq(ik_urdf_reference_deg):
 def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
                build_perception: bool = True, dds_domain: int = None,
                dds_interface: str = None, mode: str = None,
-               connect_hand: bool = True) -> Robot:
+               connect_hand: bool = True, connect_camera: bool = None,
+               image_host: str = None) -> Robot:
     # connect_hand=False skips the Dex3/Dex1 controller -- arm + executor only
     # (e.g. arm-only bring-up, or a sim scene without hands).
+    # connect_camera builds the live CameraRig; default = build a camera only when
+    # we want perception AND are connected (so the Isaac smoke / offline tests,
+    # which have no image server, never construct it). Scripts may force it on.
     cfg = load_configs(config_dir)
     robot_cfg = cfg["robot"]
     # optional overrides (e.g. unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
@@ -96,7 +101,8 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     urdf = os.path.join(_REPO_ROOT, robot_cfg["model"]["urdf"])
     locked = _locked_reference_full_nq(robot_cfg["model"].get("locked_reference_deg", []))
     ik = G1_29_ArmIK(urdf_path=urdf, locked_reference=locked)
-    frames = Frames(reduced_robot=ik.reduced_robot, camera_cfg=cfg["camera"])
+    frames = Frames(reduced_robot=ik.reduced_robot, camera_cfg=cfg.get("camera"),
+                    cameras_cfg=cfg.get("cameras"))
 
     planner_name = cfg["planner"].get("planner", "cartesian")
     planner = PLANNERS[planner_name].from_config(ik, cfg["planner"]) \
@@ -105,10 +111,19 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
 
     perception = None
     if build_perception:
-        perception = AprilTagBlockDetector(frames, cfg["perception"], cfg["camera"])
+        perception = PerceptionHub(frames, cfg["perception"],
+                                   cameras_cfg=cfg.get("cameras"),
+                                   camera_cfg=cfg.get("camera"))
 
     robot = Robot(cfg=cfg, ik=ik, frames=frames, planner=planner,
                   perception=perception)
+
+    # live multi-camera RGB source (lazy import; never on the offline test path)
+    if connect_camera is None:
+        connect_camera = connect_dds and build_perception
+    if connect_camera:
+        from g1_classical_manip.image_server.camera_rig import CameraRig
+        robot.cameras = CameraRig.from_config(cfg["cameras"], host=image_host)
 
     if not connect_dds:
         return robot

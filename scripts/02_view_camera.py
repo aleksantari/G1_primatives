@@ -6,28 +6,27 @@ Press q to quit. Needs the image server (teleimager) running on PC2.
 """
 import argparse
 
-import numpy as np
-
 from g1_classical_manip.factory import make_robot
-from g1_classical_manip.image_server.image_client import HeadCamera
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="192.168.123.164")
-    ap.add_argument("--backend", default="teleimager")
     args = ap.parse_args()
     import cv2
 
-    robot = make_robot(connect_dds=False, build_perception=True)
+    # camera backend is config-driven (configs/cameras.yaml); force the rig on
+    # even though we don't connect DDS (perception-only viewer).
+    robot = make_robot(connect_dds=False, build_perception=True,
+                       connect_camera=True, image_host=args.host)
     det = robot.perception.detector
-    cam = HeadCamera(host=args.host, backend=args.backend)
 
     while True:
-        gray = cam.get_gray_frame()
-        if gray is None:
+        rgb = robot.cameras.get_rgb_frame("head")
+        if rgb is None:
             continue
-        bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         for d in det.detect(gray, estimate_tag_pose=False):
             pts = d.corners.astype(int)
             cv2.polylines(bgr, [pts.reshape(-1, 1, 2)], True, (0, 255, 0), 2)

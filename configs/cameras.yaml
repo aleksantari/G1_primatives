@@ -1,0 +1,58 @@
+# Named multi-camera configuration (mirrors unitree_lerobot's cam_config).
+#
+# Extrinsics are NOT hand-measured for the head: T_pelvis_camera is forward
+# kinematics to a URDF link (transforms.py owns this). Per camera:
+#   parent_frame      -- URDF link the camera is rigid to (FK target).
+#   mount             -- constant parent_frame -> camera-body transform.
+#                        "identity" for the head (d435_link IS the camera body).
+#                        {xyz, rpy} or a 4x4 for wrist cameras (no URDF cam link).
+#   body_to_optical   -- "ros" (z fwd, x right, y down) or "identity".
+#   extrinsic_correction -- optional 4x4 pelvis-frame hand-eye refinement.
+# A camera with enabled:false is configured but not streamed by the rig.
+cameras:
+  head:
+    backend: teleimager          # or unitree_lerobot
+    enabled: true
+    parent_frame: d435_link      # fixed joint on torso (URDF line ~593)
+    mount: identity              # head: camera body == d435_link
+    body_to_optical: ros
+    extrinsic_correction:
+      - [1, 0, 0, 0]
+      - [0, 1, 0, 0]
+      - [0, 0, 1, 0]
+      - [0, 0, 0, 1]
+    intrinsics: {width: 640, height: 480, fx: 0.0, fy: 0.0, cx: 0.0, cy: 0.0,
+                 distortion: [0.0, 0.0, 0.0, 0.0, 0.0]}   # USER-PROVIDED
+    image_shape: [480, 640]
+    binocular: false             # single D435 head -> no stereo split
+    zmq_port: 5555               # unitree_lerobot backend
+
+  # HARDWARE_TODO: wrist cameras. The URDF has NO wrist camera link, so `mount`
+  # below is a hand-eye T_wristlink_camera (default identity = WRONG until
+  # measured), OR add fixed left/right_wrist_camera links to the URDF and point
+  # parent_frame at them (preferred -- keeps extrinsics FK-derived). Also: the
+  # teleimager backend has no wrist getters; wrist streaming needs the
+  # unitree_lerobot backend on PC2. Ship disabled until both are resolved.
+  left_wrist:
+    backend: unitree_lerobot
+    enabled: false
+    parent_frame: left_wrist_yaw_link
+    mount: {xyz: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}   # HARDWARE_TODO
+    body_to_optical: ros
+    intrinsics: {width: 640, height: 480, fx: 0.0, fy: 0.0, cx: 0.0, cy: 0.0,
+                 distortion: [0.0, 0.0, 0.0, 0.0, 0.0]}
+    image_shape: [480, 640]
+    binocular: false
+    zmq_port: 5556
+
+  right_wrist:
+    backend: unitree_lerobot
+    enabled: false
+    parent_frame: right_wrist_yaw_link
+    mount: {xyz: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}   # HARDWARE_TODO
+    body_to_optical: ros
+    intrinsics: {width: 640, height: 480, fx: 0.0, fy: 0.0, cx: 0.0, cy: 0.0,
+                 distortion: [0.0, 0.0, 0.0, 0.0, 0.0]}
+    image_shape: [480, 640]
+    binocular: false
+    zmq_port: 5557

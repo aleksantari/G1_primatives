@@ -13,6 +13,23 @@ import numpy as np
 import pinocchio as pin
 
 from g1_classical_manip.perception.transforms import Frames, from_xyz_rpy, se3
+from g1_classical_manip.perception.base import (
+    VisionModel, PerceptionOutput, PoseEstimate)
+
+try:
+    import cv2 as _cv2
+except Exception:
+    _cv2 = None
+
+
+def _to_gray(img: np.ndarray) -> np.ndarray:
+    """RGB (H,W,3) -> grayscale (H,W); pass through if already single-channel."""
+    a = np.asarray(img)
+    if a.ndim == 2:
+        return a
+    if _cv2 is not None:
+        return _cv2.cvtColor(a, _cv2.COLOR_RGB2GRAY)
+    return a.mean(axis=-1).astype(np.uint8)
 
 
 @dataclass
@@ -107,3 +124,55 @@ class AprilTagBlockDetector:
 
     def name_of(self, tag_id: int) -> str:
         return self.id_names.get(tag_id, str(tag_id))
+
+
+class AprilTagVisionModel(VisionModel):
+    """``VisionModel`` adapter around ``AprilTagBlockDetector``. Converts the RGB
+    frame to grayscale, runs the (unchanged) detector + its median/staleness
+    filtering, and maps each ``TagReading`` to a pelvis-frame ``PoseEstimate``.
+
+    The detector's ``block_pose``/``detect``/``detector``/``median_frames`` are
+    re-exposed so the FSM and hardware scripts keep working through the hub."""
+
+    name = "apriltag"
+
+    def __init__(self, frames: Frames, perception_cfg: dict, camera_cfg: dict,
+                 clock=None, spec: Optional[dict] = None):
+        spec = spec or {}
+        self._cam = spec.get("camera", "head")
+        self.det = AprilTagBlockDetector(frames, perception_cfg, camera_cfg, clock=clock)
+
+    def cameras(self) -> List[str]:
+        return [self._cam]
+
+    def process(self, frames: Dict[str, np.ndarray], q14=None) -> PerceptionOutput:
+        out = PerceptionOutput(model=self.name, stamp=self.det._clock(),
+                               source_cams=[self._cam])
+        rgb = frames.get(self._cam)
+        if rgb is None:
+            return out
+        readings = self.det.detect(_to_gray(rgb), q14=q14)
+        for tid, r in readings.items():
+            out.poses.append(PoseEstimate(
+                label=self.det.name_of(tid), T_pelvis_object=r.T_pelvis_block,
+                score=r.decision_margin, source_cam=self._cam,
+                extra={"tag_id": tid}))
+        return out
+
+    # ----- back-compat surface (delegate to the wrapped detector) -----
+    def block_pose(self, tag_id: int) -> Optional[pin.SE3]:
+        return self.det.block_pose(tag_id)
+
+    def detect(self, image: np.ndarray, q14=None) -> Dict[int, TagReading]:
+        return self.det.detect(_to_gray(image), q14=q14)
+
+    def name_of(self, tag_id: int) -> str:
+        return self.det.name_of(tag_id)
+
+    @property
+    def detector(self):
+        return self.det.detector
+
+    @property
+    def median_frames(self) -> int:
+        return self.det.median_frames

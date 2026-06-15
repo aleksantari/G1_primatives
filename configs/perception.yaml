@@ -1,4 +1,11 @@
-# AprilTag block detection.
+# Perception models the PerceptionHub runs each frame (registry keys in
+# perception/registry.py). `camera` selects which rig frame the model consumes;
+# `min_period_s` throttles heavy models below the ~50 Hz frame loop (0 = every
+# frame). Add a 6-DoF pose estimator or grasp model by appending an entry.
+models:
+  - {name: apriltag, camera: head, min_period_s: 0.0}
+
+# AprilTag block detection (params for the `apriltag` model above).
 tag:
   family: "tag36h11"
   size_m: 0.030            # USER-PROVIDED: printed tag black-square edge length (m).

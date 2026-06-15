@@ -10,7 +10,6 @@ import time
 import numpy as np
 
 from g1_classical_manip.factory import make_robot
-from g1_classical_manip.image_server.image_client import HeadCamera
 from g1_classical_manip.tasks import primitives as P
 
 
@@ -19,18 +18,17 @@ def main():
     ap.add_argument("--host", default="192.168.123.164")
     ap.add_argument("--tag", type=int, default=0)
     ap.add_argument("--side", default="left")
-    ap.add_argument("--backend", default="teleimager")
     args = ap.parse_args()
 
-    robot = make_robot(connect_dds=True, build_perception=True)
-    cam = HeadCamera(host=args.host, backend=args.backend)
+    # camera backend is config-driven (configs/cameras.yaml)
+    robot = make_robot(connect_dds=True, build_perception=True, image_host=args.host)
 
     print("homing..."); P.move_to_home(robot)
     print("perceiving...")
     for _ in range(2 * robot.perception.median_frames):
-        g = cam.get_gray_frame()
-        if g is not None:
-            robot.perception.detect(g, q14=robot.arm.get_current_dual_arm_q())
+        frames = robot.cameras.get_rgb_frames()
+        if frames:
+            robot.perception.process(frames, q14=robot.arm.get_current_dual_arm_q())
         time.sleep(0.03)
     block = robot.perception.block_pose(args.tag)
     if block is None:

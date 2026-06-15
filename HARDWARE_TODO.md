@@ -16,8 +16,9 @@ see "Offline status" at the bottom.
 |---|---|---|
 | `configs/robot.yaml` | `dds.interface` | NIC on this workstation wired to PC2 (e.g. `enp5s0`). Real robot domain 0; unitree_sim_isaaclab loopback domain 1 / `lo`. |
 | `configs/robot.yaml` | `model.locked_reference_deg` | Leg+waist posture if the back-plate mount tilts the pelvis (default zeros). |
-| `configs/camera.yaml` | `intrinsics` | fx, fy, cx, cy, distortion from the head RealSense / image server. |
-| `configs/camera.yaml` | `extrinsics.body_to_optical` / `extrinsic_correction` | Verify the `d435_link` frame convention; refine hand-eye if needed (see Phase 3). |
+| `configs/cameras.yaml` | `head.intrinsics` | fx, fy, cx, cy, distortion from the head RealSense / image server. (`camera.yaml` kept as a legacy fallback for the head block.) |
+| `configs/cameras.yaml` | `head.body_to_optical` / `extrinsic_correction` | Verify the `d435_link` frame convention; refine hand-eye if needed (see Phase 3). |
+| `configs/cameras.yaml` | `left/right_wrist.*` | Wrist cameras ship `enabled: false`. The URDF has NO wrist camera link, so `mount` is a hand-eye `T_wristlink_camera` (default identity = WRONG) — measure it, or add fixed `*_wrist_camera` links to the URDF and point `parent_frame` at them (preferred; keeps extrinsics FK-derived). Also needs the `unitree_lerobot` backend (teleimager has no wrist getters). |
 | `configs/task_pick_place.yaml` | `table`, `workspace_box`, `place`, `home_q14_deg` | Calibrate the table plane (script 05) and the real reachable workspace. |
 | `configs/hands.yaml` | `dex3.presets` (`open`/`power_close`/`pinch`) + `verify` thresholds | **Placeholders** — tune on hardware (Phase 4). |
 
@@ -53,9 +54,12 @@ see "Offline status" at the bottom.
       sag; tune `kp/kd` in `robot_arm.py` if needed (currently your G1_teleop_dex gains).
 
 ## Phase 3 — Perception
-- [ ] **Image server** — confirm which server runs on PC2. This repo's `HeadCamera` defaults
-      to the **`teleimager`** backend (your deployed stack); `image_client.py` also has a
-      `unitree_lerobot` ZMQ backend. Set `--backend` / host accordingly.
+- [ ] **Image server** — confirm which server runs on PC2. The `CameraRig`
+      (`image_server/camera_rig.py`) builds per-camera backends from
+      `configs/cameras.yaml` (`backend:` per camera): **`teleimager`** (your deployed
+      stack, head only) or **`unitree_lerobot`** ZMQ (head + wrist). Scripts take
+      `--host`; the backend is now config-driven (no `--backend` flag). The rig
+      delivers full **RGB** frames (`get_rgb_frames()`), not grayscale.
 - [ ] **Camera frame convention** — `python scripts/02_view_camera.py --host <PC2>`
       then `03_static_perception_check.py`. The URDF `d435_link` is treated as a camera
       *body* frame with a ROS body→optical rotation (`camera.yaml: body_to_optical: ros`).

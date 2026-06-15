@@ -13,7 +13,8 @@ hand-eye ``extrinsic_correction`` and a body->optical rotation from camera.yaml.
 """
 from __future__ import annotations
 
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Dict
 
 import numpy as np
 import pinocchio as pin
@@ -29,6 +30,16 @@ BODY_TO_OPTICAL = pin.SE3(
 CAMERA_FRAME = "d435_link"
 PALM_FRAME = {"left": "left_hand_palm_link", "right": "right_hand_palm_link"}
 EE_FRAME = {"left": "L_ee", "right": "R_ee"}
+
+
+@dataclass
+class _CamExt:
+    """Resolved per-camera extrinsics. ``T_pelvis_optical`` =
+    correction * FK(parent_frame) * mount * body_to_optical."""
+    parent_frame: str
+    mount: pin.SE3            # constant parent_frame -> camera body (Identity for head)
+    body_to_optical: pin.SE3
+    correction: pin.SE3       # pelvis-frame hand-eye refinement (left-multiplied)
 
 
 # --------------------------------------------------------------- SE3 helpers
@@ -57,24 +68,60 @@ class Frames:
     and resolves all pelvis-frame transforms."""
 
     def __init__(self, reduced_robot=None, urdf_path=None, locked_reference=None,
-                 camera_cfg: Optional[dict] = None):
+                 camera_cfg: Optional[dict] = None,
+                 cameras_cfg: Optional[dict] = None):
         self.rr = reduced_robot or load_g1_reduced(
             urdf_path or _default_urdf(), locked_reference=locked_reference)
         self.model = self.rr.model
         self.data = self.rr.data
         self.camera_cfg = camera_cfg or {}
-        self._body_to_optical = self._resolve_body_to_optical()
-        self._correction = self._resolve_correction()
+        # Per-camera extrinsics keyed by name. Multi-camera config (cameras.yaml)
+        # is preferred; falls back to the legacy single-camera camera.yaml layout
+        # so a "head" camera always resolves.
+        self._cameras: Dict[str, _CamExt] = self._resolve_cameras(cameras_cfg)
+        head = self._cameras["head"]
+        self._body_to_optical = head.body_to_optical   # legacy single-cam accessors
+        self._correction = head.correction
 
     # ------------------------------------------------------------- internals
-    def _resolve_body_to_optical(self) -> pin.SE3:
-        mode = (self.camera_cfg.get("extrinsics", {})
-                .get("body_to_optical", "ros"))
-        return BODY_TO_OPTICAL if mode == "ros" else pin.SE3.Identity()
+    def _resolve_cameras(self, cameras_cfg) -> Dict[str, _CamExt]:
+        out: Dict[str, _CamExt] = {}
+        if cameras_cfg:
+            cams = cameras_cfg.get("cameras", cameras_cfg)
+            for name, spec in cams.items():
+                out[name] = self._parse_cam_spec(spec or {})
+        if "head" not in out:
+            out["head"] = self._legacy_head(self.camera_cfg)
+        return out
 
-    def _resolve_correction(self) -> pin.SE3:
-        c = self.camera_cfg.get("extrinsics", {}).get("extrinsic_correction")
-        return from_homogeneous(c) if c is not None else pin.SE3.Identity()
+    @staticmethod
+    def _body_to_optical_se3(mode) -> pin.SE3:
+        return BODY_TO_OPTICAL if (mode or "ros") == "ros" else pin.SE3.Identity()
+
+    @staticmethod
+    def _mount_se3(mount) -> pin.SE3:
+        if mount is None or (isinstance(mount, str) and mount == "identity"):
+            return pin.SE3.Identity()
+        if isinstance(mount, dict):
+            return from_xyz_rpy(mount.get("xyz", [0, 0, 0]),
+                                mount.get("rpy", [0, 0, 0]))
+        return from_homogeneous(mount)                 # 4x4 row-major
+
+    def _parse_cam_spec(self, spec: dict) -> _CamExt:
+        c = spec.get("extrinsic_correction")
+        return _CamExt(
+            parent_frame=spec.get("parent_frame", CAMERA_FRAME),
+            mount=self._mount_se3(spec.get("mount")),
+            body_to_optical=self._body_to_optical_se3(spec.get("body_to_optical")),
+            correction=from_homogeneous(c) if c is not None else pin.SE3.Identity())
+
+    def _legacy_head(self, camera_cfg: dict) -> _CamExt:
+        ext = (camera_cfg or {}).get("extrinsics", {})
+        c = ext.get("extrinsic_correction")
+        return _CamExt(
+            parent_frame=CAMERA_FRAME, mount=pin.SE3.Identity(),
+            body_to_optical=self._body_to_optical_se3(ext.get("body_to_optical")),
+            correction=from_homogeneous(c) if c is not None else pin.SE3.Identity())
 
     def _frame_pose(self, name: str, q14=None) -> pin.SE3:
         q = np.zeros(self.model.nq) if q14 is None else np.asarray(q14, float)
@@ -85,11 +132,14 @@ class Frames:
     def T_pelvis_frame(self, name: str, q14=None) -> pin.SE3:
         return self._frame_pose(name, q14)
 
-    def T_pelvis_camera(self, q14=None) -> pin.SE3:
-        """Camera OPTICAL frame in pelvis. Independent of arm q (camera is fixed
-        to torso, waist locked). correction * FK(d435_link) * body_to_optical."""
-        T_pelvis_body = self._frame_pose(CAMERA_FRAME, q14)
-        return self._correction * T_pelvis_body * self._body_to_optical
+    def T_pelvis_camera(self, q14=None, cam_name: str = "head") -> pin.SE3:
+        """Camera OPTICAL frame in pelvis:
+        correction * FK(parent_frame) * mount * body_to_optical.
+        The head is fixed to torso (waist locked) so it is q-independent; wrist
+        cameras move with the arm, so pass a live q14 for those."""
+        cam = self._cameras[cam_name]
+        T_pelvis_parent = self._frame_pose(cam.parent_frame, q14)
+        return cam.correction * T_pelvis_parent * cam.mount * cam.body_to_optical
 
     def T_palm(self, side: str, q14) -> pin.SE3:
         return self._frame_pose(PALM_FRAME[side], q14)
@@ -105,13 +155,14 @@ class Frames:
         return T_ee.inverse() * T_palm
 
     # ---- perception composition ----
-    def T_pelvis_tag(self, T_cam_tag: pin.SE3, q14=None) -> pin.SE3:
+    def T_pelvis_tag(self, T_cam_tag: pin.SE3, q14=None,
+                     cam_name: str = "head") -> pin.SE3:
         """tag pose (in camera optical frame) -> pelvis frame."""
-        return self.T_pelvis_camera(q14) * T_cam_tag
+        return self.T_pelvis_camera(q14, cam_name) * T_cam_tag
 
     def T_pelvis_block(self, T_cam_tag: pin.SE3, tag_to_block: pin.SE3,
-                       q14=None) -> pin.SE3:
-        return self.T_pelvis_tag(T_cam_tag, q14) * tag_to_block
+                       q14=None, cam_name: str = "head") -> pin.SE3:
+        return self.T_pelvis_tag(T_cam_tag, q14, cam_name) * tag_to_block
 
     # ---- grasp pose composition ----
     def grasp_ee_target(self, T_pelvis_block: pin.SE3, side: str,
