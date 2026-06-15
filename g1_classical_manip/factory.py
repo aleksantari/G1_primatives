@@ -12,7 +12,7 @@ Two modes:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
 import numpy as np
@@ -77,9 +77,20 @@ def _locked_reference_full_nq(ik_urdf_reference_deg):
 
 
 def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
-               build_perception: bool = True) -> Robot:
+               build_perception: bool = True, dds_domain: int = None,
+               dds_interface: str = None, mode: str = None,
+               connect_hand: bool = True) -> Robot:
+    # connect_hand=False skips the Dex3/Dex1 controller (e.g. unitree_mujoco,
+    # whose g1 scene has no hands) -- arm + executor only.
     cfg = load_configs(config_dir)
     robot_cfg = cfg["robot"]
+    # optional overrides (e.g. unitree_mujoco sim: domain 1, iface "lo", mode "sim")
+    if dds_domain is not None:
+        robot_cfg["dds"]["domain_id"] = dds_domain
+    if dds_interface is not None:
+        robot_cfg["dds"]["interface"] = dds_interface
+    if mode is not None:
+        robot_cfg["mode"] = mode
 
     # --- kinematics / IK (offline-capable) ---
     urdf = os.path.join(_REPO_ROOT, robot_cfg["model"]["urdf"])
@@ -121,15 +132,17 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     motion_mode = robot_cfg.get("mode") == "motion"
     arm = G1_29_ArmController(motion_mode=motion_mode, simulation_mode=sim)
 
-    hand_key = robot_cfg.get("hand", "dex3")
-    if hand_key == "dex3":
-        hctrl = Dex3Controller(simulation_mode=sim)
-        hand = Dex3Hand(hctrl, cfg["hands"]["dex3"])
-    elif hand_key == "dex1":
-        hctrl = Dex1Controller(simulation_mode=sim)
-        hand = Dex1Hand(hctrl, cfg["hands"]["dex1"])
-    else:
-        raise ValueError(f"unknown hand: {hand_key}")
+    hand = None
+    if connect_hand:
+        hand_key = robot_cfg.get("hand", "dex3")
+        if hand_key == "dex3":
+            hctrl = Dex3Controller(simulation_mode=sim)
+            hand = Dex3Hand(hctrl, cfg["hands"]["dex3"])
+        elif hand_key == "dex1":
+            hctrl = Dex1Controller(simulation_mode=sim)
+            hand = Dex1Hand(hctrl, cfg["hands"]["dex1"])
+        else:
+            raise ValueError(f"unknown hand: {hand_key}")
 
     ex = cfg["planner"].get("executor", {})
     executor = Executor(arm, ik=ik,

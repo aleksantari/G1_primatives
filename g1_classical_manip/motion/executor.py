@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import pinocchio as pin
@@ -29,12 +28,13 @@ class ExecutionResult:
 class Executor:
     def __init__(self, arm_controller, ik=None, control_hz: float = 250.0,
                  tracking_error_abort_rad: float = 0.20, gravity_comp: bool = True,
-                 rerun_logger=None):
+                 prime_timeout_s: float = 3.0, rerun_logger=None):
         self.arm = arm_controller
         self.ik = ik
         self.control_hz = float(control_hz)
         self.abort_thresh = float(tracking_error_abort_rad)
         self.gravity_comp = gravity_comp and ik is not None
+        self.prime_timeout_s = float(prime_timeout_s)
         self.rr = rerun_logger
 
     # -------------------------------------------------------------- helpers
@@ -52,9 +52,31 @@ class Executor:
         self.arm.ctrl_dual_arm_go_home()
 
     # ----------------------------------------------------------------- run
+    def prime(self, q_start: np.ndarray) -> float:
+        """Command the trajectory's first point and wait for the measured pose to
+        converge before the clock starts -- planning takes seconds, during which
+        the measured pose drifts from the planned start. Returns the residual
+        error reached (caller decides whether to proceed)."""
+        q_start = np.asarray(q_start, float).reshape(DOF)
+        t0 = time.time()
+        err = np.inf
+        while time.time() - t0 < self.prime_timeout_s:
+            self.arm.ctrl_dual_arm(q_start, self._tauff(q_start))
+            err = float(np.max(np.abs(q_start - self.arm.get_current_dual_arm_q())))
+            if err < self.abort_thresh:
+                return err
+            time.sleep(0.02)
+        return err
+
     def run(self, traj: JointTrajectory, ramp: bool = True) -> ExecutionResult:
         if hasattr(self.arm, "speed_gradual_max") and ramp:
             self.arm.speed_gradual_max()
+
+        prime_err = self.prime(traj.q[0])
+        if prime_err >= self.abort_thresh:
+            return ExecutionResult(False, True, prime_err,
+                                   f"failed to reach trajectory start: residual "
+                                   f"{prime_err:.3f} >= {self.abort_thresh:.3f} rad")
 
         t0 = time.time()
         dt = 1.0 / self.control_hz
