@@ -69,7 +69,8 @@ class Frames:
 
     def __init__(self, reduced_robot=None, urdf_path=None, locked_reference=None,
                  camera_cfg: Optional[dict] = None,
-                 cameras_cfg: Optional[dict] = None):
+                 cameras_cfg: Optional[dict] = None,
+                 sim_base_world_pose: Optional[dict] = None):
         self.rr = reduced_robot or load_g1_reduced(
             urdf_path or _default_urdf(), locked_reference=locked_reference)
         self.model = self.rr.model
@@ -82,6 +83,9 @@ class Frames:
         head = self._cameras["head"]
         self._body_to_optical = head.body_to_optical   # legacy single-cam accessors
         self._correction = head.correction
+        # T_pelvis_world for the sim ground-truth path (robot fixed-base world pose).
+        # Identity unless a sim base pose is configured -> no effect on hardware.
+        self._T_pelvis_world = self._resolve_sim_base(sim_base_world_pose)
 
     # ------------------------------------------------------------- internals
     def _resolve_cameras(self, cameras_cfg) -> Dict[str, _CamExt]:
@@ -122,6 +126,16 @@ class Frames:
             parent_frame=CAMERA_FRAME, mount=pin.SE3.Identity(),
             body_to_optical=self._body_to_optical_se3(ext.get("body_to_optical")),
             correction=from_homogeneous(c) if c is not None else pin.SE3.Identity())
+
+    def _resolve_sim_base(self, base: Optional[dict]) -> pin.SE3:
+        """Return T_pelvis_world from a sim robot-base world pose
+        {xyz, quat_wxyz}. Identity (no-op) when unset."""
+        if not base:
+            return pin.SE3.Identity()
+        xyz = np.asarray(base.get("xyz", [0, 0, 0]), float)
+        w, x, y, z = base.get("quat_wxyz", [1, 0, 0, 0])
+        T_world_pelvis = pin.SE3(pin.Quaternion(w, x, y, z).toRotationMatrix(), xyz)
+        return T_world_pelvis.inverse()
 
     def _frame_pose(self, name: str, q14=None) -> pin.SE3:
         q = np.zeros(self.model.nq) if q14 is None else np.asarray(q14, float)
@@ -164,6 +178,13 @@ class Frames:
                        q14=None, cam_name: str = "head") -> pin.SE3:
         return self.T_pelvis_tag(T_cam_tag, q14, cam_name) * tag_to_block
 
+    # ---- sim ground-truth (world frame -> pelvis) ----
+    def T_pelvis_from_world(self, T_world_obj: pin.SE3) -> pin.SE3:
+        """Map a sim WORLD-frame object pose into the pelvis frame using the
+        configured robot fixed-base world pose. Identity-passthrough when no sim
+        base pose was set."""
+        return self._T_pelvis_world * T_world_obj
+
     # ---- grasp pose composition ----
     def grasp_ee_target(self, T_pelvis_block: pin.SE3, side: str,
                         grasp_offset: pin.SE3, q14=None) -> pin.SE3:
@@ -172,6 +193,16 @@ class Frames:
         """
         T_palm_desired = T_pelvis_block * grasp_offset
         return T_palm_desired * self.T_ee_palm(side).inverse()
+
+    def grasp_ee_target_aligned(self, T_pelvis_block: pin.SE3, side: str,
+                                palm_rotation, clearance: float) -> pin.SE3:
+        """EE target placing the palm `clearance` above the block CENTER (pelvis
+        +z) with an explicit palm orientation, DECOUPLED from the block's own
+        orientation. Avoids the near-singular top-down wrist config -- pass a
+        well-conditioned palm orientation (e.g. the arm's home EE rotation)."""
+        T_palm = pin.SE3(np.asarray(palm_rotation, float),
+                         T_pelvis_block.translation + np.array([0.0, 0.0, clearance]))
+        return T_palm * self.T_ee_palm(side).inverse()
 
 
 def _default_urdf():

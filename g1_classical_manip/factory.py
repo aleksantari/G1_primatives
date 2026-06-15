@@ -102,7 +102,8 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     locked = _locked_reference_full_nq(robot_cfg["model"].get("locked_reference_deg", []))
     ik = G1_29_ArmIK(urdf_path=urdf, locked_reference=locked)
     frames = Frames(reduced_robot=ik.reduced_robot, camera_cfg=cfg.get("camera"),
-                    cameras_cfg=cfg.get("cameras"))
+                    cameras_cfg=cfg.get("cameras"),
+                    sim_base_world_pose=robot_cfg.get("sim", {}).get("base_world_pose"))
 
     planner_name = cfg["planner"].get("planner", "cartesian")
     planner = PLANNERS[planner_name].from_config(ik, cfg["planner"]) \

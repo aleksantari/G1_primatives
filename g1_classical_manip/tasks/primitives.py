@@ -54,7 +54,15 @@ def _waypoint(side: str, pose: pin.SE3, label: str) -> CartesianWaypoint:
 
 def grasp_target(robot, block_pose: pin.SE3, side: str, clearance: float,
                  q14=None) -> pin.SE3:
-    """L_ee/R_ee IK target for a top-down grasp `clearance` above the block."""
+    """L_ee/R_ee IK target to grasp `clearance` above the block. The approach
+    orientation is config-driven (``pick_place.grasp.approach``):
+      ``top_down``     -- palm faces -z (default; near-singular in some workspaces);
+      ``home_aligned`` -- palm oriented like the arm's home EE pose (well-conditioned).
+    """
+    g = robot.cfg["pick_place"]["grasp"]
+    if g.get("approach", "top_down") == "home_aligned":
+        R_palm = robot.frames.T_palm(side, home_q(robot)).rotation
+        return robot.frames.grasp_ee_target_aligned(block_pose, side, R_palm, clearance)
     return robot.frames.grasp_ee_target(
         block_pose, side, top_down_grasp_offset(clearance), q14)
 
@@ -102,11 +110,15 @@ def plan_pick_lift(robot, block_pose: pin.SE3, side: str,
 
 
 def plan_place(robot, place_pose: pin.SE3, side: str, start_q=None) -> JointTrajectory:
+    """Place the held block at `place_pose` (a block-center pelvis pose). Uses the
+    same grasp approach/clearances as the pick (via grasp_target), so the held
+    block lands at `place_pose` and the wrist stays well-conditioned."""
     q0 = current_q(robot, start_q)
     g = robot.cfg["pick_place"]["grasp"]
-    above = place_pose * pin.SE3(np.eye(3), np.array([0, 0, g["hover_offset_z"]]))
+    above = grasp_target(robot, place_pose, side, g["hover_offset_z"], q0)
+    at = grasp_target(robot, place_pose, side, g["descend_clearance"], q0)
     return plan_cartesian(robot, q0, [_waypoint(side, above, "place_above"),
-                                      _waypoint(side, place_pose, "place")])
+                                      _waypoint(side, at, "place")])
 
 
 def plan_handover(robot, start_q=None) -> JointTrajectory:

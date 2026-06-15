@@ -25,3 +25,13 @@ hand: dex3
 
 # Conservative arm velocity limit (rad/s) used until Phase-5 hardware sign-off.
 arm_velocity_limit: 20.0
+
+# Simulator ground-truth frame (unitree_sim_isaaclab). base_world_pose is the
+# robot fixed-base pose in the sim WORLD frame -- MIRROR the Isaac task's robot
+# init_pos/init_rot exactly. Used to map sim world ground-truth poses into the
+# pelvis frame (transforms.T_pelvis_from_world). Ignored on hardware (the robot
+# is the pelvis-frame origin there).
+sim:
+  base_world_pose:
+    xyz: [-4.2, -3.7, 0.76]
+    quat_wxyz: [0.7071, 0.0, 0.0, -0.7071]
