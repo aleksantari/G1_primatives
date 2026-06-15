@@ -177,7 +177,13 @@ class Dex3Controller:
             q[i] = ms.q
             dq[i] = ms.dq
             tau[i] = ms.tau_est
-            press[i] = msg.press_sensor_state[jid].pressure
+            # press_sensor_state[j].pressure is a per-finger tactile ARRAY (not a
+            # scalar); reduce to a scalar (max contact) for grasp verification.
+            try:
+                p = msg.press_sensor_state[jid].pressure
+                press[i] = float(np.max(p)) if np.ndim(p) else float(p)
+            except Exception:
+                press[i] = 0.0
         return {"q": q, "dq": dq, "tau": tau, "press": press}
 
     def _subscribe(self):

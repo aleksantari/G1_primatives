@@ -1,8 +1,56 @@
-# Sim notes — unitree_mujoco (arm path-planning in sim)
+# Sim notes — running the stack in simulation
 
-The motion stack can be driven against `unitree_mujoco`'s G1 scene over the **same DDS
-interface** the real robot uses, so plan → retime → execute runs end-to-end in sim. This
-file records the bring-up and a known sim-side limitation.
+The motion stack drives a sim over the **same DDS interface** the real robot uses
+(`rt/lowcmd` ← `rt/lowstate`, plus `rt/dex3/*`), so plan → retime → execute runs end-to-end
+with no code changes. Two targets are documented here: **unitree_sim_isaaclab** (full
+fidelity — works, recommended) and **unitree_mujoco** (lightweight — partial).
+
+---
+
+# unitree_sim_isaaclab (Isaac Sim 5.0) — WORKS ✅
+
+**Result:** arm path planning runs cleanly. `01_sim_arm_smoke.py --isaac` homes and executes
+the home→hover→descend→lift→home pick cycle with **max tracking error ~0.13 rad and zero
+executor aborts**. The G1+Dex3 task fixes the base and uses Isaac's PD actuators, so the
+mujoco droop/fall problems do not occur, and the Dex3 hands connect over DDS.
+
+## Run it (two conda envs, one DDS bus on loopback)
+```bash
+# 1) sim — in the `unitree` env via the lane wrapper (conda activation is REQUIRED, see gotcha)
+cd ~/repos/unitree_sim_isaaclab
+UNITREE_DDS_IFACE=lo \
+CYCLONEDDS_URI=file://$HOME/repos/G1_classical_manip/configs/cyclonedds_loopback.xml \
+TASK=Isaac-PickPlace-RedBlock-G129-Dex3-Joint ./launch_sim.sh --headless
+
+# 2) our stack — in the `g1_classical_manip` env, SAME CYCLONEDDS_URI
+cd ~/repos/G1_classical_manip
+CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
+python scripts/00_dds_echo.py --domain 1 --interface lo     # live arm q from Isaac
+CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
+python scripts/01_sim_arm_smoke.py --isaac                  # home + pick cycle, tracking report
+```
+
+## Gotchas (Isaac)
+- **MUST launch via the `use_conda unitree` lane wrapper** (e.g. `launch_sim.sh`), NOT the
+  env's python binary directly. The conda **activation hooks** set `LD_LIBRARY_PATH` / CUDA
+  paths that Warp needs inside Omniverse Kit. Bypassing them makes Warp's `cuda_init` fail
+  (`CUDA error 36: cuDeviceGetUuid not supported`) and the kit process aborts ~6 s into boot
+  with no Python traceback.
+- **DDS interface override**: `unitree_sim_isaaclab/dds/dds_master.py` hardcoded
+  `ChannelFactoryInitialize(1, "wlp13s0")`; made it `os.environ.get("UNITREE_DDS_IFACE",
+  "wlp13s0")` so loopback (`lo`) is selectable. Loopback still needs
+  `configs/cyclonedds_loopback.xml` (no multicast on `lo`) on BOTH processes.
+- **Dex3 `press_sensor_state[].pressure` is a per-finger ARRAY, not a scalar** — our
+  `robot_hand_unitree.py` reduces it to a scalar (max). This bug (found in Isaac) would have
+  hit the real Dex3 too.
+- Only the 14 arm joints (`rt/lowcmd[15:29]`) drive the articulation; leg/waist commands are
+  ignored by the task — our debug-mode leg-lock is harmless.
+- The `--isaac` smoke path sets `connect_hand=True` and a 0.40 rad abort threshold (Isaac PD
+  lags transiently on the fast initial homing move; the pick cycle itself tracks to ~0.13).
+
+---
+
+# unitree_mujoco — partial ⚠️
 
 ## Status
 - ✅ unitree_mujoco G1 sim runs **headless**; our pipeline connects over DDS, streams

@@ -21,13 +21,18 @@ def main():
     ap.add_argument("--steps", type=int, default=24)
     ap.add_argument("--domain", type=int, default=None, help="DDS domain (sim=1)")
     ap.add_argument("--interface", default=None, help="DDS interface (sim='lo')")
-    ap.add_argument("--sim", action="store_true", help="shortcut for --domain 1 --interface lo, mode sim")
+    ap.add_argument("--sim", action="store_true", help="unitree_mujoco: --domain 1 --interface lo, no hands")
+    ap.add_argument("--isaac", action="store_true", help="unitree_sim_isaaclab: domain 1 / lo, WITH Dex3 hands")
     args = ap.parse_args()
 
-    domain = 1 if args.sim else args.domain
-    iface = "lo" if args.sim else args.interface
-    mode = "sim" if args.sim else None
-    robot = make_robot(connect_dds=True, build_perception=False, connect_hand=False,
+    sim_dds = args.sim or args.isaac
+    domain = 1 if sim_dds else args.domain
+    iface = "lo" if sim_dds else args.interface
+    mode = "sim" if sim_dds else None
+    # Isaac has Dex3 hands (with --enable_dex3_dds) and applies arm position targets
+    # via its own actuators; unitree_mujoco has no hands and torque-clips the arm.
+    connect_hand = bool(args.isaac)
+    robot = make_robot(connect_dds=True, build_perception=False, connect_hand=connect_hand,
                        dds_domain=domain, dds_interface=iface, mode=mode)
     if args.sim:
         # unitree_mujoco's arm is torque-controlled with our kp/kd, so it tracks
@@ -36,6 +41,11 @@ def main():
         rt = robot.cfg["planner"]["retimer"]
         rt["max_velocity"], rt["max_acceleration"], rt["max_jerk"] = 1.0, 2.0, 15.0
         robot.executor.abort_thresh = 0.5
+    elif args.isaac:
+        # Isaac's implicit-PD actuators track well (pick cycle ~0.12 rad), but lag
+        # transiently on the fast initial homing move; 0.40 rad clears that without
+        # masking a real divergence.
+        robot.executor.abort_thresh = 0.40
     print("homing...")
     hr = P.move_to_home(robot)
     print("  home:", hr.info)
