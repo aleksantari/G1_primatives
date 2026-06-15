@@ -36,7 +36,7 @@ Read `G1_CLASSICAL_MANIP_PLAN.md` (source of truth) and `HARDWARE_TODO.md` first
 - Arm controller: debug mode = `rt/lowcmd` + locks non-arm joints at current q (suspended-robot
   correct); motion mode = `rt/arm_sdk`. `simulation_mode` bypasses the velocity clip.
 - DDS domain/interface live ONLY in `configs/robot.yaml`. Real robot = (0, NIC-to-PC2);
-  unitree_mujoco = (1, "lo").
+  unitree_sim_isaaclab on loopback = (1, "lo"); see SIM_NOTES.md.
 
 ## Gotchas
 - Call `MotionSwitcher.Enter_Debug_Mode()` before any `rt/lowcmd` publishing on hardware.

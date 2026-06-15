@@ -2,7 +2,7 @@
 """[HARDWARE] Print live dual-arm joint q at 1 Hz -- DDS connectivity check.
 
     python scripts/00_dds_echo.py --domain 0 --interface enp5s0
-unitree_mujoco: --domain 1 --interface lo
+unitree_sim_isaaclab (loopback): --domain 1 --interface lo
 """
 import argparse
 import time

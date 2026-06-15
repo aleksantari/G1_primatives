@@ -14,7 +14,7 @@ see "Offline status" at the bottom.
 ## Config to fill in first (USER-PROVIDED)
 | File | Field | What |
 |---|---|---|
-| `configs/robot.yaml` | `dds.interface` | NIC on this workstation wired to PC2 (e.g. `enp5s0`). Real robot domain 0; unitree_mujoco domain 1 / `lo`. |
+| `configs/robot.yaml` | `dds.interface` | NIC on this workstation wired to PC2 (e.g. `enp5s0`). Real robot domain 0; unitree_sim_isaaclab loopback domain 1 / `lo`. |
 | `configs/robot.yaml` | `model.locked_reference_deg` | Leg+waist posture if the back-plate mount tilts the pelvis (default zeros). |
 | `configs/camera.yaml` | `intrinsics` | fx, fy, cx, cy, distortion from the head RealSense / image server. |
 | `configs/camera.yaml` | `extrinsics.body_to_optical` / `extrinsic_correction` | Verify the `d435_link` frame convention; refine hand-eye if needed (see Phase 3). |
@@ -33,9 +33,10 @@ see "Offline status" at the bottom.
 - [ ] **Debug mode** — confirm `MotionSwitcher.Enter_Debug_Mode()` releases all modes before
       any `rt/lowcmd` (the arm controller locks non-arm joints at current q). Verify the
       suspended posture is the intended locked posture before first motion.
-- [ ] **Sim smoke (optional)** — `unitree_mujoco` is **not installed**; clone it for the
-      sim acceptance, OR run on hardware. `python scripts/01_sim_arm_smoke.py`
-      → homes and traces a 10 cm wrist circle, no limit violations.
+- [x] **Sim smoke (done in Isaac)** — arm path planning is verified in
+      `unitree_sim_isaaclab` (`scripts/01_sim_arm_smoke.py --isaac`, ~0.13 rad tracking,
+      zero aborts; see SIM_NOTES.md). On hardware, run `01_sim_arm_smoke.py` (no `--isaac`)
+      → homes and executes the pick cycle without limit violations.
 - [ ] **Dex3 state** — `python scripts/04_hand_check.py --side left|right`
       → opens/closes each hand; prints q / tau_est / press streams. **Confirm the press
       sensor pressures are non-zero and that closing direction signs in `hands.yaml` are
@@ -110,4 +111,5 @@ see "Offline status" at the bottom.
 - Run via `bash -ic 'use_conda g1_classical_manip && <cmd>'`.
 - **numpy pinned `<2`** (1.26.4) — pinocchio 3.1.0 ABI; **rerun-sdk pinned `==0.20.1`**
   (0.29 requires numpy≥2). Do not blindly `pip install -U` these.
-- `unitree_mujoco` is **not** on this machine (Phase-1 sim target). `unitree_sim_isaaclab` is.
+- Sim target is **`unitree_sim_isaaclab`** (Isaac Sim 5.0 in the `unitree` env) — arm path
+  planning verified there over loopback DDS. See `SIM_NOTES.md`.

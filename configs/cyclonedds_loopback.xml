@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<!-- CycloneDDS transport config for running against unitree_mujoco on loopback.
-     The `lo` interface has no MULTICAST flag, so default multicast discovery
+<!-- CycloneDDS transport config for running a sim (e.g. unitree_sim_isaaclab) on
+     loopback. The `lo` interface has no MULTICAST flag, so default multicast discovery
      fails. This forces unicast discovery to localhost over `lo`. Use the SAME
      config on BOTH the sim and the client:
          export CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml

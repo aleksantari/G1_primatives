@@ -80,11 +80,11 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
                build_perception: bool = True, dds_domain: int = None,
                dds_interface: str = None, mode: str = None,
                connect_hand: bool = True) -> Robot:
-    # connect_hand=False skips the Dex3/Dex1 controller (e.g. unitree_mujoco,
-    # whose g1 scene has no hands) -- arm + executor only.
+    # connect_hand=False skips the Dex3/Dex1 controller -- arm + executor only
+    # (e.g. arm-only bring-up, or a sim scene without hands).
     cfg = load_configs(config_dir)
     robot_cfg = cfg["robot"]
-    # optional overrides (e.g. unitree_mujoco sim: domain 1, iface "lo", mode "sim")
+    # optional overrides (e.g. unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
     if dds_domain is not None:
         robot_cfg["dds"]["domain_id"] = dds_domain
     if dds_interface is not None:

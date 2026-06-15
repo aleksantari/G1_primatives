@@ -1,7 +1,7 @@
 # Robot / DDS transport configuration. The domain+interface live ONLY here.
 dds:
   # Real robot: domain 0 + the NIC on this workstation wired to the G1 PC2.
-  # unitree_mujoco sim: domain 1, interface "lo".
+  # unitree_sim_isaaclab (loopback): domain 1, interface "lo" (see SIM_NOTES.md).
   domain_id: 0
   interface: ""          # USER-PROVIDED: e.g. "enp5s0" (NIC to PC2). "" = default.
 
