@@ -1,13 +1,11 @@
-"""make_robot()-style registry: assemble arm / hand / planner / perception from
-configs (mirrors unitree_lerobot/eval_robot/make_robot.py's ARM_CONFIG/EE_CONFIG
-pattern -- mirrored, not imported).
+"""make_robot() — assemble the lean cuRobo-native robot: cuRobo planner + DDS
+arm/hand controllers + executor. No pinocchio (kinematics live in cuRobo).
 
 Two modes:
-  * connect_dds=False  -> offline planning robot: ik, frames, planner, perception
-    detector, retimer/executor configs. No DDS, no controllers. Used by tests and
-    scripts/offline_plan_check.py.
-  * connect_dds=True   -> full hardware robot: ChannelFactoryInitialize + arm
-    controller + hand controller + executor, on top of the offline components.
+  * connect_dds=False -> planner only (build/inspect plans, no controllers).
+  * connect_dds=True  -> + ChannelFactoryInitialize, arm controller, hand, executor.
+
+Perception/tasks are out of scope for the MVP (perception kept on disk, dormant).
 """
 from __future__ import annotations
 
@@ -15,24 +13,12 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
-import numpy as np
 import yaml
 
-from g1_classical_manip.robot_control.robot_arm_ik import G1_29_ArmIK
-from g1_classical_manip.perception.transforms import Frames
-from g1_classical_manip.perception.hub import PerceptionHub
-from g1_classical_manip.motion.cartesian_planner import CartesianPlanner
-from g1_classical_manip.motion.curobo_planner import CuRoboPlanner
+from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner
 from g1_classical_manip.motion.executor import Executor
 
-ARM_IK = {"G1_29": G1_29_ArmIK}
-PLANNERS = {"cartesian": CartesianPlanner, "curobo": CuRoboPlanner}
-
-_CONFIG_FILES = {
-    "robot": "robot.yaml", "camera": "camera.yaml", "cameras": "cameras.yaml",
-    "perception": "perception.yaml", "planner": "planner.yaml", "hands": "hands.yaml",
-    "pick_place": "task_pick_place.yaml", "handover": "task_handover.yaml",
-}
+_CONFIG_FILES = {"robot": "robot.yaml", "planner": "planner.yaml", "hands": "hands.yaml"}
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
@@ -41,8 +27,7 @@ DEFAULT_CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
 def load_configs(config_dir: str = DEFAULT_CONFIG_DIR) -> Dict[str, Any]:
     cfg = {}
     for key, fname in _CONFIG_FILES.items():
-        path = os.path.join(config_dir, fname)
-        with open(path) as f:
+        with open(os.path.join(config_dir, fname)) as f:
             cfg[key] = yaml.safe_load(f)
     return cfg
 
@@ -50,11 +35,7 @@ def load_configs(config_dir: str = DEFAULT_CONFIG_DIR) -> Dict[str, Any]:
 @dataclass
 class Robot:
     cfg: Dict[str, Any]
-    ik: G1_29_ArmIK
-    frames: Frames
-    planner: Any
-    perception: Any                      # PerceptionHub (delegates AprilTag surface)
-    cameras: Any = None                  # CameraRig (hardware/sim image source)
+    planner: CuroboArmPlanner
     arm: Any = None
     hand: Any = None
     executor: Optional[Executor] = None
@@ -65,71 +46,30 @@ class Robot:
         return self.cfg["planner"]
 
 
-def _locked_reference_full_nq(ik_urdf_reference_deg):
-    # legs(12)+waist(3) provided in deg; the reduced builder expects a FULL-model
-    # reference. We pass only the locked-joint values via the named lock list, so
-    # a full zero vector with these set is unnecessary -- load_g1_reduced freezes
-    # locked joints at the *reference_configuration* it is given. For simplicity
-    # the locked reference is applied as zeros unless a non-trivial posture is set.
-    arr = np.asarray(ik_urdf_reference_deg, float)
-    if np.allclose(arr, 0.0):
-        return None
-    return np.deg2rad(arr)
-
-
 def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
-               build_perception: bool = True, dds_domain: int = None,
-               dds_interface: str = None, mode: str = None,
-               connect_hand: bool = True, connect_camera: bool = None,
-               image_host: str = None) -> Robot:
-    # connect_hand=False skips the Dex3/Dex1 controller -- arm + executor only
-    # (e.g. arm-only bring-up, or a sim scene without hands).
-    # connect_camera builds the live CameraRig; default = build a camera only when
-    # we want perception AND are connected (so the Isaac smoke / offline tests,
-    # which have no image server, never construct it). Scripts may force it on.
+               dds_domain: int = None, dds_interface: str = None, mode: str = None,
+               connect_hand: bool = True, hand: str = None) -> Robot:
     cfg = load_configs(config_dir)
     robot_cfg = cfg["robot"]
-    # optional overrides (e.g. unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
+    # optional overrides (unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
     if dds_domain is not None:
         robot_cfg["dds"]["domain_id"] = dds_domain
     if dds_interface is not None:
         robot_cfg["dds"]["interface"] = dds_interface
     if mode is not None:
         robot_cfg["mode"] = mode
+    if hand is not None:
+        robot_cfg["hand"] = hand
 
-    # --- kinematics / IK (offline-capable) ---
-    urdf = os.path.join(_REPO_ROOT, robot_cfg["model"]["urdf"])
-    locked = _locked_reference_full_nq(robot_cfg["model"].get("locked_reference_deg", []))
-    ik = G1_29_ArmIK(urdf_path=urdf, locked_reference=locked)
-    frames = Frames(reduced_robot=ik.reduced_robot, camera_cfg=cfg.get("camera"),
-                    cameras_cfg=cfg.get("cameras"),
-                    sim_base_world_pose=robot_cfg.get("sim", {}).get("base_world_pose"))
-
-    planner_name = cfg["planner"].get("planner", "cartesian")
-    planner = PLANNERS[planner_name].from_config(ik, cfg["planner"]) \
-        if hasattr(PLANNERS[planner_name], "from_config") \
-        else PLANNERS[planner_name](ik, cfg["planner"])
-
-    perception = None
-    if build_perception:
-        perception = PerceptionHub(frames, cfg["perception"],
-                                   cameras_cfg=cfg.get("cameras"),
-                                   camera_cfg=cfg.get("camera"))
-
-    robot = Robot(cfg=cfg, ik=ik, frames=frames, planner=planner,
-                  perception=perception)
-
-    # live multi-camera RGB source (lazy import; never on the offline test path)
-    if connect_camera is None:
-        connect_camera = connect_dds and build_perception
-    if connect_camera:
-        from g1_classical_manip.image_server.camera_rig import CameraRig
-        robot.cameras = CameraRig.from_config(cfg["cameras"], host=image_host)
+    hand_key = robot_cfg.get("hand", "dex3")
+    curobo_cfg = os.path.join(config_dir, "curobo", f"g1_{hand_key}_curobo.yml")
+    planner = CuroboArmPlanner(curobo_cfg, planner_cfg=cfg["planner"])
+    robot = Robot(cfg=cfg, planner=planner)
 
     if not connect_dds:
         return robot
 
-    # --- DDS-connected controllers (hardware) ---
+    # --- DDS-connected controllers ---
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize
     from g1_classical_manip.robot_control.robot_arm import G1_29_ArmController
     from g1_classical_manip.robot_control.robot_hand_unitree import (
@@ -148,25 +88,22 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     motion_mode = robot_cfg.get("mode") == "motion"
     arm = G1_29_ArmController(motion_mode=motion_mode, simulation_mode=sim)
 
-    hand = None
+    hand_obj = None
     if connect_hand:
-        hand_key = robot_cfg.get("hand", "dex3")
         if hand_key == "dex3":
-            hctrl = Dex3Controller(simulation_mode=sim)
-            hand = Dex3Hand(hctrl, cfg["hands"]["dex3"])
+            hand_obj = Dex3Hand(Dex3Controller(simulation_mode=sim), cfg["hands"]["dex3"])
         elif hand_key == "dex1":
-            hctrl = Dex1Controller(simulation_mode=sim)
-            hand = Dex1Hand(hctrl, cfg["hands"]["dex1"])
+            hand_obj = Dex1Hand(Dex1Controller(simulation_mode=sim), cfg["hands"]["dex1"])
         else:
             raise ValueError(f"unknown hand: {hand_key}")
 
     ex = cfg["planner"].get("executor", {})
-    executor = Executor(arm, ik=ik,
+    executor = Executor(arm, ik=None, gravity_comp=False,
                         control_hz=cfg["planner"]["retimer"].get("control_hz", 250.0),
                         tracking_error_abort_rad=ex.get("tracking_error_abort_rad", 0.20))
 
     robot.arm = arm
-    robot.hand = hand
+    robot.hand = hand_obj
     robot.executor = executor
     robot.connected = True
     return robot

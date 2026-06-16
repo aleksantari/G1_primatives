@@ -12,7 +12,6 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
-import pinocchio as pin
 
 from g1_classical_manip.motion.planner_base import JointTrajectory, DOF
 
@@ -39,11 +38,9 @@ class Executor:
 
     # -------------------------------------------------------------- helpers
     def _tauff(self, q14: np.ndarray) -> np.ndarray:
-        if not self.gravity_comp:
-            return np.zeros(DOF)
-        m = self.ik.reduced_robot.model
-        d = self.ik.reduced_robot.data
-        return pin.rnea(m, d, q14, np.zeros(m.nv), np.zeros(m.nv))
+        # Gravity-comp feed-forward deferred (was pinocchio RNEA). Sim runs fine on
+        # zero feed-forward; revisit with cuRobo Dynamics for hardware.
+        return np.zeros(DOF)
 
     def hold(self, q14: np.ndarray):
         self.arm.ctrl_dual_arm(np.asarray(q14, float).reshape(DOF), self._tauff(q14))
