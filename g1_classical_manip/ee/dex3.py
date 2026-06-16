@@ -71,6 +71,7 @@ class Dex3Hand(Hand):
         self._last_close_target[side] = target
         self.ctrl.command(side, target)
         if not verify:
+            self._sleep(self.close_timeout_s)   # block until the fingers actually move
             return True
         self._wait_settled(side, self.close_timeout_s)
         return self.grasped(side)
@@ -79,6 +80,7 @@ class Dex3Hand(Hand):
         target = self.presets["open"]
         self.ctrl.command(side, target)
         if not verify:
+            self._sleep(self.open_timeout_s)    # block until the fingers actually move
             return True
         self._wait_settled(side, self.open_timeout_s)
         reached = np.max(np.abs(self.ctrl.get_state(side)["q"] - target)) < self.stall_margin

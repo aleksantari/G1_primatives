@@ -50,6 +50,7 @@ class Dex1Hand(Hand):
     def close(self, side, verify=True) -> bool:
         self.ctrl.command(side, self.close_v)
         if not verify:
+            self._sleep(self.close_timeout_s)   # block until the gripper actually moves
             return True
         self._wait_settled(side, self.close_timeout_s)
         return self.grasped(side)
@@ -57,6 +58,7 @@ class Dex1Hand(Hand):
     def open(self, side, verify=True) -> bool:
         self.ctrl.command(side, self.open_v)
         if not verify:
+            self._sleep(self.open_timeout_s)    # block until the gripper actually moves
             return True
         self._wait_settled(side, self.open_timeout_s)
         return abs(self.ctrl.get_state(side)["q"][0] - self.open_v) < self.stall_margin
