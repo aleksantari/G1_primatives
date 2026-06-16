@@ -9,14 +9,16 @@ tag:
   family: "tag36h11"
   size_m: 0.030            # USER-PROVIDED: printed tag black-square edge length (m).
   # Per-tag rigid offset from the tag frame to the block geometric center,
-  # expressed in the tag frame (x,y,z meters + rpy radians). Default: block
-  # center sits half a block-height below the tag face along -z_tag.
+  # expressed in the tag frame (x,y,z meters + rpy radians). The sim USD bakes the
+  # tag on the +Z (top) face of the 6 cm cube, so the block center is 0.03 m below
+  # the tag along -z_tag.
   tag_to_block:
-    xyz: [0.0, 0.0, -0.02]
+    xyz: [0.0, 0.0, -0.03]
     rpy: [0.0, 0.0, 0.0]
   # Map of tag id -> semantic name (optional). Unlisted ids are ignored.
+  # The sim red-block USD carries AprilTag ID 14 (family 36h11).
   ids:
-    0: "block"
+    14: "block"
 
 filter:
   median_frames: 5         # median over N frames before a pose is accepted.
@@ -25,9 +27,9 @@ filter:
 
 # Ground-truth detector (sim, marker-free). The block's WORLD-frame pose in the
 # Isaac scene; transforms.Frames maps it to the pelvis frame via robot.yaml
-# `sim.base_world_pose`. TODO: set to the actual sim block pose (or swap for a
-# live rt/sim_state read). Used only when `detector: ground_truth`.
+# `sim.base_world_pose`. Matches the dex3 red-block scene init pose (later: swap
+# for a live rt/sim_state read). Used only when `detector: ground_truth`.
 ground_truth:
   block:
-    xyz: [0.0, 0.0, 0.0]
+    xyz: [-4.25, -4.03, 0.84]
     quat_wxyz: [1.0, 0.0, 0.0, 0.0]
