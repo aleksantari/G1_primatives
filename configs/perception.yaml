@@ -1,11 +1,10 @@
-# Perception models the PerceptionHub runs each frame (registry keys in
-# perception/registry.py). `camera` selects which rig frame the model consumes;
-# `min_period_s` throttles heavy models below the ~50 Hz frame loop (0 = every
-# frame). Add a 6-DoF pose estimator or grasp model by appending an entry.
-models:
-  - {name: apriltag, camera: head, min_period_s: 0.0}
+# Perception config. `detector` selects the single active head-camera detector
+# (factory `_DETECTORS` map): `apriltag` (live ZMQ + AprilTag) or `ground_truth`
+# (constant sim block pose, no camera/marker). A model-based detector registers
+# in the same map later.
+detector: apriltag
 
-# AprilTag block detection (params for the `apriltag` model above).
+# AprilTag block detection (params for the `apriltag` detector).
 tag:
   family: "tag36h11"
   size_m: 0.030            # USER-PROVIDED: printed tag black-square edge length (m).
@@ -22,5 +21,13 @@ tag:
 filter:
   median_frames: 5         # median over N frames before a pose is accepted.
   max_stale_s: 0.5         # reject poses older than this.
-  max_reproj_err: 5.0      # pupil-apriltags decision_margin / ambiguity gate.
-  min_decision_margin: 30.0
+  min_decision_margin: 30.0  # pupil-apriltags decision_margin gate.
+
+# Ground-truth detector (sim, marker-free). The block's WORLD-frame pose in the
+# Isaac scene; transforms.Frames maps it to the pelvis frame via robot.yaml
+# `sim.base_world_pose`. TODO: set to the actual sim block pose (or swap for a
+# live rt/sim_state read). Used only when `detector: ground_truth`.
+ground_truth:
+  block:
+    xyz: [0.0, 0.0, 0.0]
+    quat_wxyz: [1.0, 0.0, 0.0, 0.0]

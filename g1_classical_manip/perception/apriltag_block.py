@@ -1,7 +1,8 @@
-"""AprilTag block detection: image -> T_cam_tag -> T_pelvis_block.
+"""AprilTag block detection: image -> T_cam_tag -> T_pelvis_block (pelvis frame).
 
 Pose assembly (the frame math) is separated from the detector call so it can be
-unit-tested offline without a camera; only ``detect()`` needs a live frame.
+unit-tested offline without a camera or pupil_apriltags; only ``detect()`` needs a
+live frame + the (lazily imported) ``pupil_apriltags`` detector.
 """
 from __future__ import annotations
 
@@ -10,11 +11,10 @@ from dataclasses import dataclass
 from typing import Optional, Dict, List
 
 import numpy as np
-import pinocchio as pin
 
-from g1_classical_manip.perception.transforms import Frames, from_xyz_rpy, se3
-from g1_classical_manip.perception.base import (
-    VisionModel, PerceptionOutput, PoseEstimate)
+from g1_classical_manip.spatial.pose import Pose, from_xyz_rpy
+from g1_classical_manip.perception.transforms import Frames
+from g1_classical_manip.perception.base import Detector, Detection
 
 try:
     import cv2 as _cv2
@@ -33,26 +33,26 @@ def _to_gray(img: np.ndarray) -> np.ndarray:
 
 
 @dataclass
-class TagReading:
+class _Reading:
     tag_id: int
-    T_pelvis_block: pin.SE3
+    T_pelvis_block: Pose
     decision_margin: float
     stamp: float
 
 
-def _se3_median(poses: List[pin.SE3]) -> pin.SE3:
+def _pose_median(poses: List[Pose]) -> Pose:
     """Componentwise-median translation; rotation taken from the sample nearest
     that median (robust, avoids quaternion-averaging pitfalls)."""
     T = np.array([p.translation for p in poses])
     med = np.median(T, axis=0)
     k = int(np.argmin(np.linalg.norm(T - med, axis=1)))
-    return pin.SE3(poses[k].rotation.copy(), med)
+    return Pose(poses[k].rotation.copy(), med)
 
 
-class AprilTagBlockDetector:
-    def __init__(self, frames: Frames, perception_cfg: dict, camera_cfg: dict,
-                 clock=None):
-        import pupil_apriltags
+class AprilTagDetector(Detector):
+    """Detect tag36h11 markers, fuse to a median-filtered pelvis-frame block pose."""
+
+    def __init__(self, frames: Frames, perception_cfg: dict, camera_cfg: dict, clock=None):
         self.frames = frames
         tag = perception_cfg.get("tag", {})
         self.family = tag.get("family", "tag36h11")
@@ -60,6 +60,7 @@ class AprilTagBlockDetector:
         ttb = tag.get("tag_to_block", {"xyz": [0, 0, 0], "rpy": [0, 0, 0]})
         self.tag_to_block = from_xyz_rpy(ttb["xyz"], ttb["rpy"])
         self.id_names = {int(k): v for k, v in (tag.get("ids", {}) or {}).items()}
+        self._name_to_id = {v: k for k, v in self.id_names.items()}
 
         flt = perception_cfg.get("filter", {})
         self.median_frames = int(flt.get("median_frames", 5))
@@ -70,49 +71,67 @@ class AprilTagBlockDetector:
         self.camera_params = (k.get("fx", 0.0), k.get("fy", 0.0),
                               k.get("cx", 0.0), k.get("cy", 0.0))
 
-        self.detector = pupil_apriltags.Detector(families=self.family)
+        self._detector = None    # lazy pupil_apriltags.Detector (camera path only)
         self._clock = clock or __import__("time").monotonic
         self._hist: Dict[int, deque] = defaultdict(
             lambda: deque(maxlen=self.median_frames))
 
-    # ----- frame math (offline-testable) -----
-    def cam_tag_se3(self, pose_R, pose_t) -> pin.SE3:
-        return pin.SE3(np.asarray(pose_R, float).reshape(3, 3),
-                       np.asarray(pose_t, float).reshape(3))
+    # ----- frame math (offline-testable; no camera / pupil_apriltags) -----
+    def cam_tag_pose(self, pose_R, pose_t) -> Pose:
+        return Pose(np.asarray(pose_R, float).reshape(3, 3),
+                    np.asarray(pose_t, float).reshape(3))
 
-    def pelvis_block_se3(self, T_cam_tag: pin.SE3, q14=None) -> pin.SE3:
+    def pelvis_block_pose(self, T_cam_tag: Pose, q14=None) -> Pose:
         return self.frames.T_pelvis_block(T_cam_tag, self.tag_to_block, q14)
 
-    def ingest_detection(self, tag_id: int, pose_R, pose_t,
-                         decision_margin: float, q14=None) -> Optional[TagReading]:
+    def ingest_detection(self, tag_id, pose_R, pose_t,
+                         decision_margin: float, q14=None) -> Optional[_Reading]:
         if decision_margin < self.min_decision_margin:
             return None
-        T_cam_tag = self.cam_tag_se3(pose_R, pose_t)
-        T_pelvis_block = self.pelvis_block_se3(T_cam_tag, q14)
-        r = TagReading(tag_id, T_pelvis_block, float(decision_margin),
-                       self._clock())
-        self._hist[tag_id].append(r)
+        T_cam_tag = self.cam_tag_pose(pose_R, pose_t)
+        r = _Reading(int(tag_id), self.pelvis_block_pose(T_cam_tag, q14),
+                     float(decision_margin), self._clock())
+        self._hist[int(tag_id)].append(r)
         return r
 
-    # ----- camera path (hardware-gated) -----
-    def detect(self, gray_image: np.ndarray, q14=None) -> Dict[int, TagReading]:
-        """Detect tags in a grayscale frame; update history. Returns the latest
-        accepted reading per tag id."""
-        dets = self.detector.detect(
-            gray_image, estimate_tag_pose=True,
+    def name_of(self, tag_id) -> str:
+        return self.id_names.get(int(tag_id), str(tag_id))
+
+    # ----- camera path -----
+    def _ensure_detector(self):
+        if self._detector is None:
+            import pupil_apriltags
+            self._detector = pupil_apriltags.Detector(families=self.family)
+        return self._detector
+
+    def detect(self, gray: np.ndarray, q14=None) -> Dict[str, Detection]:
+        """Detect tags in a frame; update history. Returns accepted detections
+        keyed by semantic label. No-op on a missing frame (no camera / not ready)."""
+        if gray is None:
+            return {}
+        dets = self._ensure_detector().detect(
+            _to_gray(gray), estimate_tag_pose=True,
             camera_params=self.camera_params, tag_size=self.tag_size)
-        out: Dict[int, TagReading] = {}
+        out: Dict[str, Detection] = {}
         for d in dets:
             if self.id_names and d.tag_id not in self.id_names:
                 continue
             r = self.ingest_detection(d.tag_id, d.pose_R, d.pose_t,
                                       d.decision_margin, q14)
             if r is not None:
-                out[d.tag_id] = r
+                label = self.name_of(d.tag_id)
+                out[label] = Detection(pose=r.T_pelvis_block, label=label,
+                                       score=r.decision_margin, tag_id=int(d.tag_id))
         return out
 
-    def block_pose(self, tag_id: int) -> Optional[pin.SE3]:
-        """Median-filtered, staleness-gated pelvis-frame block pose, or None."""
+    def block_pose(self, label: str = "block") -> Optional[Pose]:
+        """Median-filtered, staleness-gated pelvis-frame pose for a label, or None."""
+        tag_id = self._name_to_id.get(label)
+        if tag_id is None:
+            try:                       # allow a numeric tag id as the label
+                tag_id = int(label)
+            except (TypeError, ValueError):
+                return None
         hist = self._hist.get(tag_id)
         if not hist:
             return None
@@ -120,59 +139,4 @@ class AprilTagBlockDetector:
         fresh = [r for r in hist if now - r.stamp <= self.max_stale_s]
         if len(fresh) < max(1, self.median_frames // 2):
             return None
-        return _se3_median([r.T_pelvis_block for r in fresh])
-
-    def name_of(self, tag_id: int) -> str:
-        return self.id_names.get(tag_id, str(tag_id))
-
-
-class AprilTagVisionModel(VisionModel):
-    """``VisionModel`` adapter around ``AprilTagBlockDetector``. Converts the RGB
-    frame to grayscale, runs the (unchanged) detector + its median/staleness
-    filtering, and maps each ``TagReading`` to a pelvis-frame ``PoseEstimate``.
-
-    The detector's ``block_pose``/``detect``/``detector``/``median_frames`` are
-    re-exposed so the FSM and hardware scripts keep working through the hub."""
-
-    name = "apriltag"
-
-    def __init__(self, frames: Frames, perception_cfg: dict, camera_cfg: dict,
-                 clock=None, spec: Optional[dict] = None):
-        spec = spec or {}
-        self._cam = spec.get("camera", "head")
-        self.det = AprilTagBlockDetector(frames, perception_cfg, camera_cfg, clock=clock)
-
-    def cameras(self) -> List[str]:
-        return [self._cam]
-
-    def process(self, frames: Dict[str, np.ndarray], q14=None) -> PerceptionOutput:
-        out = PerceptionOutput(model=self.name, stamp=self.det._clock(),
-                               source_cams=[self._cam])
-        rgb = frames.get(self._cam)
-        if rgb is None:
-            return out
-        readings = self.det.detect(_to_gray(rgb), q14=q14)
-        for tid, r in readings.items():
-            out.poses.append(PoseEstimate(
-                label=self.det.name_of(tid), T_pelvis_object=r.T_pelvis_block,
-                score=r.decision_margin, source_cam=self._cam,
-                extra={"tag_id": tid}))
-        return out
-
-    # ----- back-compat surface (delegate to the wrapped detector) -----
-    def block_pose(self, tag_id: int) -> Optional[pin.SE3]:
-        return self.det.block_pose(tag_id)
-
-    def detect(self, image: np.ndarray, q14=None) -> Dict[int, TagReading]:
-        return self.det.detect(_to_gray(image), q14=q14)
-
-    def name_of(self, tag_id: int) -> str:
-        return self.det.name_of(tag_id)
-
-    @property
-    def detector(self):
-        return self.det.detector
-
-    @property
-    def median_frames(self) -> int:
-        return self.det.median_frames
+        return _pose_median([r.T_pelvis_block for r in fresh])

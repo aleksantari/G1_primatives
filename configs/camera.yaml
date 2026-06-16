@@ -20,6 +20,8 @@ extrinsics:
     - [0, 0, 0, 1]
 
 # USER-PROVIDED intrinsics (from the image server / realsense). Pixels.
+# REQUIRED for metric pose: AprilTag pose estimation uses (fx,fy,cx,cy); with these
+# at 0.0 the returned pose is NOT metric. Fill from the sim camera params / RealSense.
 intrinsics:
   width: 640
   height: 480
@@ -28,3 +30,10 @@ intrinsics:
   cx: 0.0
   cy: 0.0
   distortion: [0.0, 0.0, 0.0, 0.0, 0.0]   # k1,k2,p1,p2,k3
+
+# Head-camera image stream (ZMQ). Consumed by image_server.HeadCamera; the factory
+# builds the camera from this when make_robot(connect_camera=True).
+stream:
+  backend: unitree_lerobot   # ZMQ ImageClient (head frame). "teleimager" = PC2 stack.
+  host: "127.0.0.1"          # sim loopback; real robot = PC2 (e.g. 192.168.123.164).
+  port: 5555                 # head ZMQ port (unitree_lerobot backend).

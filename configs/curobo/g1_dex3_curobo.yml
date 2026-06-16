@@ -3198,6 +3198,12 @@ kinematics:
   tool_frames:
   - left_wrist_yaw_link
   - right_wrist_yaw_link
+  # d435_link is the head camera. Listed here ONLY to make its pelvis-frame pose
+  # FK-queryable via compute_kinematics (perception needs T_pelvis_camera);
+  # compute_kinematics returns poses for tool_frames only. It is fixed to the
+  # locked torso, so plan_to_pose pins it to its constant current FK pose and it
+  # never constrains the arms. See CuroboArmPlanner.CAMERA_FRAME / fk_link.
+  - d435_link
   urdf_path: /home/santari/repos/G1_classical_manip/assets/g1/g1_29dof_mode_16_dex3.urdf
   use_external_assets: false
   use_global_cumul: true

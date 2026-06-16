@@ -1,11 +1,14 @@
 """make_robot() — assemble the lean cuRobo-native robot: cuRobo planner + DDS
-arm/hand controllers + executor. No pinocchio (kinematics live in cuRobo).
+arm/hand controllers + executor + head-camera perception. No pinocchio (kinematics
+live in cuRobo).
 
-Two modes:
-  * connect_dds=False -> planner only (build/inspect plans, no controllers).
-  * connect_dds=True  -> + ChannelFactoryInitialize, arm controller, hand, executor.
+  * connect_dds=False    -> planner only (build/inspect plans, no controllers).
+  * connect_dds=True     -> + ChannelFactoryInitialize, arm controller, hand, executor.
+  * connect_camera=True  -> open the head-camera ZMQ stream (for the apriltag detector).
 
-Perception/tasks are out of scope for the MVP (perception kept on disk, dormant).
+The frame-math owner (transforms.Frames) + the configured detector are always built
+(cheap, no I/O) so robot.detector is available; the ground_truth detector needs no
+camera, so detect() works planner-only/offline.
 """
 from __future__ import annotations
 
@@ -18,7 +21,8 @@ import yaml
 from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner
 from g1_classical_manip.motion.executor import Executor
 
-_CONFIG_FILES = {"robot": "robot.yaml", "planner": "planner.yaml", "hands": "hands.yaml"}
+_CONFIG_FILES = {"robot": "robot.yaml", "planner": "planner.yaml", "hands": "hands.yaml",
+                 "camera": "camera.yaml", "perception": "perception.yaml"}
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
@@ -39,6 +43,9 @@ class Robot:
     arm: Any = None
     hand: Any = None
     executor: Optional[Executor] = None
+    frames: Any = None          # transforms.Frames (frame-math owner)
+    detector: Any = None        # perception Detector (apriltag | ground_truth)
+    camera: Any = None          # image_server.HeadCamera (None unless connect_camera)
     connected: bool = False
 
     @property
@@ -46,9 +53,39 @@ class Robot:
         return self.cfg["planner"]
 
 
+def _build_perception(planner, cfg: Dict[str, Any]):
+    """Build the frame-math owner + the configured detector (no I/O). The seam for
+    new detectors is the `detector:` selector in perception.yaml."""
+    from g1_classical_manip.perception.transforms import Frames
+    from g1_classical_manip.perception.apriltag_block import AprilTagDetector
+    from g1_classical_manip.perception.ground_truth import GroundTruthDetector
+
+    sim_base = (cfg["robot"].get("sim", {}) or {}).get("base_world_pose")
+    frames = Frames(planner, camera_cfg=cfg["camera"], sim_base_world_pose=sim_base)
+    perc = cfg["perception"] or {}
+    kind = perc.get("detector", "apriltag")
+    if kind == "apriltag":
+        detector = AprilTagDetector(frames, perc, cfg["camera"])
+    elif kind == "ground_truth":
+        block = (perc.get("ground_truth", {}) or {}).get("block", {})
+        detector = GroundTruthDetector.from_config(frames, block)
+    else:
+        raise ValueError(f"unknown detector: {kind}")
+    return frames, detector
+
+
+def _build_camera(cfg: Dict[str, Any]):
+    from g1_classical_manip.image_server.image_client import HeadCamera
+    st = (cfg["camera"] or {}).get("stream", {})
+    backend = st.get("backend", "unitree_lerobot")
+    extra = {k: v for k, v in st.items() if k not in ("backend", "host")}
+    return HeadCamera(host=st.get("host", "127.0.0.1"), backend=backend, **extra)
+
+
 def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
                dds_domain: int = None, dds_interface: str = None, mode: str = None,
-               connect_hand: bool = True, hand: str = None) -> Robot:
+               connect_hand: bool = True, hand: str = None,
+               connect_camera: bool = False) -> Robot:
     cfg = load_configs(config_dir)
     robot_cfg = cfg["robot"]
     # optional overrides (unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
@@ -65,6 +102,11 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     curobo_cfg = os.path.join(config_dir, "curobo", f"g1_{hand_key}_curobo.yml")
     planner = CuroboArmPlanner(curobo_cfg, planner_cfg=cfg["planner"])
     robot = Robot(cfg=cfg, planner=planner)
+
+    # perception (frame math + detector) is always available; camera stream optional.
+    robot.frames, robot.detector = _build_perception(planner, cfg)
+    if connect_camera:
+        robot.camera = _build_camera(cfg)
 
     if not connect_dds:
         return robot

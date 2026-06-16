@@ -22,6 +22,10 @@ from g1_classical_manip.ee.hand_base import LEFT, RIGHT
 
 # wrist-yaw tool frames (the MVP goal frame). 5cm L_ee/palm offset is a later refinement.
 WRIST_FRAME = {LEFT: "left_wrist_yaw_link", RIGHT: "right_wrist_yaw_link"}
+# Head-camera link. Listed in the cuRobo config's tool_frames ONLY so its pelvis-frame
+# pose is FK-queryable (perception). It is fixed to the locked torso, so plan_to_pose
+# pins it to its constant current FK pose -- it never constrains the arms.
+CAMERA_FRAME = "d435_link"
 # repo dual-arm joint order: left 7 then right 7 (G1_29 arm order)
 REPO_ARM = [f"{s}_{j}_joint" for s in ("left", "right")
             for j in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow",
@@ -89,10 +93,17 @@ class CuroboArmPlanner:
             "max_qd": float(np.max(np.abs(qd))) if qd.size else 0.0,
         })
 
+    def fk_link(self, link_name: str, q_repo14=None) -> Pose:
+        """Pelvis-frame pose of any tool_frame link at the given dual-arm config
+        (defaults to zeros/home). CAMERA_FRAME (head camera) is rigidly fixed to the
+        locked torso, so its pose is q-invariant -- callers may omit q for it."""
+        q = np.zeros(DOF) if q_repo14 is None else q_repo14
+        ks = self._mp.compute_kinematics(self._joint_state(q))
+        return self._link_pose(ks, link_name)
+
     def fk(self, side: str, q_repo14) -> Pose:
         """Wrist-yaw pose (pelvis frame) of `side` at the given dual-arm config."""
-        ks = self._mp.compute_kinematics(self._joint_state(q_repo14))
-        return self._link_pose(ks, WRIST_FRAME[side])
+        return self.fk_link(WRIST_FRAME[side], q_repo14)
 
     def default_q(self) -> np.ndarray:
         """cuRobo's collision-free default ('ready') arm config, in repo order."""
