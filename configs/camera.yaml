@@ -32,9 +32,10 @@ intrinsics:
   cy: 240.0
   distortion: [0.0, 0.0, 0.0, 0.0, 0.0]   # k1,k2,p1,p2,k3 (sim pinhole = 0)
 
-# Head-camera image stream (ZMQ). Consumed by image_server.HeadCamera; the factory
-# builds the camera from this when make_robot(connect_camera=True).
+# Head-camera image stream. Consumed by image_server.HeadCamera; the factory builds
+# the camera from this when make_robot(connect_camera=True). The teleimager server
+# (sim + PC2) publishes JPEG frames on a ZMQ PUB socket -> use the `zmq` backend.
 stream:
-  backend: unitree_lerobot   # ZMQ ImageClient (head frame). "teleimager" = PC2 stack.
+  backend: zmq               # direct SUB to the teleimager ZMQ PUB (JPEG frames).
   host: "127.0.0.1"          # sim loopback; real robot = PC2 (e.g. 192.168.123.164).
-  port: 5555                 # head ZMQ port (unitree_lerobot backend).
+  port: 55555                # head_camera zmq_port (teleimager cam_config_server.yaml).

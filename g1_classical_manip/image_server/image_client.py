@@ -1,14 +1,14 @@
 """Head-camera image client.
 
-The user's deployed image server on PC2 is the ``teleimager`` stack (from
-G1_teleop_dex), so this wraps ``teleimager.ImageClient`` when available. The
-import is lazy so the module loads on machines without teleimager; the wrapper
-exposes a minimal, perception-focused surface (grayscale head frames for
-AprilTag, which needs no depth).
+Three backends, all exposing the same minimal perception surface (BGR/gray head
+frames; AprilTag needs no depth):
+  * ``zmq``           -- subscribe directly to the teleimager ZMQ PUB stream
+    (JPEG frames). This is what the Isaac sim publishes (640x480 on :55555) and
+    needs only pyzmq + cv2, no image-server package. CONFLATE keeps the latest frame.
+  * ``teleimager``    -- the PC2 ``teleimager.ImageClient`` (lazy import; hardware).
+  * ``unitree_lerobot`` -- unitree_lerobot's ZMQ ImageClient (same contract).
 
-NOTE (HARDWARE_TODO): confirm which image server is actually running on PC2 and
-that ``request_bgr``/host/port match. unitree_lerobot's ZMQ ImageClient is an
-alternative backend with the same `get_gray_frame()` contract.
+All imports are lazy so the module loads on machines without the optional backends.
 """
 from __future__ import annotations
 
@@ -28,7 +28,16 @@ class HeadCamera:
         self.host = host
         self.backend = backend
         self._client = None
-        if backend == "teleimager":
+        if backend == "zmq":
+            import zmq  # lazy
+            self._zmq = zmq
+            port = int(kwargs.get("port", 55555))
+            self._sock = zmq.Context.instance().socket(zmq.SUB)
+            self._sock.setsockopt(zmq.CONFLATE, 1)        # keep only the latest frame
+            self._sock.setsockopt(zmq.SUBSCRIBE, b"")
+            self._sock.setsockopt(zmq.RCVTIMEO, int(kwargs.get("recv_timeout_ms", 2000)))
+            self._sock.connect(f"tcp://{host}:{port}")
+        elif backend == "teleimager":
             from teleimager import ImageClient  # lazy; hardware env only
             self._client = ImageClient(host=host, **kwargs)
             if not self._client.has_head_cam():
@@ -40,6 +49,14 @@ class HeadCamera:
             raise ValueError(f"unknown image backend: {backend}")
 
     def get_bgr_frame(self) -> Optional[np.ndarray]:
+        if self.backend == "zmq":
+            try:
+                buf = self._sock.recv()
+            except self._zmq.Again:
+                return None                                # no frame within timeout
+            if cv2 is None:
+                return None
+            return cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR)  # BGR
         if self.backend == "teleimager":
             img, _fps = self._client.get_head_frame()
             return img

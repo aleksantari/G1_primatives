@@ -71,6 +71,12 @@ class AprilTagDetector(Detector):
         self.camera_params = (k.get("fx", 0.0), k.get("fy", 0.0),
                               k.get("cx", 0.0), k.get("cy", 0.0))
 
+        # pupil_apriltags params. quad_decimate=1.0 (no downsampling) so small tags
+        # (the sim tag is ~30 px in a 640x480 frame) clear the decode threshold; the
+        # library default 2.0 misses them.
+        dp = perception_cfg.get("detector_params") or {}
+        self.quad_decimate = float(dp.get("quad_decimate", 1.0))
+        self.nthreads = int(dp.get("nthreads", 1))
         self._detector = None    # lazy pupil_apriltags.Detector (camera path only)
         self._clock = clock or __import__("time").monotonic
         self._hist: Dict[int, deque] = defaultdict(
@@ -101,7 +107,9 @@ class AprilTagDetector(Detector):
     def _ensure_detector(self):
         if self._detector is None:
             import pupil_apriltags
-            self._detector = pupil_apriltags.Detector(families=self.family)
+            self._detector = pupil_apriltags.Detector(
+                families=self.family, quad_decimate=self.quad_decimate,
+                nthreads=self.nthreads)
         return self._detector
 
     def detect(self, gray: np.ndarray, q14=None) -> Dict[str, Detection]:
