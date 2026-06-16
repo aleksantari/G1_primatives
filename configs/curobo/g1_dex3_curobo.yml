@@ -2947,12 +2947,14 @@ kinematics:
     - left_wrist_roll_link
     - right_shoulder_pitch_link
     - right_shoulder_roll_link
+    - torso_link
     left_shoulder_yaw_link:
     - left_shoulder_roll_link
     - left_elbow_link
     - left_hand_thumb_0_link
     - left_hand_middle_0_link
     - left_hand_index_0_link
+    - torso_link
     left_wrist_pitch_link:
     - left_wrist_roll_link
     - left_wrist_yaw_link
@@ -3120,6 +3122,7 @@ kinematics:
     right_shoulder_roll_link:
     - right_shoulder_pitch_link
     - right_shoulder_yaw_link
+    - torso_link
     right_shoulder_yaw_link:
     - right_shoulder_roll_link
     - right_elbow_link
@@ -3127,6 +3130,7 @@ kinematics:
     - right_hand_thumb_0_link
     - right_hand_middle_0_link
     - right_hand_index_0_link
+    - torso_link
     right_wrist_pitch_link:
     - right_wrist_roll_link
     - right_wrist_yaw_link
@@ -3165,6 +3169,9 @@ kinematics:
     - left_shoulder_pitch_link
     - right_shoulder_pitch_link
     - left_shoulder_roll_link
+    - left_shoulder_yaw_link
+    - right_shoulder_roll_link
+    - right_shoulder_yaw_link
     waist_roll_link:
     - waist_yaw_link
     - torso_link

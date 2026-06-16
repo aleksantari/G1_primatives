@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from g1_classical_manip.spatial.pose import Pose
 from g1_classical_manip.ee.hand_base import LEFT, RIGHT  # noqa: F401 (re-export sides)
 
@@ -19,6 +21,17 @@ from g1_classical_manip.ee.hand_base import LEFT, RIGHT  # noqa: F401 (re-export
 class Result:
     ok: bool
     info: str = ""
+
+
+def home(robot) -> Result:
+    """Move both arms to the configured home pose (the sim launch pose: arm joints
+    at 0 = forearms forward) and settle there. The canonical reset/ready start."""
+    q_home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])
+    res = robot.executor.run(robot.planner.plan_joint(
+        robot.arm.get_current_dual_arm_q(), q_home))
+    err = robot.executor.settle(q_home)
+    return Result(bool(res.success) and err < 0.1,
+                  f"home (settle residual {np.rad2deg(err):.1f} deg)")
 
 
 def move(robot, side: str, goal_pose: Pose) -> Result:

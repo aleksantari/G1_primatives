@@ -48,6 +48,21 @@ class Executor:
     def go_home(self):
         self.arm.ctrl_dual_arm_go_home()
 
+    def settle(self, q14: np.ndarray, tol: float = 0.05, timeout: float = 5.0) -> float:
+        """Hold q14 until the measured pose converges within `tol` rad (or timeout).
+        Returns the residual error. Useful after a move when a loose (sim) PD needs
+        time to catch up before the next plan is started."""
+        q14 = np.asarray(q14, float).reshape(DOF)
+        t0 = time.time()
+        err = float("inf")
+        while time.time() - t0 < timeout:
+            self.hold(q14)
+            err = float(np.max(np.abs(q14 - self.arm.get_current_dual_arm_q())))
+            if err < tol:
+                return err
+            time.sleep(0.02)
+        return err
+
     # ----------------------------------------------------------------- run
     def prime(self, q_start: np.ndarray) -> float:
         """Command the trajectory's first point and wait for the measured pose to

@@ -23,6 +23,12 @@ model:
 # End-effector selection (factory registry key): dex3 | dex1
 hand: dex3
 
+# Home config = the sim's launch pose. All arm joints 0 -> the URDF zero has the
+# forearms FORWARD (elbows bent ~90deg); it is collision-free and the canonical
+# reset/ready pose. 14 values, repo order: left 7 then right 7
+# (shoulder pitch/roll/yaw, elbow, wrist roll/pitch/yaw).
+home_q14_deg: [0,0,0,0,0,0,0, 0,0,0,0,0,0,0]
+
 # Conservative arm velocity limit (rad/s) used until Phase-5 hardware sign-off.
 arm_velocity_limit: 20.0
 
