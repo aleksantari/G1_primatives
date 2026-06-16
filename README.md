@@ -1,52 +1,78 @@
 # g1_classical_manip
 
-Classical (non-learned) **pick → place → arm-to-arm handover** for the Unitree G1
-(29-DoF, Dex3-1 hands), running **off-board** on an RTX 5090 workstation that talks to the
-robot's PC2 over CycloneDDS. The robot is **suspended on a back-plate mount**: only the
-14 arm joints and 2×7 hand joints are ever commanded.
+A **cuRobo-native motion library** for the Unitree G1 (29-DoF, Dex3-1 hands), exposing a
+small set of **action primitives** meant to be called as tools (eventually by an LLM agent).
+It runs **off-board** on an RTX 5090 workstation that talks to the robot's PC2 (or the Isaac
+sim) over CycloneDDS. The robot is **suspended on a back-plate mount**: only the 14 arm
+joints and 2×7 hand joints are ever commanded.
 
-- **Perception v1:** AprilTag on the head RealSense (d435).
-- **Planner v1:** Cartesian waypoints + the stock dual-arm IK (Pinocchio/CasADi/Ipopt).
-- **Planner v2 (Phase 7):** cuRoboV2 behind the same `Planner` interface.
+The authoritative design is **`G1_CLASSICAL_MANIP_PLAN.md`**; this README is the quickstart.
+**`HARDWARE_TODO.md`** lists what's still gated on the physical robot/camera. **`SIM_NOTES.md`**
+covers the Isaac sim.
 
-The authoritative design is **`G1_CLASSICAL_MANIP_PLAN.md`**. This README is the quickstart;
-**`HARDWARE_TODO.md`** lists everything still gated on the physical robot/camera.
+> **History:** v1 was a classical Cartesian-waypoint + pinocchio-IK + FSM pick-place pipeline.
+> That was an experiment; the goal is now a clean primitive surface. v1's Cartesian planner,
+> dual-arm IK, Ruckig retimer, and `tasks/` FSM have been removed — cuRobo is the single
+> source of kinematics and planning. Perception is kept on disk but dormant.
 
-## Three-layer motion stack (hard seams)
+## Motion stack
 ```
-Planner.plan(start_q14, goal, world) -> JointPath      # geometry, no timing
-Retimer.retime(JointPath)            -> JointTrajectory # Ruckig: t,q,qd,qdd
-Executor.run(JointTrajectory)                            # streams @250 Hz, owns the controller
+goal Pose ─► CuroboArmPlanner ─► JointTrajectory ─► Executor ─► DDS ─► (sim | robot)
+            plan_pose / plan_cspace   (t,q,qd,qdd,    streams @ control_hz,
+            (cuRobo native timing)     cuRobo dt)      aborts-to-hold on tracking error
 ```
-The Cartesian planner and cuRobo emit the **same `JointPath`**. IK never streams directly.
+cuRobo emits a time-parameterized, dynamically-feasible trajectory directly — no separate
+retiming step. The executor holds the only handle to `G1_29_ArmController`.
+
+## Primitives (`g1_classical_manip/primitives.py`)
+```python
+home(robot)                       # both arms to the launch pose (forearms forward), settle
+move(robot, side, goal_pose)      # one wrist to goal_pose (pelvis frame); other arm holds
+open_hand(robot, side)            # blocks until the fingers finish moving
+close_hand(robot, side, verify=)  # verify=True returns whether an object is held
+```
+Each returns `Result(ok, info)`. Tasks are composed from these.
 
 ## Layout
 ```
 g1_classical_manip/
-  robot_control/   arm controller, dual-arm IK, threaded Dex3/Dex1, motion switcher  (vendored+adapted)
-  image_server/    image client (teleimager-compatible)
-  perception/      transforms.py (all frame math), apriltag_block.py
-  motion/          planner_base, cartesian_planner, retimer, executor, curobo_planner (stub)
-  ee/              hand_base, dex3, dex1 (grasp presets + verification)
-  tasks/           fsm, primitives (move/pick/place/handover), pick_place_handover
-  utils/           rerun viz, episode recorder, weighted moving filter
-  factory.py       make_robot()-style registry (arm/hand/planner from configs)
-configs/           robot, camera, perception, task_pick_place, task_handover, planner (YAML)
-scripts/           00_dds_echo .. 05_reach_check, run_pick_place, run_handover
-tests/             pure-math unit tests (no robot needed)
+  spatial/         pose.py        — numpy SE(3) Pose (the pin.SE3 replacement), pelvis frame
+  motion/          curobo_planner — the only planner (plan_to_pose / plan_joint, fk)
+                   executor       — streams JointTrajectory @ control_hz, abort-to-hold
+                   planner_base   — JointPath / JointTrajectory containers
+  ee/              hand_base, dex3, dex1 — grasp presets + verification
+  robot_control/   robot_arm (G1_29_ArmController), robot_hand_unitree (threaded Dex3/Dex1)
+  primitives.py    home / move / open_hand / close_hand
+  factory.py       make_robot() — cuRobo planner + DDS controllers + executor
+  perception/      DORMANT (pinocchio-bound; reworked cuRobo-native later)
+configs/           robot, planner, hands (+ curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml)
+scripts/           mvp_demo.py, hand_diag.py   (others are legacy — see CLAUDE.md)
+tests/             test_pose, test_grasp       (pure-math, no robot)
 ```
 
 ## Environment
-Runs in the **`g1_classical_manip`** conda env (cloned from `tv`; Python 3.10):
-pinocchio 3.1.0, casadi, meshcat, unitree_sdk2py + `ruckig`, `pupil-apriltags`,
-`rerun-sdk==0.20.1`, numpy **pinned <2** (pinocchio ABI).
+Runs in the **`g1_curobo`** conda env (Python 3.11, numpy 2, torch 2.9.1+cu128, cuRobo V2
+from source, cyclonedds, unitree_sdk2py). **No pinocchio.** Build/install is not plain
+`pip install` — see the header of `requirements-curobo.txt`. Always use the lane wrapper:
 
 ```bash
-bash -ic 'use_conda g1_classical_manip && pytest tests/'
-bash -ic 'use_conda g1_classical_manip && python scripts/offline_plan_check.py'   # plan->retime, no robot
+bash -ic 'use_conda g1_curobo && pytest tests/'                 # 12 pure-math tests
+bash -ic 'use_conda g1_curobo && python -c "import g1_classical_manip.factory"'  # planner build
 ```
 
+## Run the MVP (against the Isaac sim)
+Bring the sim up (see `SIM_NOTES.md`), then:
+```bash
+cd ~/repos/G1_classical_manip
+CYCLONEDDS_HOME=/opt/cyclonedds \
+CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
+bash -ic 'use_conda g1_curobo && python scripts/mvp_demo.py'   # home → move → close → open → home
+```
+`scripts/hand_diag.py` isolates the hand command→state loop (state stream + commanded motion).
+
 ## Status
-Phases 0–6 are code-complete and offline-validated (IK, transforms, retimer, FSM, plan→retime).
-Phase 7 (cuRobo) is a stubbed seam. All DDS/camera/robot acceptance tests are deferred — see
-`HARDWARE_TODO.md`.
+cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs
+end-to-end on `unitree_sim_isaaclab` with zero executor aborts. `home`/`move` are
+collision-aware via cuRobo. Hand presets are untuned placeholders. Perception, Rerun
+logging, hardware bring-up, and richer primitives (grasp-frame offset, pick composite)
+are open — see `HARDWARE_TODO.md` and the PLAN's roadmap.

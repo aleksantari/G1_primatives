@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "g1_classical_manip"
 version = "0.1.0"
-description = "Classical pick/place/handover pipeline for the suspended Unitree G1 (29-DoF, Dex3-1)."
+description = "cuRobo-native action-primitive motion library for the suspended Unitree G1 (29-DoF, Dex3-1)."
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -18,11 +18,11 @@ license = { text = "Apache-2.0" }
 dependencies = [
     "numpy>=2",
     "scipy>=1.7",
-    "rerun-sdk>=0.29",
-    "ruckig>=0.14",
+    "rerun-sdk>=0.29",         # logging (roadmap; not yet wired)
+    "pyyaml",
+    # perception deps (dormant until perception is reworked cuRobo-native)
     "pupil-apriltags>=1.0",
     "opencv-python",
-    "pyyaml",
     "pyzmq",
     "tyro",
     "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git",
