@@ -1,10 +1,14 @@
 """cuRobo arm planner — the repo's only motion planner.
 
 Wraps a warm cuRobo MotionPlanner built from a G1 dex3 robot config (arms-only:
-legs/waist/hands locked). `plan_to_pose` moves ONE arm's wrist to a goal pose
-(idle arm held at its current FK pose), returns geometry that the Ruckig retimer
-times into a JointTrajectory the executor streams. Runs in the cuRobo env
-(numpy2/py3.11/CUDA); no pinocchio.
+legs/waist/hands locked). cuRobo's trajectory optimizer emits a fully
+time-parameterized, dynamically-feasible plan (position/velocity/acceleration at
+a fixed dt), so we build the executor's JointTrajectory directly from it -- no
+separate retiming step. Speed is governed by the cuRobo robot config's joint
+velocity/accel limits. Runs in the cuRobo env (numpy2/py3.11/CUDA); no pinocchio.
+
+  plan_to_pose(start_q14, side, goal_pose) -> JointTrajectory   (cuRobo plan_pose)
+  plan_joint (start_q14, goal_q14)         -> JointTrajectory   (cuRobo plan_cspace)
 """
 from __future__ import annotations
 
@@ -12,8 +16,7 @@ from typing import Optional
 
 import numpy as np
 
-from g1_classical_manip.motion.planner_base import JointPath, JointTrajectory, DOF
-from g1_classical_manip.motion.retimer import retime_from_config
+from g1_classical_manip.motion.planner_base import JointTrajectory, DOF
 from g1_classical_manip.spatial.pose import Pose
 from g1_classical_manip.ee.hand_base import LEFT, RIGHT
 
@@ -30,7 +33,8 @@ class PlanningError(RuntimeError):
 
 
 class CuroboArmPlanner:
-    """One warm cuRobo MotionPlanner; plans single-arm wrist-to-pose moves."""
+    """One warm cuRobo MotionPlanner; plans single-arm wrist-to-pose and
+    joint-space moves, returning executor-ready JointTrajectory objects."""
 
     def __init__(self, robot_cfg_path: str, planner_cfg: Optional[dict] = None):
         import torch
@@ -45,7 +49,8 @@ class CuroboArmPlanner:
         assert set(self.active) == set(REPO_ARM), "active joints != repo arm set"
 
     # --- helpers ---
-    def _start_state(self, q_repo14):
+    def _joint_state(self, q_repo14):
+        """repo-order (14,) config -> cuRobo JointState in active (cuRobo) order."""
         from curobo.types import JointState
         q = np.asarray(q_repo14, float).reshape(DOF)
         q_active = q[[REPO_ARM.index(j) for j in self.active]]   # repo -> cuRobo order
@@ -62,9 +67,31 @@ class CuroboArmPlanner:
         quat = lp.quaternion[0].detach().cpu().numpy()   # wxyz
         return Pose.from_quaternion(quat, pos)
 
+    def _to_trajectory(self, result, label: str) -> JointTrajectory:
+        """cuRobo TrajOptSolverResult -> JointTrajectory (14, repo order), using
+        cuRobo's own interpolated timing (position/velocity/acceleration at dt)."""
+        interp = result.get_interpolated_plan()
+        names = list(interp.joint_names)
+        nj = len(names)
+        cols = [names.index(j) for j in REPO_ARM]            # cuRobo -> repo order
+
+        def _col(x):
+            return x.detach().cpu().numpy().reshape(-1, nj)[:, cols]
+
+        q = _col(interp.position)
+        qd = _col(interp.velocity) if interp.velocity is not None else np.zeros_like(q)
+        qdd = _col(interp.acceleration) if interp.acceleration is not None else np.zeros_like(q)
+        dt = float(interp.dt)
+        t = np.arange(q.shape[0]) * dt
+        return JointTrajectory(t, q, qd, qdd, meta={
+            "source": "curobo", "label": label, "dt": dt,
+            "duration": float(t[-1]) if t.size else 0.0,
+            "max_qd": float(np.max(np.abs(qd))) if qd.size else 0.0,
+        })
+
     def fk(self, side: str, q_repo14) -> Pose:
         """Wrist-yaw pose (pelvis frame) of `side` at the given dual-arm config."""
-        ks = self._mp.compute_kinematics(self._start_state(q_repo14))
+        ks = self._mp.compute_kinematics(self._joint_state(q_repo14))
         return self._link_pose(ks, WRIST_FRAME[side])
 
     def default_q(self) -> np.ndarray:
@@ -72,20 +99,23 @@ class CuroboArmPlanner:
         q_active = self._mp.default_joint_state.position.detach().cpu().numpy().reshape(-1)
         return q_active[[self.active.index(j) for j in REPO_ARM]]
 
-    def plan_joint(self, start_q_repo14, goal_q_repo14) -> JointTrajectory:
-        """Direct joint-space move (Ruckig-retimed). No collision check — use only
-        for known-safe moves (e.g. un-tucking from the at-rest pose to ready)."""
-        q = np.vstack([np.asarray(start_q_repo14, float).reshape(DOF),
-                       np.asarray(goal_q_repo14, float).reshape(DOF)])
-        path = JointPath(q, meta={"waypoint_index": [(1, "joint_goal")]})
-        return retime_from_config(path, self.planner_cfg)
-
     # --- planning ---
+    def plan_joint(self, start_q_repo14, goal_q_repo14) -> JointTrajectory:
+        """Collision-aware joint-space move to a configuration (cuRobo plan_cspace).
+        Native cuRobo timing; both arms move together."""
+        start = self._joint_state(start_q_repo14)
+        goal = self._joint_state(goal_q_repo14)
+        result = self._mp.plan_cspace(goal, start)
+        if result is None or not bool(result.success.any()):
+            raise PlanningError(
+                f"cuRobo plan_cspace failed -> {np.round(np.asarray(goal_q_repo14, float), 3)}")
+        return self._to_trajectory(result, "joint_goal")
+
     def plan_to_pose(self, start_q_repo14, side: str, goal_pose: Pose) -> JointTrajectory:
         """Move `side` wrist to goal_pose (pelvis frame); hold the other arm.
-        Returns a Ruckig-retimed JointTrajectory (14, repo order)."""
+        Returns a JointTrajectory (14, repo order) with cuRobo's native timing."""
         from curobo.types import GoalToolPose, Pose as CuPose
-        start = self._start_state(start_q_repo14)
+        start = self._joint_state(start_q_repo14)
         ks = self._mp.compute_kinematics(start)
 
         pose_dict = {}
@@ -102,11 +132,4 @@ class CuroboArmPlanner:
         if result is None or not bool(result.success.any()):
             raise PlanningError(
                 f"cuRobo plan_pose failed: {side} -> {np.round(goal_pose.translation, 3)}")
-
-        interp = result.get_interpolated_plan()
-        names = list(interp.joint_names)
-        nj = interp.position.shape[-1]
-        cols = [names.index(j) for j in REPO_ARM]                 # cuRobo -> repo order
-        q = interp.position.detach().cpu().numpy().reshape(-1, nj)[:, cols]   # (N, 14)
-        path = JointPath(q, meta={"waypoint_index": [(q.shape[0] - 1, f"{side}_goal")]})
-        return retime_from_config(path, self.planner_cfg)
+        return self._to_trajectory(result, f"{side}_goal")

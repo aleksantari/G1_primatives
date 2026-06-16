@@ -1,11 +1,8 @@
-# Motion = cuRobo (robot config under configs/curobo/*.yml). cuRobo geometry is
-# Ruckig-retimed here before the executor streams it.
-retimer:
-  control_hz: 250.0
-  max_velocity: 2.0         # rad/s (14-vector or scalar broadcast)
-  max_acceleration: 5.0     # rad/s^2
-  max_jerk: 30.0            # rad/s^3
-
+# Motion = cuRobo (robot config under configs/curobo/*.yml). cuRobo emits a
+# time-parameterized, dynamically-feasible trajectory directly (position/velocity/
+# acceleration at a fixed dt) -- no separate retiming step. Trajectory SPEED is
+# governed by the cuRobo robot config's joint velocity/accel limits.
 executor:
+  control_hz: 250.0                # rate the executor streams (samples) the trajectory
   tracking_error_abort_rad: 0.20   # hold position if |q_cmd - q_meas| exceeds this
   startup_ramp_s: 3.0

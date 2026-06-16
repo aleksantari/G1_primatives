@@ -1,12 +1,12 @@
-"""Geometry/timing containers for the motion stack (pinocchio-free).
+"""Timing containers for the motion stack (pinocchio-free).
 
-    CuroboArmPlanner.plan_to_pose(...) -> JointPath (geometry, no timing)
-    Retimer.retime(JointPath)          -> JointTrajectory
+    CuroboArmPlanner.plan_to_pose(...) -> JointTrajectory   (cuRobo native timing)
     Executor.run(JointTrajectory)
 
-Poses are `spatial.pose.Pose` in the pelvis frame (see spatial/pose.py); planning
-goals are passed to the planner directly, so the old Cartesian Goal/Waypoint/World
-containers are gone.
+cuRobo emits a fully time-parameterized trajectory, so there is no separate
+retiming step and no geometry-only handoff. `JointPath` is retained as a plain
+(N,14) geometry container for inspection/offline use; the live planner builds a
+`JointTrajectory` directly. Poses are `spatial.pose.Pose` in the pelvis frame.
 """
 from __future__ import annotations
 

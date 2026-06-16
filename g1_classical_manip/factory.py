@@ -99,7 +99,7 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
 
     ex = cfg["planner"].get("executor", {})
     executor = Executor(arm, ik=None, gravity_comp=False,
-                        control_hz=cfg["planner"]["retimer"].get("control_hz", 250.0),
+                        control_hz=ex.get("control_hz", 250.0),
                         tracking_error_abort_rad=ex.get("tracking_error_abort_rad", 0.20))
 
     robot.arm = arm
