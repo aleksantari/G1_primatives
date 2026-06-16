@@ -67,6 +67,19 @@ class CuroboArmPlanner:
         ks = self._mp.compute_kinematics(self._start_state(q_repo14))
         return self._link_pose(ks, WRIST_FRAME[side])
 
+    def default_q(self) -> np.ndarray:
+        """cuRobo's collision-free default ('ready') arm config, in repo order."""
+        q_active = self._mp.default_joint_state.position.detach().cpu().numpy().reshape(-1)
+        return q_active[[self.active.index(j) for j in REPO_ARM]]
+
+    def plan_joint(self, start_q_repo14, goal_q_repo14) -> JointTrajectory:
+        """Direct joint-space move (Ruckig-retimed). No collision check — use only
+        for known-safe moves (e.g. un-tucking from the at-rest pose to ready)."""
+        q = np.vstack([np.asarray(start_q_repo14, float).reshape(DOF),
+                       np.asarray(goal_q_repo14, float).reshape(DOF)])
+        path = JointPath(q, meta={"waypoint_index": [(1, "joint_goal")]})
+        return retime_from_config(path, self.planner_cfg)
+
     # --- planning ---
     def plan_to_pose(self, start_q_repo14, side: str, goal_pose: Pose) -> JointTrajectory:
         """Move `side` wrist to goal_pose (pelvis frame); hold the other arm.
