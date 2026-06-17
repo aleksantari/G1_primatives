@@ -86,21 +86,24 @@ use_conda g1_curobo
 
 # incremental bring-up ladder (each `--target sim|real`; sim shown), run in order:
 python scripts/01_check_dds.py  --target sim     # READ-ONLY arm + hand state (no motion)
-python scripts/02_check_image.py                 # head-cam live feed
+python scripts/02_check_image.py --target sim    # head-cam feed (sim mono / real ZED eye)
 python scripts/03_hands.py       --target sim --side right   # close/open hand primitives
 python scripts/04_move.py        --target sim                # home (add --dz 0.1 for a lift)
 python scripts/05_mvp_demo.py    --target sim    # home → move → close → open → home
-python scripts/06_detect.py                      # AprilTag feed + pose vs ground truth
+python scripts/06_detect.py      --target sim    # AprilTag feed + pose vs ground truth
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` command
-the arms/hands, `06` is camera-only. `02`/`06` are sim-only for now (real image client TODO);
-they don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains as a low-level
-hand command→state diagnostic.
+the arms/hands, `06` is camera-only. `02`/`06` work on both targets: `--target real` uses the ZED
+head via `camera_real.yaml` (fill its intrinsics + mount first). The camera scripts don't use the
+`CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand command→state diagnostic.
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs
 end-to-end on `unitree_sim_isaaclab` with zero executor aborts; `home`/`move` are
 collision-aware via cuRobo. `detect()` is **sim-validated** too — the head-cam AprilTag
 (ID 14) block pose lands within ~3.5 cm of ground truth. Hand presets are untuned
-placeholders. Rerun logging, hardware bring-up, and richer primitives (grasp-frame offset,
-`detect → move` pick composite) are open — see `HARDWARE_TODO.md` and the PLAN's roadmap.
+placeholders. The **hardware path is code-complete** — DDS control, auto `MotionSwitcher`, the
+config-driven velocity cap, gravity-comp (off by default, sign-validated), and the real ZED image
+client are all wired; only config (NIC, ZED intrinsics/mount) + on-hardware tuning remain. Rerun
+logging and richer primitives (grasp-frame offset, `detect → move` pick) are open — see
+`HARDWARE_TODO.md` and the PLAN's roadmap.
