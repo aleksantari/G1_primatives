@@ -12,5 +12,8 @@ rerun/
 *.rrd
 # keep vendored meshes/urdf tracked; ignore local scratch
 /scratch/
+# runtime cache written by the vendored ImageClient REQ-config (real-robot connect)
+/cam_config_client.yaml
+/cam_config_server.yaml
 .claude/
 .vscode/

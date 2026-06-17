@@ -1,0 +1,44 @@
+# REAL G1 head camera (ZED stereo) intrinsics + extrinsics. Selected by the
+# --target real ladder (make_robot(camera_config="camera_real.yaml")).
+#
+# The ZED publishes the stereo pair as ONE side-by-side JPEG (720x2560); the
+# HeadCamera `unitree` backend slices it at width//2 to a single 1280x720 eye
+# (stream.stereo / stream.stereo_side below). The vendored unitree_lerobot
+# ImageClient fetches the per-camera ZMQ ports via a REQ-config on request_port.
+
+extrinsics:
+  source: "urdf:d435_link"     # FK mount frame (head camera body on the locked torso).
+  body_to_optical: "ros"       # tag pose is in the OPTICAL frame; rotate body->optical.
+  # MOUNT (USER-PROVIDED / hand-eye calibration): constant transform from d435_link to
+  # the CHOSEN EYE's optical-body frame. The ZED's left/right optical centers sit ~half
+  # the stereo baseline (~3-6 cm) off the mount, plus any physical ZED-vs-d435 mounting
+  # offset -- set this or detected block poses are laterally biased. identity = TODO.
+  mount:
+    xyz: [0.0, 0.0, 0.0]       # meters; e.g. +/- baseline/2 along the camera x for L/R eye
+    rpy: [0.0, 0.0, 0.0]
+  # 4x4 row-major pelvis-frame correction, left-multiplied onto FK(d435).
+  extrinsic_correction:
+    - [1, 0, 0, 0]
+    - [0, 1, 0, 0]
+    - [0, 0, 1, 0]
+    - [0, 0, 0, 1]
+
+# ZED per-eye intrinsics at the NATIVE sliced resolution (1280x720, HD720) -- NO resize.
+# REQUIRED for metric AprilTag pose. USER-PROVIDED: read from the ZED factory calibration
+# (or `ZED_Explorer`/SDK) for the CHOSEN eye (stream.stereo_side) at 1280x720.
+intrinsics:
+  width: 1280
+  height: 720
+  fx: 0.0                      # USER-PROVIDED (ZED HD720, chosen eye)
+  fy: 0.0
+  cx: 0.0
+  cy: 0.0
+  distortion: [0.0, 0.0, 0.0, 0.0, 0.0]   # k1,k2,p1,p2,k3 (ZED is fairly rectilinear)
+
+# Head-camera image stream (vendored unitree_lerobot ImageClient over ZMQ).
+stream:
+  backend: unitree            # threaded SUB + REQ-config(:request_port) + TeleImage.
+  host: "192.168.123.164"     # PC2 image-server IP. USER-PROVIDED if different.
+  request_port: 60000         # config-request port (REQ); per-camera ZMQ ports come back.
+  stereo: true               # ZED head is binocular side-by-side -> slice at width//2.
+  stereo_side: left          # which eye to feed perception: "left" | "right".

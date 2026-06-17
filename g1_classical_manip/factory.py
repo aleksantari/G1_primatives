@@ -25,17 +25,23 @@ from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner
 from g1_classical_manip.motion.executor import Executor
 
 _CONFIG_FILES = {"robot": "robot.yaml", "planner": "planner.yaml", "hands": "hands.yaml",
-                 "camera": "camera.yaml", "perception": "perception.yaml"}
+                 "perception": "perception.yaml"}
+# Camera config is chosen separately (sim mono vs real ZED stereo); the --target
+# ladder passes camera_config=camera_real.yaml.
+DEFAULT_CAMERA_CONFIG = "camera_sim.yaml"
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_CONFIG_DIR = os.path.join(_REPO_ROOT, "configs")
 
 
-def load_configs(config_dir: str = DEFAULT_CONFIG_DIR) -> Dict[str, Any]:
+def load_configs(config_dir: str = DEFAULT_CONFIG_DIR,
+                 camera_file: str = DEFAULT_CAMERA_CONFIG) -> Dict[str, Any]:
     cfg = {}
     for key, fname in _CONFIG_FILES.items():
         with open(os.path.join(config_dir, fname)) as f:
             cfg[key] = yaml.safe_load(f)
+    with open(os.path.join(config_dir, camera_file)) as f:
+        cfg["camera"] = yaml.safe_load(f)   # camera_sim.yaml | camera_real.yaml (ZED)
     return cfg
 
 
@@ -62,6 +68,7 @@ def _build_perception(planner, cfg: Dict[str, Any]):
     from g1_classical_manip.perception.transforms import Frames
     from g1_classical_manip.perception.apriltag_block import AprilTagDetector
     from g1_classical_manip.perception.ground_truth import GroundTruthDetector
+    from g1_classical_manip.perception.sim_state import SimStateDetector
 
     sim_base = (cfg["robot"].get("sim", {}) or {}).get("base_world_pose")
     frames = Frames(planner, camera_cfg=cfg["camera"], sim_base_world_pose=sim_base)
@@ -72,6 +79,9 @@ def _build_perception(planner, cfg: Dict[str, Any]):
     elif kind == "ground_truth":
         block = (perc.get("ground_truth", {}) or {}).get("block", {})
         detector = GroundTruthDetector.from_config(frames, block)
+    elif kind == "sim_state":
+        # live sim ground-truth via rt/sim_state; needs DDS (connect_dds=True)
+        detector = SimStateDetector.from_config(frames, perc.get("sim_state", {}))
     else:
         raise ValueError(f"unknown detector: {kind}")
     return frames, detector
@@ -80,7 +90,9 @@ def _build_perception(planner, cfg: Dict[str, Any]):
 def _build_camera(cfg: Dict[str, Any]):
     from g1_classical_manip.image_server.image_client import HeadCamera
     st = (cfg["camera"] or {}).get("stream", {})
-    backend = st.get("backend", "unitree_lerobot")
+    backend = st.get("backend", "zmq")
+    # forward the rest of the stream block (port / request_port / stereo / stereo_side
+    # / recv_timeout_ms) straight to HeadCamera as kwargs.
     extra = {k: v for k, v in st.items() if k not in ("backend", "host")}
     return HeadCamera(host=st.get("host", "127.0.0.1"), backend=backend, **extra)
 
@@ -88,8 +100,9 @@ def _build_camera(cfg: Dict[str, Any]):
 def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
                dds_domain: int = None, dds_interface: str = None, mode: str = None,
                connect_hand: bool = True, hand: str = None,
-               connect_camera: bool = False, enter_debug_mode: bool = None) -> Robot:
-    cfg = load_configs(config_dir)
+               connect_camera: bool = False, enter_debug_mode: bool = None,
+               camera_config: str = DEFAULT_CAMERA_CONFIG) -> Robot:
+    cfg = load_configs(config_dir, camera_file=camera_config)
     robot_cfg = cfg["robot"]
     # optional overrides (unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
     if dds_domain is not None:

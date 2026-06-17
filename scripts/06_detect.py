@@ -2,11 +2,11 @@
 """06 - Perception check: live head-cam feed with AprilTag overlay, then the fused
 detect() pose cross-checked against the ground-truth detector.
 
-Camera-only (no control DDS, nothing moves). Sim now (head-cam ZMQ); the real-robot
-image client is not wired yet. 'q' quits the live window early.
+Camera-only (no control DDS, nothing moves). 'q' quits the live window early.
+  --target sim   Isaac mono head cam (camera_sim.yaml)
+  --target real  ZED stereo, one eye (camera_real.yaml)
 
-  CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
-  bash -ic 'use_conda g1_curobo && python scripts/06_detect.py --object block --secs 15'
+  bash -ic 'use_conda g1_curobo && python scripts/06_detect.py --target sim --secs 15'
 """
 import argparse
 import time
@@ -37,12 +37,13 @@ def _overlay(bgr, raw, accepted):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = _rig.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--object", default="block")
     ap.add_argument("--secs", type=float, default=15.0)
     args = ap.parse_args()
 
-    robot = make_robot(connect_dds=False, connect_camera=True)   # camera only -> no motion
+    robot = make_robot(connect_dds=False, connect_camera=True,   # camera only -> no motion
+                       camera_config=_rig.camera_config_for(args.target))
     det, cam = robot.detector, robot.camera
     print("camera shape:", cam.shape(), "| detector:", type(det).__name__)
     view = _rig.Viewer("detect", save_path="/tmp/detect_feed.png")

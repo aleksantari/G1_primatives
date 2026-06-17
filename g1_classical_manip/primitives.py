@@ -59,10 +59,12 @@ def detect(robot, target: str = "block", frames: int = 5) -> Optional[Detection]
     got, attempts, last = 0, 0, None
     while got < max(1, frames) and attempts < max(1, frames) * 4:
         attempts += 1
-        gray = cam.get_gray_frame() if cam is not None else None
-        if cam is not None and gray is None:
+        # RGB-first: detectors get RGB (AprilTagDetector grayscales itself); future
+        # RGB perception primitives consume get_rgb_frame() the same way.
+        rgb = cam.get_rgb_frame() if cam is not None else None
+        if cam is not None and rgb is None:
             continue                                   # frame not ready; retry
-        last = robot.detector.detect(gray, q14).get(target, last)
+        last = robot.detector.detect(rgb, q14).get(target, last)
         got += 1
     pose = robot.detector.block_pose(target)
     if pose is None:

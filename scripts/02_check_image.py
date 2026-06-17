@@ -1,13 +1,12 @@
 #!/usr/bin/env python
-"""02 - Head-camera feed check. Pulls frames from the head camera (ZMQ) and shows a
-live window ('q' to quit; no display -> saves to /tmp/head_feed.png).
+"""02 - Head-camera feed check. Pulls frames from the head camera and shows a live
+window ('q' to quit; no display -> saves to /tmp/head_feed.png).
 
-Camera-only (no control DDS, nothing moves). Works against the SIM stream now; the
-real-robot image client is not wired yet (HARDWARE_TODO). Camera host/port come from
-configs/camera.yaml `stream` (sim: 127.0.0.1:55555).
+Camera-only (no control DDS, nothing moves).
+  --target sim   Isaac mono 640x480 on :55555  (configs/camera_sim.yaml)
+  --target real  ZED stereo, sliced to one 1280x720 eye  (configs/camera_real.yaml)
 
-  CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
-  bash -ic 'use_conda g1_curobo && python scripts/02_check_image.py'
+  bash -ic 'use_conda g1_curobo && python scripts/02_check_image.py --target sim'
 """
 import argparse
 import time
@@ -17,12 +16,13 @@ from g1_classical_manip.factory import make_robot
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = _rig.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--secs", type=float, default=30.0)
     args = ap.parse_args()
 
-    robot = make_robot(connect_dds=False, connect_camera=True)   # camera only -> no motion
-    print("camera shape (h,w):", robot.camera.shape())
+    robot = make_robot(connect_dds=False, connect_camera=True,   # camera only -> no motion
+                       camera_config=_rig.camera_config_for(args.target))
+    print(f"[{args.target}] camera shape (h,w):", robot.camera.shape())
     view = _rig.Viewer("head cam", save_path="/tmp/head_feed.png")
 
     t0, n = time.time(), 0

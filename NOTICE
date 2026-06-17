@@ -16,6 +16,7 @@ derived from these projects carry an attribution header at the top:
   g1_classical_manip/robot_control/robot_arm_ik.py         (G1_29_ArmIK)
   g1_classical_manip/robot_control/robot_hand_unitree.py   (Dex3/Dex1, re-threaded)
   g1_classical_manip/robot_control/motion_switcher.py      (MotionSwitcher)
+  g1_classical_manip/image_server/zmq_image_client.py      (ImageClient/TeleImage, from unitree_lerobot)
   g1_classical_manip/utils/weighted_moving_filter.py
   g1_classical_manip/utils/rerun_visualizer.py
   g1_classical_manip/utils/episode_writer.py

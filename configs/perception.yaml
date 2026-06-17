@@ -1,7 +1,8 @@
-# Perception config. `detector` selects the single active head-camera detector
-# (factory `_DETECTORS` map): `apriltag` (live ZMQ + AprilTag) or `ground_truth`
-# (constant sim block pose, no camera/marker). A model-based detector registers
-# in the same map later.
+# Perception config. `detector` selects the single active head-camera detector:
+#   apriltag     -- live head-cam + AprilTag (the real detector).
+#   sim_state    -- LIVE sim ground truth from rt/sim_state (marker-free; tracks the
+#                   block as it moves). Needs DDS (make_robot connect_dds=True).
+#   ground_truth -- CONSTANT configured block pose (offline fallback; no DDS/camera).
 detector: apriltag
 
 # AprilTag block detection (params for the `apriltag` detector).
@@ -36,10 +37,17 @@ detector_params:
   quad_decimate: 1.0
   nthreads: 4
 
-# Ground-truth detector (sim, marker-free). The block's WORLD-frame pose in the
-# Isaac scene; transforms.Frames maps it to the pelvis frame via robot.yaml
-# `sim.base_world_pose`. Matches the dex3 red-block scene init pose (later: swap
-# for a live rt/sim_state read). Used only when `detector: ground_truth`.
+# Live sim ground truth (`detector: sim_state`). Subscribes to rt/sim_state and reads
+# rigid_object.<object_key>.root_pose (sim WORLD frame, Isaac wxyz quat), mapped to the
+# pelvis frame via robot.yaml `sim.base_world_pose`. object_key is the Isaac rigid-object
+# name (the dex3 red-block scene uses "object").
+sim_state:
+  object_key: "object"
+  topic: "rt/sim_state"
+
+# Static ground-truth fallback (`detector: ground_truth`, no DDS/camera). CONSTANT block
+# WORLD pose; transforms.Frames maps it to the pelvis frame. Goes stale if the block moves
+# -- prefer `sim_state` against a running sim. Spawn pose of the dex3 red-block scene:
 ground_truth:
   block:
     xyz: [-4.25, -4.03, 0.84]

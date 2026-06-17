@@ -1,4 +1,6 @@
-# Head RealSense (d435) intrinsics + extrinsics.
+# SIM head camera (Isaac front_camera) intrinsics + extrinsics. Selected by
+# make_robot(camera_config="camera_sim.yaml") -- the default; the --target real
+# ladder uses camera_real.yaml (ZED). Mono 640x480, no stereo slice.
 #
 # Extrinsics: T_pelvis_camera is NOT hand-measured here -- it is derived by
 # forward kinematics to the URDF `d435_link` frame (transforms.py), since the
@@ -37,5 +39,6 @@ intrinsics:
 # (sim + PC2) publishes JPEG frames on a ZMQ PUB socket -> use the `zmq` backend.
 stream:
   backend: zmq               # direct SUB to the teleimager ZMQ PUB (JPEG frames).
-  host: "127.0.0.1"          # sim loopback; real robot = PC2 (e.g. 192.168.123.164).
+  host: "127.0.0.1"          # sim loopback.
   port: 55555                # head_camera zmq_port (teleimager cam_config_server.yaml).
+  stereo: false              # sim head is mono -> no slice.

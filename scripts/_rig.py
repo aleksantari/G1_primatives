@@ -26,6 +26,11 @@ def dds_for(target: str):
     return dds["domain_id"], (dds.get("interface") or None)
 
 
+def camera_config_for(target: str) -> str:
+    """Camera yaml for the target: real -> ZED stereo (camera_real.yaml), else sim mono."""
+    return "camera_real.yaml" if target == "real" else "camera_sim.yaml"
+
+
 def _warn_sim_uri(target: str):
     if target == "sim" and not os.environ.get("CYCLONEDDS_URI"):
         print("WARNING: CYCLONEDDS_URI is unset -- sim loopback DDS discovery will likely "
