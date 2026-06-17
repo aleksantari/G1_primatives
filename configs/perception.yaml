@@ -11,13 +11,14 @@ tag:
                            # apriltag_14.png) x 0.06 (cube top face). Geometric/true
                            # value; GT depth cross-check agreed to ~5%. On hardware,
                            # measure the printed tag's black-square edge.
-  # Per-tag rigid offset from the tag frame to the block geometric center,
-  # expressed in the tag frame (x,y,z meters + rpy radians). The sim USD bakes the
-  # tag on the +Z (top) face of the 6 cm cube, so the block center is 0.03 m below
-  # the tag along -z_tag.
+  # Rigid offset from the AprilTag frame to the block BODY frame, in the tag frame.
+  # The tag is on the +Z (top) face of the 6 cm cube: the block center is 0.03 m
+  # below the tag along -z_tag (xyz), and rpy=[pi,0,0] flips the tag's optical frame
+  # (z into the surface) onto the block body frame (z up) -- the measured tag->body
+  # rotation was 178.7 deg about x. detect() then returns an upright block pose.
   tag_to_block:
     xyz: [0.0, 0.0, -0.03]
-    rpy: [0.0, 0.0, 0.0]
+    rpy: [3.141593, 0.0, 0.0]
   # Map of tag id -> semantic name (optional). Unlisted ids are ignored.
   # The sim red-block USD carries AprilTag ID 14 (family 36h11).
   ids:
