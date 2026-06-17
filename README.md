@@ -30,8 +30,10 @@ home(robot)                       # both arms to the launch pose (forearms forwa
 move(robot, side, goal_pose)      # one wrist to goal_pose (pelvis frame); other arm holds
 open_hand(robot, side)            # blocks until the fingers finish moving
 close_hand(robot, side, verify=)  # verify=True returns whether an object is held
+detect(robot, target="block")     # head-cam AprilTag → object pose (pelvis frame)
 ```
-Each returns `Result(ok, info)`. Tasks are composed from these.
+Action verbs return `Result(ok, info)`; `detect` returns a `Detection` whose `.pose` feeds
+straight into `move`. Tasks are composed from these.
 
 ## Layout
 ```
@@ -42,12 +44,14 @@ g1_classical_manip/
                    planner_base   — JointPath / JointTrajectory containers
   ee/              hand_base, dex3, dex1 — grasp presets + verification
   robot_control/   robot_arm (G1_29_ArmController), robot_hand_unitree (threaded Dex3/Dex1)
-  primitives.py    home / move / open_hand / close_hand
-  factory.py       make_robot() — cuRobo planner + DDS controllers + executor
-  perception/      DORMANT (pinocchio-bound; reworked cuRobo-native later)
-configs/           robot, planner, hands (+ curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml)
-scripts/           mvp_demo.py, hand_diag.py   (others are legacy — see CLAUDE.md)
-tests/             test_pose, test_grasp       (pure-math, no robot)
+  primitives.py    home / move / open_hand / close_hand / detect
+  factory.py       make_robot() — cuRobo planner + DDS controllers + executor + perception
+  image_server/    HeadCamera — head-cam frames (zmq | teleimager | unitree_lerobot)
+  perception/      transforms (frame math, cuRobo FK) · base (Detector seam) ·
+                   apriltag_block · ground_truth   (Detector = apriltag | ground_truth)
+configs/           robot, planner, hands, camera, perception (+ curobo/, cyclonedds_loopback.xml)
+scripts/           mvp_demo.py, hand_diag.py, detect_check.py   (others are legacy — see CLAUDE.md)
+tests/             test_pose, test_grasp, test_detect   (pure-math, no robot)
 ```
 
 ## Environment
@@ -56,23 +60,44 @@ from source, cyclonedds, unitree_sdk2py). **No pinocchio.** Build/install is not
 `pip install` — see the header of `requirements-curobo.txt`. Always use the lane wrapper:
 
 ```bash
-bash -ic 'use_conda g1_curobo && pytest tests/'                 # 12 pure-math tests
+bash -ic 'use_conda g1_curobo && pytest tests/'                 # 18 pure-math tests
 bash -ic 'use_conda g1_curobo && python -c "import g1_classical_manip.factory"'  # planner build
 ```
 
-## Run the MVP (against the Isaac sim)
-Bring the sim up (see `SIM_NOTES.md`), then:
+## Run against the Isaac sim
+Two terminals share one DDS bus on loopback (full notes + gotchas in `SIM_NOTES.md`).
+
+**Terminal 1 — Isaac sim** (`launch_sim.sh` activates the `unitree` env itself; keep it running):
+```bash
+cd ~/repos/unitree_sim_isaaclab
+UNITREE_DDS_IFACE=lo \
+CYCLONEDDS_URI=file://$HOME/repos/G1_classical_manip/configs/cyclonedds_loopback.xml \
+TASK=Isaac-PickPlace-RedBlock-G129-Dex3-Joint \
+./launch_sim.sh                 # opens the Isaac viewer; add --headless for none
+```
+Wait until it prints `[DDSManager] DDS system initialized` and is stepping.
+
+**Terminal 2 — control stack** (the `g1_curobo` env):
 ```bash
 cd ~/repos/G1_classical_manip
-CYCLONEDDS_HOME=/opt/cyclonedds \
-CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
-bash -ic 'use_conda g1_curobo && python scripts/mvp_demo.py'   # home → move → close → open → home
+export CYCLONEDDS_HOME=/opt/cyclonedds
+export CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml   # MUST match the sim
+
+# action primitives: home → move → close → open → home
+bash -ic 'use_conda g1_curobo && python scripts/mvp_demo.py'
+# hand command→state loop in isolation (state stream + commanded motion)
+bash -ic 'use_conda g1_curobo && python scripts/hand_diag.py --side right'
+
+# perception: AprilTag block pose from the head cam, cross-checked vs ground truth
+bash -ic 'use_conda g1_curobo && python scripts/detect_check.py'
 ```
-`scripts/hand_diag.py` isolates the hand command→state loop (state stream + commanded motion).
+`detect_check.py` reads only the head-camera ZMQ stream (the two `CYCLONEDDS_*` exports above
+don't apply to it); it prints the detected block pose in the pelvis frame and the ground-truth delta.
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs
-end-to-end on `unitree_sim_isaaclab` with zero executor aborts. `home`/`move` are
-collision-aware via cuRobo. Hand presets are untuned placeholders. Perception, Rerun
-logging, hardware bring-up, and richer primitives (grasp-frame offset, pick composite)
-are open — see `HARDWARE_TODO.md` and the PLAN's roadmap.
+end-to-end on `unitree_sim_isaaclab` with zero executor aborts; `home`/`move` are
+collision-aware via cuRobo. `detect()` is **sim-validated** too — the head-cam AprilTag
+(ID 14) block pose lands within ~3.5 cm of ground truth. Hand presets are untuned
+placeholders. Rerun logging, hardware bring-up, and richer primitives (grasp-frame offset,
+`detect → move` pick composite) are open — see `HARDWARE_TODO.md` and the PLAN's roadmap.
