@@ -61,9 +61,17 @@ def main():
     gt_pose = GroundTruthDetector.from_config(robot.frames, gt_block).block_pose(args.target)
     print(f"GroundTruth {args.target} @ pelvis: {np.round(gt_pose.translation, 4)} m")
 
-    delta = det.pose.translation - gt_pose.translation
-    print(f"delta (apriltag - gt): {np.round(delta * 1000, 1)} mm  |  "
-          f"norm {np.linalg.norm(delta) * 1000:.1f} mm")
+    # translation delta
+    dt = det.pose.translation - gt_pose.translation
+    print(f"translation delta (apriltag - gt): {np.round(dt * 1000, 1)} mm  |  "
+          f"norm {np.linalg.norm(dt) * 1000:.1f} mm")
+
+    # rotation delta: geodesic angle between the two orientations
+    R_err = det.pose.rotation.T @ gt_pose.rotation
+    ang = np.degrees(np.arccos(np.clip((np.trace(R_err) - 1.0) / 2.0, -1.0, 1.0)))
+    print(f"apriltag quat wxyz: {np.round(det.pose.quaternion_wxyz(), 3)}  |  "
+          f"gt quat wxyz: {np.round(gt_pose.quaternion_wxyz(), 3)}")
+    print(f"rotation delta (apriltag vs gt): {ang:.1f} deg")
 
     d_at = np.linalg.norm(det.pose.translation - cam.translation)
     d_gt = np.linalg.norm(gt_pose.translation - cam.translation)
