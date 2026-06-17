@@ -29,8 +29,8 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
    retimer** (removed). The executor owns the only handle to `G1_29_ArmController`;
    planning never streams.
 2. **All poses are `spatial.pose.Pose` (numpy) in the pelvis frame** — the `pin.SE3`
-   replacement (wxyz quats, convention-faithful to ~1e-15). `perception/transforms.py` is
-   the only file allowed to construct frame conversions (dormant for now).
+   replacement (wxyz quats, convention-faithful to ~1e-15). `perception/transforms.py`
+   (`Frames`, cuRobo-FK-backed) is the only file allowed to construct frame conversions.
 3. **Dual-arm state is one 14-vector everywhere** (left 7 + right 7, upstream G1_29 arm
    order: shoulder pitch/roll/yaw, elbow, wrist roll/pitch/yaw). Single-arm motion = hold
    the idle arm at its current FK pose as the other tool goal; never slice the controller.
@@ -73,9 +73,14 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   publishes both, so it's satisfied.
 - Hand primitives with `verify=False` now **dwell** until the motion completes (they used
   to return instantly, so close→open fired back-to-back and looked like nothing happened).
-- **Dormant on disk** (unimported, broken against the new API; reworked cuRobo-native
-  later): `perception/*`, `image_server/*`, `utils/rerun*`, and the legacy scripts
-  (`run_*`, `0X_*`, `offline_*`, `05_reach_check*`). Current scripts: `mvp_demo.py`,
-  `hand_diag.py`.
+- **Live now (not dormant):** the perception stack
+  (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
+  `image_server/image_client.py`. Current scripts: `mvp_demo.py`, `hand_diag.py`,
+  `detect_check.py`, `00_dds_echo.py`.
+- **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
+  `configs/cameras.yaml` (multi-camera), `robot_control/motion_switcher.py` (hardware
+  bring-up).
 - **Deleted** (recoverable from git): `robot_control/robot_arm_ik.py`,
-  `motion/cartesian_planner.py`, `motion/retimer.py`, `tasks/*`.
+  `motion/cartesian_planner.py`, `motion/retimer.py`, `tasks/*`, `utils/*`
+  (rerun/episode/filter), the legacy v1 scripts (`run_*`, `0X_*`, `offline_*`,
+  `05_reach_check*`), and their `configs/task_*.yaml`.

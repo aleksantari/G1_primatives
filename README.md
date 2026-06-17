@@ -50,7 +50,7 @@ g1_classical_manip/
   perception/      transforms (frame math, cuRobo FK) · base (Detector seam) ·
                    apriltag_block · ground_truth   (Detector = apriltag | ground_truth)
 configs/           robot, planner, hands, camera, perception (+ curobo/, cyclonedds_loopback.xml)
-scripts/           mvp_demo.py, hand_diag.py, detect_check.py   (others are legacy — see CLAUDE.md)
+scripts/           mvp_demo.py, hand_diag.py, detect_check.py, 00_dds_echo.py
 tests/             test_pose, test_grasp, test_detect   (pure-math, no robot)
 ```
 
