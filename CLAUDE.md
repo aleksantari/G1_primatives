@@ -66,7 +66,9 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   ends. See SIM_NOTES.md.
 
 ## Gotchas
-- On hardware, call `MotionSwitcher.Enter_Debug_Mode()` before any `rt/lowcmd` publishing.
+- On hardware, `MotionSwitcher.Enter_Debug_Mode()` must run before any `rt/lowcmd`
+  publishing — `make_robot` now does this automatically when `mode != "sim"` (override
+  with `enter_debug_mode=`); skipped in sim.
 - The sim now runs the **calibrated mode_16 dex3 USD** (sim == cuRobo == real kinematics)
   and maps hand-command joints **by name**. Its hand-apply path has a **both-hands gate**
   (applies hand joints only if both left+right cmds are non-empty) — our controller
@@ -78,8 +80,8 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   `image_server/image_client.py`. Current scripts: `mvp_demo.py`, `hand_diag.py`,
   `detect_check.py`, `00_dds_echo.py`.
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
-  `configs/cameras.yaml` (multi-camera), `robot_control/motion_switcher.py` (hardware
-  bring-up).
+  `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is now
+  wired — `make_robot` lazily imports it on the hardware path.)
 - **Deleted** (recoverable from git): `robot_control/robot_arm_ik.py`,
   `motion/cartesian_planner.py`, `motion/retimer.py`, `tasks/*`, `utils/*`
   (rerun/episode/filter), the legacy v1 scripts (`run_*`, `0X_*`, `offline_*`,

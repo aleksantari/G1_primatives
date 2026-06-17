@@ -4,6 +4,9 @@ live in cuRobo).
 
   * connect_dds=False    -> planner only (build/inspect plans, no controllers).
   * connect_dds=True     -> + ChannelFactoryInitialize, arm controller, hand, executor.
+                            On real hardware (mode != "sim") it first releases any
+                            loco/AI mode via MotionSwitcher.Enter_Debug_Mode(); skipped
+                            in sim. Override with enter_debug_mode=True/False.
   * connect_camera=True  -> open the head-camera ZMQ stream (for the apriltag detector).
 
 The frame-math owner (transforms.Frames) + the configured detector are always built
@@ -85,7 +88,7 @@ def _build_camera(cfg: Dict[str, Any]):
 def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
                dds_domain: int = None, dds_interface: str = None, mode: str = None,
                connect_hand: bool = True, hand: str = None,
-               connect_camera: bool = False) -> Robot:
+               connect_camera: bool = False, enter_debug_mode: bool = None) -> Robot:
     cfg = load_configs(config_dir)
     robot_cfg = cfg["robot"]
     # optional overrides (unitree_sim_isaaclab loopback: domain 1, iface "lo", mode "sim")
@@ -128,6 +131,19 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
 
     sim = robot_cfg.get("mode") == "sim"
     motion_mode = robot_cfg.get("mode") == "motion"
+
+    # HARDWARE: release any locomotion/AI mode BEFORE the arm controller starts
+    # publishing rt/lowcmd, or that mode fights the low-level arm commands. Safe on
+    # the suspended back-plate mount (no balance controller needed). Auto-on for real
+    # modes (debug/motion), skipped in sim (no such service). Force with
+    # enter_debug_mode=True/False. MotionSwitcher needs DDS already initialised (above).
+    do_enter = (not sim) if enter_debug_mode is None else enter_debug_mode
+    if do_enter:
+        from g1_classical_manip.robot_control.motion_switcher import MotionSwitcher
+        status, active = MotionSwitcher().Enter_Debug_Mode()
+        print(f"[make_robot] MotionSwitcher.Enter_Debug_Mode -> status={status}, "
+              f"remaining active mode={active}")
+
     arm = G1_29_ArmController(motion_mode=motion_mode, simulation_mode=sim,
                               velocity_limit=robot_cfg.get("arm_velocity_limit", 20.0))
 

@@ -29,9 +29,11 @@ the pass criterion.
 - [ ] **DDS connectivity** — `make_robot(connect_dds=True, dds_domain=0, dds_interface="<NIC>",
       mode="debug")` constructs the arm + Dex3 controllers; reading `arm.get_current_dual_arm_q()`
       returns live joint q from the suspended G1. (Port a minimal echo from `00_dds_echo.py`.)
-- [ ] **Debug mode** — confirm `MotionSwitcher.Enter_Debug_Mode()` releases all modes before any
-      `rt/lowcmd` publishing (the arm controller locks non-arm joints at current q). Verify the
-      suspended posture is the intended locked posture before first motion.
+- [ ] **Debug mode — WIRED.** `make_robot(connect_dds=True, mode="debug")` now calls
+      `MotionSwitcher.Enter_Debug_Mode()` automatically (any mode != "sim"; override with
+      `enter_debug_mode=`) BEFORE the arm controller publishes `rt/lowcmd`. Confirm on hardware:
+      the printed `Enter_Debug_Mode -> status=..., remaining active mode=...` shows no mode left
+      active, and the suspended posture is the intended locked posture before first motion.
 - [ ] **Hand state** — `python scripts/hand_diag.py --side left|right` opens/closes each hand and
       streams q / tau_est / press. **Confirm press pressures are non-zero and the closing-direction
       signs in `hands.yaml` are right** (`Dex3Controller` reads `motor_state.{q,dq,tau_est}` +
