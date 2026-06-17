@@ -128,7 +128,8 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
 
     sim = robot_cfg.get("mode") == "sim"
     motion_mode = robot_cfg.get("mode") == "motion"
-    arm = G1_29_ArmController(motion_mode=motion_mode, simulation_mode=sim)
+    arm = G1_29_ArmController(motion_mode=motion_mode, simulation_mode=sim,
+                              velocity_limit=robot_cfg.get("arm_velocity_limit", 20.0))
 
     hand_obj = None
     if connect_hand:

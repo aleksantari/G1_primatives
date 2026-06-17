@@ -25,7 +25,11 @@ hand: dex3
 # (shoulder pitch/roll/yaw, elbow, wrist roll/pitch/yaw).
 home_q14_deg: [0,0,0,0,0,0,0, 0,0,0,0,0,0,0]
 
-# Conservative arm velocity limit (rad/s) used until Phase-5 hardware sign-off.
+# Commanded joint-velocity CAP (rad/s), enforced per control tick by the arm
+# controller (clip_arm_q_target) -- the last-line-of-defence backstop and the
+# ceiling that speed_gradual_max/instant_max ramp up to. cuRobo plans ~1.1 rad/s,
+# so 20 rarely binds; LOWER it (e.g. 2-3) for a cautious hardware bring-up. Read
+# only in debug/motion mode -- simulation_mode (sim) bypasses the clip entirely.
 arm_velocity_limit: 20.0
 
 # Simulator ground-truth frame (unitree_sim_isaaclab). base_world_pose is the

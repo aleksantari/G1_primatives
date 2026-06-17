@@ -68,7 +68,7 @@ class DataBuffer:
 
 
 class G1_29_ArmController:
-    def __init__(self, motion_mode=False, simulation_mode=False):
+    def __init__(self, motion_mode=False, simulation_mode=False, velocity_limit=20.0):
         logger_mp.info("Initialize G1_29_ArmController...")
         self.q_target = np.zeros(14)
         self.tauff_target = np.zeros(14)
@@ -89,7 +89,12 @@ class G1_29_ArmController:
         self.kd_wrist = 1.5
 
         self.all_motor_q = None
-        self.arm_velocity_limit = 20.0
+        # arm_velocity_limit caps the commanded joint-velocity per control tick
+        # (clip_arm_q_target) -- the last-line-of-defence backstop, config-driven via
+        # configs/robot.yaml. It is the CEILING: speed_gradual_max eases up to it and
+        # speed_instant_max jumps to it. (simulation_mode bypasses the clip entirely.)
+        self._velocity_cap = float(velocity_limit)
+        self.arm_velocity_limit = self._velocity_cap
         self.control_dt = 1.0 / 250.0
 
         self._speed_gradual_max = False
@@ -202,7 +207,9 @@ class G1_29_ArmController:
 
             if self._speed_gradual_max is True:
                 t_elapsed = start_time - self._gradual_start_time
-                self.arm_velocity_limit = 20.0 + (10.0 * min(1.0, t_elapsed / 5.0))
+                # ease from half the cap up to the cap over _gradual_time; never above
+                frac = 0.5 + 0.5 * min(1.0, t_elapsed / self._gradual_time)
+                self.arm_velocity_limit = self._velocity_cap * frac
 
             current_time = time.time()
             all_t_elapsed = current_time - start_time
@@ -278,8 +285,8 @@ class G1_29_ArmController:
         self._speed_gradual_max = True
 
     def speed_instant_max(self):
-        """set arms velocity to the maximum value immediately, instead of gradually increasing."""
-        self.arm_velocity_limit = 30.0
+        """set arms velocity to the cap immediately, instead of gradually increasing."""
+        self.arm_velocity_limit = self._velocity_cap
 
     def _Is_weak_motor(self, motor_index):
         weak_motors = [
