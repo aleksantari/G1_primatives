@@ -12,13 +12,9 @@ dds:
 #   sim    -> debug topics against a DDS sim; bypasses the velocity clip
 mode: debug
 
-model:
-  # Primary kinematic model (full Dex3 hands + head d435 + palm frames).
-  urdf: assets/g1/g1_body29_dex3.urdf
-  # Locked leg+waist reference posture (suspended robot). 15 values:
-  # 6 left leg, 6 right leg, [waist_yaw, waist_roll, waist_pitch]. All zero
-  # = nominal upright; refine if the mount tilts the pelvis.
-  locked_reference_deg: [0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0]
+# NOTE: the robot's kinematic model (URDF) and its locked leg/waist posture are NOT
+# set here — cuRobo owns them. The URDF is the cuRobo config's `urdf_path` and the
+# locked joints are its `lock_joints` (configs/curobo/g1_dex3_curobo.yml).
 
 # End-effector selection (factory registry key): dex3 | dex1
 hand: dex3
