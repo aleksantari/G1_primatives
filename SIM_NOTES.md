@@ -5,7 +5,7 @@ The motion stack drives the Isaac sim over the **same DDS interface** the real r
 **no code changes**. The sim's dex3 robot is the **calibrated mode_16 dex3 USD** — the same
 kinematics cuRobo plans on (sim == cuRobo == real).
 
-**Result:** the cuRobo-native MVP (`scripts/mvp_demo.py`) runs `home → move → close_hand →
+**Result:** the cuRobo-native MVP (`scripts/05_mvp_demo.py`) runs `home → move → close_hand →
 open_hand → home` with **zero executor aborts**; `home`/`move` are collision-aware via cuRobo.
 The G1+Dex3 task fixes the base, uses Isaac's PD actuators, and the Dex3 hands connect over DDS.
 
@@ -27,10 +27,16 @@ lines are harmless RedBlock-task noise).
 cd ~/repos/G1_classical_manip
 export CYCLONEDDS_HOME=/opt/cyclonedds
 export CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml   # MUST match the sim's
-bash -ic 'use_conda g1_curobo && python scripts/hand_diag.py --side right'  # hand loop only
-bash -ic 'use_conda g1_curobo && python scripts/mvp_demo.py'               # full MVP cycle
+use_conda g1_curobo
+# bring-up ladder (all default --target sim):
+python scripts/01_check_dds.py     # READ-ONLY arm + hand state (no motion)
+python scripts/02_check_image.py   # head-cam live feed
+python scripts/03_hands.py --side right   # close/open hand primitives
+python scripts/04_move.py          # home (add --dz 0.1 for a lift)
+python scripts/05_mvp_demo.py      # full MVP cycle
+python scripts/06_detect.py        # AprilTag feed + pose vs ground truth
 ```
-Expected (mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`, `home: ok`, `DONE`.
+Expected (05_mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`, `home: ok`, `DONE`.
 
 > If it hangs on `Waiting to subscribe dds...`, the sim's DDS bridge has gone stale (happens
 > after the sim has been up a long time / many reconnects) — restart Terminal 1.
@@ -57,8 +63,9 @@ Expected (mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`, `
   hit the real Dex3 too.
 - Only the 14 arm joints (`rt/lowcmd[15:29]`) drive the articulation; leg/waist commands are
   ignored by the task — our debug-mode leg-lock is harmless.
-- `mvp_demo.py` sets a 0.40 rad abort threshold (Isaac PD lags transiently on fast moves);
-  the cuRobo trajectory itself tracks well within that.
+- `05_mvp_demo.py --target sim` sets a 0.40 rad abort threshold (Isaac PD lags transiently on
+  fast moves); the cuRobo trajectory itself tracks well within that. (`--target real` keeps the
+  config default; override with `--abort`.)
 
 ## Tasks available (G1-29dof + Dex3)
 `Isaac-PickPlace-RedBlock-G129-Dex3-Joint`, `Isaac-AprilTag-Calibration-G129-Dex3-Joint`,

@@ -77,8 +77,9 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   to return instantly, so close→open fired back-to-back and looked like nothing happened).
 - **Live now (not dormant):** the perception stack
   (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
-  `image_server/image_client.py`. Current scripts: `mvp_demo.py`, `hand_diag.py`,
-  `detect_check.py`, `00_dds_echo.py`.
+  `image_server/image_client.py`. Current scripts: the numbered bring-up ladder
+  `scripts/0{1..6}_*.py` (check_dds → check_image → hands → move → mvp_demo → detect; each
+  `--target sim|real`, shared `scripts/_rig.py`) + `hand_diag.py` (low-level hand diagnostic).
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
   `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is now
   wired — `make_robot` lazily imports it on the hardware path.)

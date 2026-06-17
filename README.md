@@ -50,7 +50,7 @@ g1_classical_manip/
   perception/      transforms (frame math, cuRobo FK) · base (Detector seam) ·
                    apriltag_block · ground_truth   (Detector = apriltag | ground_truth)
 configs/           robot, planner, hands, camera, perception (+ curobo/, cyclonedds_loopback.xml)
-scripts/           mvp_demo.py, hand_diag.py, detect_check.py, 00_dds_echo.py
+scripts/           01_check_dds → 06_detect bring-up ladder (--target sim|real) + hand_diag.py
 tests/             test_pose, test_grasp, test_detect   (pure-math, no robot)
 ```
 
@@ -82,17 +82,20 @@ Wait until it prints `[DDSManager] DDS system initialized` and is stepping.
 cd ~/repos/G1_classical_manip
 export CYCLONEDDS_HOME=/opt/cyclonedds
 export CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml   # MUST match the sim
+use_conda g1_curobo
 
-# action primitives: home → move → close → open → home
-bash -ic 'use_conda g1_curobo && python scripts/mvp_demo.py'
-# hand command→state loop in isolation (state stream + commanded motion)
-bash -ic 'use_conda g1_curobo && python scripts/hand_diag.py --side right'
-
-# perception: AprilTag block pose from the head cam, cross-checked vs ground truth
-bash -ic 'use_conda g1_curobo && python scripts/detect_check.py'
+# incremental bring-up ladder (each `--target sim|real`; sim shown), run in order:
+python scripts/01_check_dds.py  --target sim     # READ-ONLY arm + hand state (no motion)
+python scripts/02_check_image.py                 # head-cam live feed
+python scripts/03_hands.py       --target sim --side right   # close/open hand primitives
+python scripts/04_move.py        --target sim                # home (add --dz 0.1 for a lift)
+python scripts/05_mvp_demo.py    --target sim    # home → move → close → open → home
+python scripts/06_detect.py                      # AprilTag feed + pose vs ground truth
 ```
-`detect_check.py` reads only the head-camera ZMQ stream (the two `CYCLONEDDS_*` exports above
-don't apply to it); it prints the detected block pose in the pelvis frame and the ground-truth delta.
+Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` command
+the arms/hands, `06` is camera-only. `02`/`06` are sim-only for now (real image client TODO);
+they don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains as a low-level
+hand command→state diagnostic.
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs

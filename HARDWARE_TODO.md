@@ -7,10 +7,11 @@ This file lists what still needs the physical G1 / Dex3 / head camera, with the 
 the pass criterion.
 
 > Everything runs in the **`g1_curobo`** env (`bash -ic 'use_conda g1_curobo && …'`). The
-> current hardware-capable entry points are `scripts/mvp_demo.py` and `scripts/hand_diag.py`.
-> The older numbered scripts (`00_dds_echo`, `04_hand_check`, `run_pick_place`, …) predate the
-> cuRobo-native refactor and **need porting** to the new `make_robot` / `primitives` API
-> before use on hardware.
+> hardware entry points are the numbered bring-up ladder `scripts/0{1..6}_*.py` (each
+> `--target real`), run **in order** — `01_check_dds` (read-only) and `02_check_image` are
+> safe/no-motion, `03`–`05` command the arms/hands, `06` is camera-only. `scripts/hand_diag.py`
+> is the low-level hand command→state diagnostic. (`02`/`06` are sim-only until the real image
+> client is wired.)
 
 ---
 
@@ -28,7 +29,8 @@ the pass criterion.
 ## Robot interface bring-up
 - [ ] **DDS connectivity** — `make_robot(connect_dds=True, dds_domain=0, dds_interface="<NIC>",
       mode="debug")` constructs the arm + Dex3 controllers; reading `arm.get_current_dual_arm_q()`
-      returns live joint q from the suspended G1. (Port a minimal echo from `00_dds_echo.py`.)
+      returns live joint q from the suspended G1. For a READ-ONLY check first (no controllers,
+      no motion), run `scripts/01_check_dds.py --target real`.
 - [ ] **Debug mode — WIRED.** `make_robot(connect_dds=True, mode="debug")` now calls
       `MotionSwitcher.Enter_Debug_Mode()` automatically (any mode != "sim"; override with
       `enter_debug_mode=`) BEFORE the arm controller publishes `rt/lowcmd`. Confirm on hardware:

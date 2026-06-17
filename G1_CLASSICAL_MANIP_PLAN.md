@@ -73,10 +73,10 @@ g1_classical_manip/
 ├── primitives.py              # home / move / open_hand / close_hand  (the agent tool surface)
 ├── factory.py                 # make_robot(): cuRobo planner + DDS controllers + executor
 ├── perception/                # DORMANT (pinocchio-bound; reworked cuRobo-native later)
-├── image_server/, utils/      # DORMANT / partially used
-configs/  robot, planner, hands, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
-scripts/  mvp_demo.py, hand_diag.py   (numbered + run_* scripts are legacy; need porting)
-tests/    test_pose, test_grasp       (pure-math; 12 pass)
+├── image_server/              # HeadCamera (head-cam frames; camera_rig dormant)
+configs/  robot, planner, hands, camera, perception, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
+scripts/  01_check_dds → 06_detect bring-up ladder (--target sim|real) + hand_diag.py
+tests/    test_pose, test_grasp, test_detect   (pure-math; 18 pass)
 ```
 
 ### Architecture rules (enforced, not aspirational)
