@@ -67,18 +67,18 @@ def main():
     rq, _ = snap(hand, RIGHT)
     print(f"STATE OK -> left q={np.round(lq,3)}  right q={np.round(rq,3)}")
 
-    q_open = hand.presets["open"]
-    q_close = hand.presets[hand.close_preset]
-    print(f"open preset  = {np.round(q_open,2)}")
-    print(f"close preset = {np.round(q_close,2)}  ({hand.close_preset})")
+    q_open = hand._preset("open", side)                 # per-hand aware
+    q_close = hand._preset(hand.close_preset, side)
+    print(f"open preset  ({side}) = {np.round(q_open,2)}")
+    print(f"close preset ({side}) = {np.round(q_close,2)}  ({hand.close_preset})")
 
     q0, _ = snap(hand, side)
 
     # 2) command CLOSE and watch
     print(f"\n--> commanding CLOSE ({'both hands' if args.both else side + ' only'})")
     if args.both:
-        hand.command(LEFT, q_close)
-        hand.command(RIGHT, q_close)
+        hand.command(LEFT, hand._preset(hand.close_preset, LEFT))
+        hand.command(RIGHT, hand._preset(hand.close_preset, RIGHT))
     else:
         hand.command(side, q_close)
     q_after_close = watch(hand, side, args.dwell, "after CLOSE")
@@ -86,8 +86,8 @@ def main():
     # 3) command OPEN and watch
     print(f"\n--> commanding OPEN ({'both hands' if args.both else side + ' only'})")
     if args.both:
-        hand.command(LEFT, q_open)
-        hand.command(RIGHT, q_open)
+        hand.command(LEFT, hand._preset("open", LEFT))
+        hand.command(RIGHT, hand._preset("open", RIGHT))
     else:
         hand.command(side, q_open)
     q_after_open = watch(hand, side, args.dwell, "after OPEN")

@@ -21,8 +21,13 @@ from g1_classical_manip.ee.hand_base import Hand, SIDES
 class Dex3Hand(Hand):
     def __init__(self, controller, cfg: dict, clock=time.monotonic, sleep=time.sleep):
         self.ctrl = controller
-        presets = cfg["presets"]
-        self.presets = {k: np.asarray(v, float) for k, v in presets.items()}
+        # a preset is either a flat 7-vector (both hands) or per-hand
+        # {left:[...], right:[...]} -- the dex3 thumb flexion + finger curl are
+        # sign-mirrored L vs R (see hands.yaml), so close targets are per-hand.
+        self.presets = {
+            k: ({s: np.asarray(p[s], float) for s in p}
+                if isinstance(p, dict) else np.asarray(p, float))
+            for k, p in cfg["presets"].items()}
         v = cfg["verify"]
         self.stall_margin = float(v.get("stall_margin_rad", 0.15))
         self.still_dq = float(v.get("still_dq", 0.05))
@@ -34,7 +39,7 @@ class Dex3Hand(Hand):
         self.close_preset = v.get("close_preset", "power_close")
         self._clock = clock
         self._sleep = sleep
-        self._last_close_target = {s: self.presets[self.close_preset] for s in SIDES}
+        self._last_close_target = {s: self._preset(self.close_preset, s) for s in SIDES}
 
     # ------------------------------------------------------------------- raw
     def command(self, side, q):
@@ -42,6 +47,13 @@ class Dex3Hand(Hand):
 
     def get_state(self, side):
         return self.ctrl.get_state(side)
+
+    def _preset(self, name, side) -> np.ndarray:
+        """Resolve a preset to a 7-vector for `side`: a flat array (same for both
+        hands) or per-hand {left,right}. dex3 thumb flexion + finger curl are
+        sign-mirrored L vs R, so close/pinch targets differ per hand."""
+        p = self.presets[name]
+        return p[side] if isinstance(p, dict) else p
 
     # ----------------------------------------------------------- verification
     def grasped(self, side) -> bool:
@@ -67,7 +79,7 @@ class Dex3Hand(Hand):
 
     # ------------------------------------------------------------------- ops
     def close(self, side, verify=True, preset=None) -> bool:
-        target = self.presets[preset or self.close_preset]
+        target = self._preset(preset or self.close_preset, side)
         self._last_close_target[side] = target
         self.ctrl.command(side, target)
         if not verify:
@@ -77,7 +89,7 @@ class Dex3Hand(Hand):
         return self.grasped(side)
 
     def open(self, side, verify=True) -> bool:
-        target = self.presets["open"]
+        target = self._preset("open", side)
         self.ctrl.command(side, target)
         if not verify:
             self._sleep(self.open_timeout_s)    # block until the fingers actually move
@@ -87,4 +99,4 @@ class Dex3Hand(Hand):
         return bool(reached)
 
     def preset(self, side, name):
-        self.ctrl.command(side, self.presets[name])
+        self.ctrl.command(side, self._preset(name, side))
