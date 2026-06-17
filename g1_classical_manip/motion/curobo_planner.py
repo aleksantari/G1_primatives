@@ -51,6 +51,7 @@ class CuroboArmPlanner:
         self.tool_frames = list(self._mp.tool_frames)
         assert len(self.active) == DOF, f"expected {DOF} active joints, got {len(self.active)}"
         assert set(self.active) == set(REPO_ARM), "active joints != repo arm set"
+        self._dyn = None          # lazy cuRobo RNEA Dynamics (gravity-comp; built on 1st use)
 
     # --- helpers ---
     def _joint_state(self, q_repo14):
@@ -104,6 +105,39 @@ class CuroboArmPlanner:
     def fk(self, side: str, q_repo14) -> Pose:
         """Wrist-yaw pose (pelvis frame) of `side` at the given dual-arm config."""
         return self.fk_link(WRIST_FRAME[side], q_repo14)
+
+    # --- dynamics: gravity-comp feed-forward (see docs/gravity_comp.md) ---
+    def _ensure_dynamics(self):
+        """Lazily build cuRobo's RNEA Dynamics from the warm planner's own
+        KinematicsParams (14-DoF arms, locked base). Built on first use so the
+        default (gravity_comp off) path pays nothing."""
+        if self._dyn is None:
+            from curobo._src.robot.dynamics.dynamics import Dynamics
+            from curobo._src.robot.dynamics.dynamics_cfg import DynamicsCfg
+            from curobo._src.types.device_cfg import DeviceCfg
+            kin_cfg = self._mp.kinematics.kinematics_config
+            self._dyn = Dynamics(DynamicsCfg(
+                kinematics_config=kin_cfg,
+                device_cfg=DeviceCfg(device=self._torch.device("cuda:0"))))
+            self._dyn.setup_batch_size(batch_size=1)
+            self._dyn_zero = self._torch.zeros(
+                (1, DOF), dtype=self._torch.float32, device="cuda")
+            # cuRobo active order -> repo (left7+right7) order for the torque vector
+            self._repo_from_active = [self.active.index(j) for j in REPO_ARM]
+        return self._dyn
+
+    def gravity_torque(self, q_repo14) -> np.ndarray:
+        """Gravity-comp feed-forward G(q) = RNEA(q, q̇=0, q̈=0), Nm, repo order
+        (left7+right7). cuRobo-native (no pinocchio). The SIGN is hardware-validated
+        (matches the pinocchio convention proven on the real robot); the MAGNITUDE
+        runs ~15-20% above pinocchio's. See docs/gravity_comp.md."""
+        from curobo._src.state.state_joint import JointState
+        dyn = self._ensure_dynamics()
+        pos = self._joint_state(q_repo14).position.to(self._torch.float32).contiguous()
+        js = JointState(position=pos, velocity=self._dyn_zero,
+                        acceleration=self._dyn_zero)
+        tau_active = dyn.compute_inverse_dynamics(js).detach().cpu().numpy().reshape(-1)
+        return tau_active[self._repo_from_active]
 
     def default_q(self) -> np.ndarray:
         """cuRobo's collision-free default ('ready') arm config, in repo order."""

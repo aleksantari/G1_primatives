@@ -140,9 +140,11 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
             raise ValueError(f"unknown hand: {hand_key}")
 
     ex = cfg["planner"].get("executor", {})
-    executor = Executor(arm, ik=None, gravity_comp=False,
+    executor = Executor(arm, planner=planner,
                         control_hz=ex.get("control_hz", 250.0),
-                        tracking_error_abort_rad=ex.get("tracking_error_abort_rad", 0.20))
+                        tracking_error_abort_rad=ex.get("tracking_error_abort_rad", 0.20),
+                        gravity_comp=ex.get("gravity_comp", False),
+                        gravity_scale=ex.get("gravity_scale", 1.0))
 
     robot.arm = arm
     robot.hand = hand_obj

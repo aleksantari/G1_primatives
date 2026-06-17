@@ -45,9 +45,13 @@ the pass criterion.
 - [ ] **Speed** — cuRobo plans ~1.1 rad/s in sim; if the real PD can't track it, add a
       conservative joint velocity limit / velocity scale in `configs/curobo/g1_dex3_curobo.yml`
       (there is no longer a speed knob in `planner.yaml`).
-- [ ] **Gravity comp** — the executor currently feeds **zero** feed-forward torque
-      (`_tauff` returns zeros; pinocchio RNEA was removed). If the arm sags on hardware, add a
-      feed-forward via cuRobo Dynamics, or tune `kp/kd` in `robot_arm.py`.
+- [x] **Gravity comp — WIRED (off by default).** cuRobo RNEA `G(q)` feed-forward is plumbed
+      (`planner.gravity_torque` → `executor._tauff`), gated by `configs/planner.yaml`
+      `executor.gravity_comp` / `gravity_scale`. The **sign is hardware-validated in software**
+      (matches the pinocchio convention proven on the real robot via `unitree_lerobot`'s
+      `solve_tau`); magnitude ~15-20% above pinocchio's. **To enable on hardware:** set
+      `gravity_comp: true`, ramp `gravity_scale` 0→1, confirm tracking error DROPS. Full recipe,
+      validation, and caveats in **`docs/gravity_comp.md`**.
 
 ## Hand grasp tuning
 - [ ] **Presets** — command `open`/`power_close`/`pinch` with `hand_diag.py`, read back q, fix the

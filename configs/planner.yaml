@@ -6,3 +6,10 @@ executor:
   control_hz: 250.0                # rate the executor streams (samples) the trajectory
   tracking_error_abort_rad: 0.20   # hold position if |q_cmd - q_meas| exceeds this
   startup_ramp_s: 3.0
+  # Gravity-comp feed-forward torque (cuRobo RNEA G(q), gravity-only). OFF by
+  # default: sim needs none, and the sign must be confirmed once on hardware.
+  # On first hardware run, ramp gravity_scale 0 -> 1 and confirm tracking error
+  # DROPS. Sign is hardware-validated; magnitude ~15-20% above pinocchio's.
+  # See docs/gravity_comp.md.
+  gravity_comp: false
+  gravity_scale: 1.0

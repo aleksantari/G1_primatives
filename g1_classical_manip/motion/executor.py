@@ -1,9 +1,10 @@
 """Trajectory executor: the ONLY holder of the G1_29_ArmController handle.
 
 Streams a JointTrajectory at the control rate, applies optional gravity-comp
-feed-forward torque, monitors joint tracking error, and aborts-to-hold if the
-error exceeds a configured threshold. If the controller's internal velocity
-clip ever activates during nominal execution, the retimer limits are wrong
+feed-forward torque (cuRobo RNEA via the planner; OFF by default -- see
+docs/gravity_comp.md), monitors joint tracking error, and aborts-to-hold if the
+error exceeds a configured threshold. If the controller's internal velocity clip
+ever activates during nominal execution, the cuRobo joint limits are too aggressive
 (treat as a bug) -- the executor logs the symptom via max tracking error.
 """
 from __future__ import annotations
@@ -25,22 +26,29 @@ class ExecutionResult:
 
 
 class Executor:
-    def __init__(self, arm_controller, ik=None, control_hz: float = 250.0,
-                 tracking_error_abort_rad: float = 0.20, gravity_comp: bool = True,
-                 prime_timeout_s: float = 3.0, rerun_logger=None):
+    def __init__(self, arm_controller, planner=None, control_hz: float = 250.0,
+                 tracking_error_abort_rad: float = 0.20, gravity_comp: bool = False,
+                 gravity_scale: float = 1.0, prime_timeout_s: float = 3.0,
+                 rerun_logger=None):
         self.arm = arm_controller
-        self.ik = ik
+        self.planner = planner
         self.control_hz = float(control_hz)
         self.abort_thresh = float(tracking_error_abort_rad)
-        self.gravity_comp = gravity_comp and ik is not None
+        # gravity-comp needs the planner's cuRobo dynamics; off by default (sim runs
+        # fine on zero feed-forward, and the sign must be confirmed once on hardware).
+        self.gravity_comp = bool(gravity_comp) and planner is not None
+        self.gravity_scale = float(gravity_scale)
         self.prime_timeout_s = float(prime_timeout_s)
         self.rr = rerun_logger
 
     # -------------------------------------------------------------- helpers
     def _tauff(self, q14: np.ndarray) -> np.ndarray:
-        # Gravity-comp feed-forward deferred (was pinocchio RNEA). Sim runs fine on
-        # zero feed-forward; revisit with cuRobo Dynamics for hardware.
-        return np.zeros(DOF)
+        """Feed-forward torque: zero unless gravity_comp is enabled, then
+        gravity_scale * G(q) from the planner's cuRobo RNEA (gravity-only). Sign is
+        hardware-validated; see docs/gravity_comp.md."""
+        if not self.gravity_comp:
+            return np.zeros(DOF)
+        return self.gravity_scale * self.planner.gravity_torque(q14)
 
     def hold(self, q14: np.ndarray):
         self.arm.ctrl_dual_arm(np.asarray(q14, float).reshape(DOF), self._tauff(q14))
