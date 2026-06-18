@@ -6,10 +6,26 @@ executor:
   control_hz: 250.0                # rate the executor streams (samples) the trajectory
   tracking_error_abort_rad: 0.20   # hold position if |q_cmd - q_meas| exceeds this
   startup_ramp_s: 3.0
-  # Gravity-comp feed-forward torque (cuRobo RNEA G(q), gravity-only). OFF by
-  # default: sim needs none, and the sign must be confirmed once on hardware.
-  # On first hardware run, ramp gravity_scale 0 -> 1 and confirm tracking error
-  # DROPS. Sign is hardware-validated; magnitude ~15-20% above pinocchio's.
+  # Gravity-comp feed-forward torque (cuRobo RNEA G(q), gravity-only). ON by default
+  # for REAL hardware; factory.py forces it OFF in sim (mode: sim), where the tau
+  # feed-forward is neither needed nor validated. Hardware-validated 2026-06-17: sign
+  # correct (elbow droop fell 50 -> 3 deg going scale 0 -> 1.0), magnitude ~15-20%
+  # above pinocchio's. NOTE: gravity comp only HOLDS the arm against gravity -- the PD
+  # still needs torque headroom to overcome static friction, and the velocity clip
+  # caps that headroom at ~kp*arm_velocity_limit*control_dt, so keep robot.yaml
+  # arm_velocity_limit >= ~12 or the shoulders stall a few deg short. Override per-run
+  # via make_robot(gravity_comp=, gravity_scale=) / 04_move --gravity-scale.
   # See docs/gravity_comp.md.
-  gravity_comp: false
+  gravity_comp: true
   gravity_scale: 1.0
+  # Trajectory playback time-dilation: the executor samples the cuRobo plan at
+  # (wall-clock * this), so < 1.0 plays the SAME path/goal slower (lower joint
+  # velocity, quadratically lower acceleration). REAL needs this because the velocity
+  # clip caps PD torque (see above): at full speed (1.0) the arm can't supply the
+  # torque to track a fast trajectory and the tracking error diverges -> abort
+  # (hardware 2026-06-17: a 0.2 m wrist lift aborts at 1.0, tracks clean at 0.5).
+  # factory.py forces this to 1.0 in sim (sim bypasses the clip, tracks full speed).
+  # This is a workaround for the clip throttling torque; the root fix is to stop
+  # re-rate-limiting cuRobo's already-feasible trajectory during planned execution.
+  # Override per-run via 04_move --speed. Dial toward 1.0 to find the fastest that tracks.
+  time_dilation: 0.5

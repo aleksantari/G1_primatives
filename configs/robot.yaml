@@ -3,7 +3,7 @@ dds:
   # Real robot: domain 0 + the NIC on this workstation wired to the G1 PC2.
   # unitree_sim_isaaclab (loopback): domain 1, interface "lo" (see SIM_NOTES.md).
   domain_id: 0
-  interface: ""          # USER-PROVIDED: e.g. "enp5s0" (NIC to PC2). "" = default.
+  interface: "enp6s0"    # NIC to PC2 (this workstation 192.168.123.201/24; PC2 .164/.161).
 
 # Control mode for the arm controller:
 #   debug  -> publishes rt/lowcmd, locks every non-arm joint at current q
@@ -28,9 +28,13 @@ home_q14_deg: [0,0,0,0,0,0,0, 0,0,0,0,0,0,0]
 # Commanded joint-velocity CAP (rad/s), enforced per control tick by the arm
 # controller (clip_arm_q_target) -- the last-line-of-defence backstop and the
 # ceiling that speed_gradual_max/instant_max ramp up to. cuRobo plans ~1.1 rad/s,
-# so 20 rarely binds; LOWER it (e.g. 2-3) for a cautious hardware bring-up. Read
-# only in debug/motion mode -- simulation_mode (sim) bypasses the clip entirely.
-arm_velocity_limit: 20.0
+# so this rarely binds the SPEED of planned moves. CAUTION: the clip also caps PD
+# TORQUE -- the position error it allows is <= cap*control_dt, so max PD torque is
+# ~kp*cap*control_dt. Set this too low and the PD can't overcome static friction:
+# at 5 the shoulders stalled ~9deg short of home even with gravity comp on. Keep
+# >= ~12 (hardware-validated floor; see docs/gravity_comp.md). Read only in
+# debug/motion mode -- simulation_mode (sim) bypasses the clip entirely.
+arm_velocity_limit: 20.0   # hardware-validated floor; lower starves PD torque (homing stalls)
 
 # Simulator ground-truth frame (unitree_sim_isaaclab). base_world_pose is the
 # robot fixed-base pose in the sim WORLD frame -- MIRROR the Isaac task's robot

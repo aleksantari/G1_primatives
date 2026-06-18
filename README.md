@@ -102,8 +102,13 @@ cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_h
 end-to-end on `unitree_sim_isaaclab` with zero executor aborts; `home`/`move` are
 collision-aware via cuRobo. `detect()` is **sim-validated** too — the head-cam AprilTag
 (ID 14) block pose lands within ~3.5 cm of ground truth. Hand presets are untuned
-placeholders. The **hardware path is code-complete** — DDS control, auto `MotionSwitcher`, the
-config-driven velocity cap, gravity-comp (off by default, sign-validated), and the real ZED image
-client are all wired; only config (NIC, ZED intrinsics/mount) + on-hardware tuning remain. Rerun
+placeholders. **On hardware:** `home` runs on the physical G1 — the arms power-on folded, a
+direct un-planned launch home (PD, velocity-capped) brings them to the launch pose, then the
+collision-aware planned `home` lands within ~3°. Gravity comp is **on for real**
+(hardware-validated 2026-06-17, off in sim), the head-cam ZED client is wired, and debug mode is
+set by the operator via the physical remote (we don't call `MotionSwitcher`). Keep
+`arm_velocity_limit ≥ ~12` so the velocity clip doesn't starve PD torque (see
+`docs/gravity_comp.md`). Still to do on the robot: `move`/`detect` validation, ZED
+intrinsics/mount, hand-preset tuning. Rerun
 logging and richer primitives (grasp-frame offset, `detect → move` pick) are open — see
 `HARDWARE_TODO.md` and the PLAN's roadmap.

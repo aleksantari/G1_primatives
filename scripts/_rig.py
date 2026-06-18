@@ -40,9 +40,13 @@ def _warn_sim_uri(target: str):
 
 def connect(target: str, **kwargs):
     """make_robot for the target: sim -> loopback DDS + mode=sim; real -> robot.yaml
-    DDS + mode=debug (which auto-runs MotionSwitcher.Enter_Debug_Mode). NOTE: any
-    connect_dds=True build starts the arm controller, so the arms drive to home on
-    connect (velocity-clipped on hardware) -- ensure clearance."""
+    DDS + mode=debug (debug mode is set by the OPERATOR via the physical remote; we do
+    NOT call MotionSwitcher by default). NOTE: any
+    connect_dds=True build homes the arms with DIRECT (un-planned, velocity-capped)
+    position control and waits for convergence BEFORE returning -- so the robot starts
+    at a known collision-free home, and the planned home()/move() primitives plan from
+    there. This physically moves the arms on connect and is NOT collision-avoided en
+    route, so ensure the path to home is clear (pass home_on_connect=False to skip)."""
     _warn_sim_uri(target)
     if target == "sim":
         return make_robot(connect_dds=True, dds_domain=SIM_DOMAIN,

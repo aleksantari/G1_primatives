@@ -21,9 +21,27 @@ def main():
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT)
     ap.add_argument("--dz", type=float, default=0.0,
                     help="after home, lift this wrist by dz metres in +z (0 = home only)")
+    ap.add_argument("--gravity-scale", type=float, default=None,
+                    help="enable cuRobo gravity-comp feed-forward at this scale "
+                         "(start 0.5 to confirm the sign, ramp to 1.0; negative flips "
+                         "the sign). Omit = use planner.yaml default (off).")
+    ap.add_argument("--abort", type=float, default=None,
+                    help="override executor tracking-error abort threshold (rad). "
+                         "Raise (e.g. 0.30) for fast/large moves where gravity-only "
+                         "feed-forward lets the arm lag the trajectory transiently.")
+    ap.add_argument("--speed", type=float, default=None,
+                    help="trajectory playback time-dilation (<1 = slower; same path/goal). "
+                         "Lowers joint velocity & quadratically lowers acceleration so a "
+                         "torque-limited arm can track the plan. Try 0.5 if a move aborts.")
     args = ap.parse_args()
 
-    robot = _rig.connect(args.target, connect_hand=False)
+    gkw = {} if args.gravity_scale is None else dict(
+        gravity_comp=True, gravity_scale=args.gravity_scale)
+    robot = _rig.connect(args.target, connect_hand=False, **gkw)
+    if args.abort is not None:
+        robot.executor.abort_thresh = args.abort
+    if args.speed is not None:
+        robot.executor.time_dilation = args.speed
     print(f"[{args.target}] home:", P.home(robot))
 
     if abs(args.dz) > 1e-6:

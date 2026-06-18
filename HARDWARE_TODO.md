@@ -50,32 +50,51 @@ on hardware. Nothing here is a code change.
       mode="debug")` constructs the arm + Dex3 controllers; reading `arm.get_current_dual_arm_q()`
       returns live joint q from the suspended G1. For a READ-ONLY check first (no controllers,
       no motion), run `scripts/01_check_dds.py --target real`.
-- [ ] **Debug mode — WIRED.** `make_robot(connect_dds=True, mode="debug")` now calls
-      `MotionSwitcher.Enter_Debug_Mode()` automatically (any mode != "sim"; override with
-      `enter_debug_mode=`) BEFORE the arm controller publishes `rt/lowcmd`. Confirm on hardware:
-      the printed `Enter_Debug_Mode -> status=..., remaining active mode=...` shows no mode left
-      active, and the suspended posture is the intended locked posture before first motion.
+- [ ] **Launch home — WIRED (default).** `make_robot(connect_dds=True)` now drives the arms to
+      `home_q14_deg` with DIRECT, un-planned PD (`Executor.go_home_direct`, velocity-capped,
+      ramped) and waits for convergence BEFORE returning. This is deliberately NOT cuRobo-planned:
+      the collision-aware `plan_cspace` refuses to plan *out of* a pose it flags as a self-collision
+      START (seen on first contact — the arms powered on folded, so `home()`'s plan failed with
+      "Start or End state in collision"). The direct home sidesteps that. **It is NOT collision-
+      avoided en route**, so ensure the path from the power-on pose to home is clear and watch the
+      e-stop. Override with `home_on_connect=False`. After it converges, the planned `home`/`move`
+      primitives plan from a known collision-free start.
+- [ ] **Debug mode — OPERATOR-SET (physical remote).** Low-level `rt/lowcmd` control needs the
+      robot in debug mode; **set it on the suspended robot with the physical controller before
+      launch** (same as the proven `unitree_lerobot` flow, which never calls `MotionSwitcher`).
+      `make_robot` does NOT auto-enter debug mode by default: calling `MotionSwitcher.ReleaseMode()`
+      on an already-debug robot dropped it back out of low-level control, so `rt/lowcmd` was ignored
+      and the arms didn't move (launch home residual ~87° = zero motion). Pass `enter_debug_mode=True`
+      only if no remote is available to set it.
 - [ ] **Hand state** — `python scripts/hand_diag.py --side left|right` opens/closes each hand and
       streams q / tau_est / press. **Confirm press pressures are non-zero and the closing-direction
       signs in `hands.yaml` are right** (`Dex3Controller` reads `motor_state.{q,dq,tau_est}` +
       `press_sensor_state.pressure`; verify against the real `HandState_`).
 
 ## Motion on hardware
-- [ ] **Tracking** — run `home` then a small `move` on the robot. **Pass:** max tracking error
-      stays under `executor.tracking_error_abort_rad` (0.20) with no aborts, and **no
-      velocity-clip activations** in the arm controller (cuRobo's trajectory is the speed
-      authority; if the clip fires, the cuRobo joint limits are too aggressive — treat as a bug).
-- [ ] **Speed** — cuRobo plans ~1.1 rad/s in sim; if the real PD can't track it, lower the cuRobo
-      `velocity_scale` in `configs/curobo/g1_dex3_curobo.yml` (no speed knob in `planner.yaml`).
-      Separately, the controller's last-line-of-defence velocity clip is now config-driven — lower
-      `robot.yaml: arm_velocity_limit` (e.g. 2–3 rad/s) for a cautious first run.
-- [x] **Gravity comp — WIRED (off by default).** cuRobo RNEA `G(q)` feed-forward is plumbed
-      (`planner.gravity_torque` → `executor._tauff`), gated by `configs/planner.yaml`
-      `executor.gravity_comp` / `gravity_scale`. The **sign is hardware-validated in software**
-      (matches the pinocchio convention proven on the real robot via `unitree_lerobot`'s
-      `solve_tau`); magnitude ~15-20% above pinocchio's. **To enable on hardware:** set
-      `gravity_comp: true`, ramp `gravity_scale` 0→1, confirm tracking error DROPS. Full recipe,
-      validation, and caveats in **`docs/gravity_comp.md`**.
+- [x] **Tracking — `home` + a `move` run on the physical G1 (2026-06-17).** `home` lands within
+      ~3°; a 0.2 m left-wrist lift completes with `max tracking error < 0.20` (no abort) at
+      `time_dilation: 0.5`. **Caveat — the velocity clip throttles PD torque.** `clip_arm_q_target`
+      caps the commanded-vs-measured error to `arm_velocity_limit·control_dt`, hence PD torque to
+      `~kp·arm_velocity_limit·control_dt`. So the clip fires on EVERY tracked move (it is
+      measured-relative), and at full trajectory speed the arm can't supply enough torque → the
+      tracking error diverges → abort. Two settings tame it: keep `arm_velocity_limit ≥ ~12` (was
+      validated at 20) and `time_dilation ≤ 0.5` (below).
+- [x] **Speed — `time_dilation` knob in `planner.yaml` (2026-06-17).** cuRobo plans ~1.1 rad/s; the
+      real PD can't track that through the torque-throttling clip, so the executor plays the plan
+      back slower: `executor.time_dilation` (default **0.5** for real, forced 1.0 in sim). Same
+      path/goal, lower velocity + quadratically lower accel. Per-run: `04_move --speed`; dial toward
+      1.0 to find the fastest that tracks. **Root-cause fix (deferred):** stop re-rate-limiting
+      cuRobo's already-feasible trajectory during planned execution (bypass the clip like sim does,
+      or make it command-relative) so full-speed moves track without dilation.
+- [x] **Gravity comp — VALIDATED ON HARDWARE, default ON for real (2026-06-17).** cuRobo RNEA
+      `G(q)` feed-forward (`planner.gravity_torque` → `executor._tauff`), `configs/planner.yaml`
+      `executor.gravity_comp: true` / `gravity_scale: 1.0`; `factory.py` forces it OFF in sim.
+      Confirmed on the physical G1: sign correct (elbow droop fell 50°→3° ramping scale 0→1.0),
+      `home` lands within ~3°. **Caveat:** the velocity clip caps PD torque at
+      `≈ kp·arm_velocity_limit·control_dt`, so gravity comp alone isn't enough — keep
+      `arm_velocity_limit ≥ ~12` or the shoulders stall a few deg short of target (full table +
+      mechanism in **`docs/gravity_comp.md`**). Ramp/re-check via `04_move --gravity-scale`.
 
 ## Hand grasp tuning
 - [ ] **Presets** — command `open`/`power_close`/`pinch` with `hand_diag.py`, read back q, fix the

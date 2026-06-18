@@ -4,9 +4,11 @@ live in cuRobo).
 
   * connect_dds=False    -> planner only (build/inspect plans, no controllers).
   * connect_dds=True     -> + ChannelFactoryInitialize, arm controller, hand, executor.
-                            On real hardware (mode != "sim") it first releases any
-                            loco/AI mode via MotionSwitcher.Enter_Debug_Mode(); skipped
-                            in sim. Override with enter_debug_mode=True/False.
+                            Debug mode (low-level rt/lowcmd control) is assumed to be
+                            set by the OPERATOR via the physical remote (the proven
+                            unitree_lerobot flow does the same, never calling
+                            MotionSwitcher). Opt in to an SDK release with
+                            enter_debug_mode=True; never in sim.
   * connect_camera=True  -> open the head-camera ZMQ stream (for the apriltag detector).
 
 The frame-math owner (transforms.Frames) + the configured detector are always built
@@ -19,6 +21,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
+import numpy as np
 import yaml
 
 from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner
@@ -101,6 +104,8 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
                dds_domain: int = None, dds_interface: str = None, mode: str = None,
                connect_hand: bool = True, hand: str = None,
                connect_camera: bool = False, enter_debug_mode: bool = None,
+               home_on_connect: bool = True, gravity_comp: bool = None,
+               gravity_scale: float = None,
                camera_config: str = DEFAULT_CAMERA_CONFIG) -> Robot:
     cfg = load_configs(config_dir, camera_file=camera_config)
     robot_cfg = cfg["robot"]
@@ -145,17 +150,25 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     sim = robot_cfg.get("mode") == "sim"
     motion_mode = robot_cfg.get("mode") == "motion"
 
-    # HARDWARE: release any locomotion/AI mode BEFORE the arm controller starts
-    # publishing rt/lowcmd, or that mode fights the low-level arm commands. Safe on
-    # the suspended back-plate mount (no balance controller needed). Auto-on for real
-    # modes (debug/motion), skipped in sim (no such service). Force with
-    # enter_debug_mode=True/False. MotionSwitcher needs DDS already initialised (above).
-    do_enter = (not sim) if enter_debug_mode is None else enter_debug_mode
+    # Low-level arm control (rt/lowcmd) needs the robot in DEBUG mode (high-level
+    # loco/AI service released). On this rig the OPERATOR sets debug mode via the
+    # physical remote before launch -- the proven unitree_lerobot flow does the same and
+    # NEVER calls MotionSwitcher. So we do NOT auto-enter by default: calling
+    # MotionSwitcher.ReleaseMode() on a robot already in physically-set debug mode can
+    # drop it back OUT of low-level-control mode, after which rt/lowcmd is published but
+    # ignored and the arms won't move (observed: launch home left residual ~87 deg = no
+    # motion). Opt in with enter_debug_mode=True (e.g. no remote available); never in
+    # sim. MotionSwitcher needs DDS already initialised (above).
+    do_enter = bool(enter_debug_mode) and not sim
     if do_enter:
         from g1_classical_manip.robot_control.motion_switcher import MotionSwitcher
         status, active = MotionSwitcher().Enter_Debug_Mode()
         print(f"[make_robot] MotionSwitcher.Enter_Debug_Mode -> status={status}, "
               f"remaining active mode={active}")
+    elif not sim:
+        print("[make_robot] not calling MotionSwitcher -- assuming the robot is already "
+              "in DEBUG mode (set via the physical remote). Pass enter_debug_mode=True to "
+              "release high-level modes over the SDK instead.")
 
     arm = G1_29_ArmController(motion_mode=motion_mode, simulation_mode=sim,
                               velocity_limit=robot_cfg.get("arm_velocity_limit", 20.0))
@@ -170,14 +183,55 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
             raise ValueError(f"unknown hand: {hand_key}")
 
     ex = cfg["planner"].get("executor", {})
+    # gravity_comp/gravity_scale: planner.yaml default (ON for real), overridable
+    # per-call (the hardware bring-up ramps gravity_scale from the CLI to confirm the
+    # sign before committing it). A non-None override wins. In sim the tau feed-forward
+    # is neither needed nor validated, so force it OFF unless explicitly requested.
+    gc = ex.get("gravity_comp", False) if gravity_comp is None else gravity_comp
+    gs = ex.get("gravity_scale", 1.0) if gravity_scale is None else gravity_scale
+    if sim and gravity_comp is None:
+        gc = False
+    # Trajectory playback speed: planner.yaml default (< 1.0 slows real moves so the
+    # torque-throttled arm can track). Sim bypasses the velocity clip, so it tracks at
+    # full speed -- force 1.0 there. Per-run override: 04_move --speed (post-connect).
+    td = 1.0 if sim else float(ex.get("time_dilation", 1.0))
     executor = Executor(arm, planner=planner,
                         control_hz=ex.get("control_hz", 250.0),
                         tracking_error_abort_rad=ex.get("tracking_error_abort_rad", 0.20),
-                        gravity_comp=ex.get("gravity_comp", False),
-                        gravity_scale=ex.get("gravity_scale", 1.0))
+                        gravity_comp=gc, gravity_scale=gs, time_dilation=td)
+    if gc:
+        print(f"[make_robot] gravity-comp ON, scale={gs} (cuRobo RNEA feed-forward; "
+              f"watch that the elbow residual DROPS -- if it GROWS the sign is flipped, "
+              f"retry with a negative scale)")
 
     robot.arm = arm
     robot.hand = hand_obj
     robot.executor = executor
     robot.connected = True
+
+    # LAUNCH HOME (default): drive the arms to the configured home with DIRECT
+    # position control before any action primitive runs. The arm controller already
+    # eases toward home on construction (q_target starts at zeros); this waits for it
+    # to CONVERGE. Crucially it is UN-PLANNED -- it does NOT use cuRobo's collision-
+    # aware planner, so it can move out of a pose cuRobo flags as a self-collision
+    # START (e.g. the arms folded), where the planned home() primitive would refuse
+    # to plan. NOT collision-avoided en route, so the path to home must be clear.
+    # Disable with home_on_connect=False. After this, home()/move() plan from a
+    # known-good, collision-free home.
+    if home_on_connect:
+        q_home = np.deg2rad(robot_cfg["home_q14_deg"])
+        print("[make_robot] homing arms to launch pose (direct PD, un-planned, "
+              "velocity-capped) -- ensure the path is clear ...")
+        err = executor.go_home_direct(q_home)
+        resid = np.rad2deg(q_home - arm.get_current_dual_arm_q())  # per-joint residual (deg)
+        np.set_printoptions(precision=1, suppress=True, sign=" ")
+        print(f"[make_robot] launch home: max residual {np.rad2deg(err):.2f} deg")
+        print(f"[make_robot]   per-joint resid deg  L[sp sr sy el wr wp wy]: {resid[:7]}")
+        print(f"[make_robot]                        R[sp sr sy el wr wp wy]: {resid[7:]}")
+        if np.rad2deg(err) > 5.0:
+            print("[make_robot]   WARNING: arms did not reach home. Large residual on the "
+                  "shoulder/elbow joints => gravity-limited (PD torque is capped by the "
+                  "velocity clip: max torque ~= kp * arm_velocity_limit * control_dt). Fix "
+                  "with gravity_comp (planner.yaml) and/or a higher arm_velocity_limit; large "
+                  "residual on arbitrary joints instead => something is fighting rt/lowcmd.")
     return robot

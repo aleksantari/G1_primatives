@@ -1,7 +1,9 @@
 # Gravity-compensation feed-forward — findings & how it's wired
 
-**Status:** wired, **OFF by default**, gravity-only, sign hardware-validated in software.
-Enable on hardware via `configs/planner.yaml` → `executor.gravity_comp: true`.
+**Status:** wired, **ON by default for REAL hardware** (forced OFF in sim by `factory.py`),
+gravity-only, **sign + necessity confirmed on the physical robot 2026-06-17**. Config:
+`configs/planner.yaml` → `executor.gravity_comp: true`, `gravity_scale: 1.0`; per-run
+override via `make_robot(gravity_comp=, gravity_scale=)` or `04_move --gravity-scale`.
 
 ## TL;DR
 - The executor can feed a per-joint feed-forward torque to the arm motors so the PD
@@ -47,8 +49,10 @@ tau = dyn.compute_inverse_dynamics(JointState(position=q, velocity=q̇, accelera
   `gravity_comp` is on, then `gravity_scale * planner.gravity_torque(q)`. The torque path
   to the motors already existed (`ctrl_dual_arm(q, tauff)` → `motor_cmd[id].tau`), so this
   is the only change. Applied uniformly in `run` / `hold` / `settle` / `prime`.
-- **Config** (`configs/planner.yaml` → `executor`): `gravity_comp: false`,
-  `gravity_scale: 1.0`. The factory passes these + the `planner` into the `Executor`.
+- **Config** (`configs/planner.yaml` → `executor`): `gravity_comp: true`,
+  `gravity_scale: 1.0`. The factory passes these + the `planner` into the `Executor`, and
+  **forces `gravity_comp` OFF in sim** (`mode: sim`) unless explicitly overridden. Per-run
+  overrides: `make_robot(gravity_comp=, gravity_scale=)`, surfaced as `04_move --gravity-scale`.
 - **Gravity-only**, matching the proven `solve_tau` approach (full computed-torque is a
   later option — pass the trajectory's `q̇/q̈`).
 
@@ -78,14 +82,39 @@ torque convention (hardware-proven). The chain:
 same URDF, so the gap is how each derives link inertials (cuRobo's config likely carries
 its own baked inertial params). Negligible for feed-forward; flagged below.
 
-## Enabling on hardware (procedure)
-1. Set `executor.gravity_comp: true`, `gravity_scale: 0.0` in `planner.yaml`.
-2. With the robot in debug mode (`MotionSwitcher.Enter_Debug_Mode()`) and holding `home`,
-   **ramp `gravity_scale` 0 → 1** and confirm the **measured tracking error DROPS** (arm
-   holds *better*, not worse). A worse hold on any joint ⇒ a sign problem on that joint
-   (shouldn't happen given the validation, but verify).
-3. Leave `gravity_scale` ≤ 1.0. If sag remains at 1.0, the magnitude is under-estimated
-   (see the gap above) — nudge slightly above 1.0, or investigate the URDF inertials.
+## Hardware validation (2026-06-17) — confirmed on the physical G1
+First real-robot bring-up of the launch home (arms power-on folded). Debug mode set by the
+**operator via the physical remote** (we do NOT call `MotionSwitcher` — releasing it dropped
+the robot out of low-level control). Ramped `gravity_scale` via `04_move --gravity-scale`,
+reading the launch-home **per-joint residual** (`make_robot` prints it):
+
+| `gravity_scale` | `arm_velocity_limit` | max residual | elbow residual | result |
+|---|---|---|---|---|
+| 0.0 (off)       | 20 | 50° | ~50° (forearm sags) | `home` fails |
+| 0.5             | (live) | 37° | ~34° | sign **correct** (droop shrinking) |
+| 1.0             | 5  | 9°  | ~3° | elbows fixed; **shoulder pitch** stalls ~9° |
+| 1.0             | 12 | **2.7°** | ~0.5° | **`home` ok=True** ✅ |
+
+Takeaways:
+- **Sign is correct** (positive `G(q)` straight to motors) — the software/pinocchio
+  validation held on hardware. Droop shrank monotonically as scale rose 0 → 1.
+- **`gravity_scale: 1.0` is right** — at 1.0 the elbow droop is gone; the ~15–20% over-estimate
+  did not cause runaway lift.
+- **Velocity cap ↔ torque coupling (important).** Gravity comp only *holds* the arm; the PD
+  must still overcome static friction. The velocity clip (`clip_arm_q_target`) caps the
+  position error the PD ever sees to `arm_velocity_limit · control_dt`, so it caps PD torque
+  at `≈ kp · arm_velocity_limit · control_dt`. At `arm_velocity_limit=5` that is only
+  `80·5·0.004 ≈ 1.6 N·m` — below shoulder-pitch static friction, so the shoulders stalled ~9°
+  short. Raising to 12 (`≈ 3.8 N·m`) closed it. **Keep `arm_velocity_limit ≥ ~12`.** cuRobo
+  plans at ~1.1 rad/s, so a cap of 12 is still only a backstop for planned moves — it does not
+  speed them up; it just unstarves holding/correction torque. (Decoupling speed from torque in
+  the clip is a future cleanup.)
+
+## Re-validating / sign re-check (procedure)
+`gravity_comp` is now the default for real. To re-confirm (e.g. after a model change), drop
+it with `04_move --target real --gravity-scale 0.5` and watch the elbow residual: it should
+**shrink** vs the off (`--gravity-scale 0.0`) run. If it **grows**, the sign flipped — re-run
+with a negative scale and negate `gravity_torque` in the planner. Then ramp to 1.0.
 
 ## Open items / caveats
 - **Magnitude source.** Resolve the ~15–20% cuRobo-vs-pinocchio gap if precise torques
