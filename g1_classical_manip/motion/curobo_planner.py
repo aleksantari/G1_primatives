@@ -26,6 +26,10 @@ WRIST_FRAME = {LEFT: "left_wrist_yaw_link", RIGHT: "right_wrist_yaw_link"}
 # pose is FK-queryable (perception). It is fixed to the locked torso, so plan_to_pose
 # pins it to its constant current FK pose -- it never constrains the arms.
 CAMERA_FRAME = "d435_link"
+# cuRobo base_link (kinematic root). cuRobo only exposes FK for tool_frames, not the
+# base, so fk_link short-circuits this to identity (the base relative to itself) -- lets
+# perception use a base-frame extrinsic (source: urdf:pelvis) from a hand-eye calibration.
+BASE_FRAME = "pelvis"
 # repo dual-arm joint order: left 7 then right 7 (G1_29 arm order)
 REPO_ARM = [f"{s}_{j}_joint" for s in ("left", "right")
             for j in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow",
@@ -97,7 +101,12 @@ class CuroboArmPlanner:
     def fk_link(self, link_name: str, q_repo14=None) -> Pose:
         """Pelvis-frame pose of any tool_frame link at the given dual-arm config
         (defaults to zeros/home). CAMERA_FRAME (head camera) is rigidly fixed to the
-        locked torso, so its pose is q-invariant -- callers may omit q for it."""
+        locked torso, so its pose is q-invariant -- callers may omit q for it. The
+        BASE_FRAME (pelvis) is the kinematic root: cuRobo doesn't expose its FK, and it
+        is identity relative to itself, so we short-circuit it (lets a base-frame camera
+        extrinsic be used via source: urdf:pelvis)."""
+        if link_name == BASE_FRAME:
+            return Pose.Identity()
         q = np.zeros(DOF) if q_repo14 is None else q_repo14
         ks = self._mp.compute_kinematics(self._joint_state(q))
         return self._link_pose(ks, link_name)
