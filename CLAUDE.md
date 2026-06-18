@@ -51,9 +51,12 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
 
 ## Key facts (verified, don't re-derive)
 - cuRobo config: `configs/curobo/g1_dex3_curobo.yml`, built from the **calibrated mode_16
-  dex3 URDF**; tool frames `left/right_wrist_yaw_link`; 27 `lock_joints` → arms-only 14-DoF.
-  `self_collision_ignore` patched so `torso_link` ignores all 6 shoulder links (the
-  auto-matrix asymmetrically missed 3, causing false start-in-collision at the home pose).
+  dex3 URDF** (`assets/g1/g1_29dof_mode_16_dex3.urdf`) via cuRobo `RobotBuilder`; tool frames
+  `left/right_wrist_yaw_link`; 27 `lock_joints` → arms-only 14-DoF. `self_collision_ignore`
+  patched so `torso_link` ignores all 6 shoulder links (the auto-matrix asymmetrically missed
+  3, causing false start-in-collision at the home pose). **Regenerate with
+  `configs/curobo/build_g1_dex3.py`** (the provenance/recipe; not run at import — only when the
+  URDF or the arms-only reduction changes; the committed config is hardware-validated).
 - **Home = the sim launch pose: all arm joints 0 = forearms forward (elbows bent ~90°)**,
   collision-free. `configs/robot.yaml: home_q14_deg`.
 - cuRobo native plan ≈ 1.1 rad/s, `dt` 0.025 s. Trajectory SPEED is governed by the cuRobo
