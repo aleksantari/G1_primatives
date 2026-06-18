@@ -40,11 +40,11 @@ GRASP_RPY = None
 # both hands; the lateral y mirrors by side (right -y, left +y). move() targets the
 # wrist-yaw, so we back the wrist off by this so the palm center lands on the target.
 # (Promote into the planner later so every move() targets the palm.)
-PALM_OFFSET_XYZ = np.array([0.1192, 0.0046, 0.0])   # |y|; sign set per side by _palm_offset
+PALM_OFFSET_XYZ = np.array([0.1192, -0.0346, 0.0])   # |y|; sign set per side by _palm_offset
 
 # Grasp/contact offset beyond the palm center, along palm +x (toward the fingertips): the
 # object sits ~here when grasped, a bit past the finger-base midpoint. Side-agnostic.
-GRASP_OFFSET = np.array([0.03, 0.0, 0.0])
+GRASP_OFFSET = np.array([0.00, 0.00, 0.02])
 
 
 def _palm_offset(side: str) -> np.ndarray:
