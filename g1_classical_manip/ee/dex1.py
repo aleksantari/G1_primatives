@@ -15,6 +15,7 @@ class Dex1Hand(Hand):
         p = cfg["presets"]
         self.open_v = float(p["open"])
         self.close_v = float(p["close"])
+        self._last_close_target = self.close_v
         v = cfg["verify"]
         self.stall_margin = float(v.get("stall_margin", 0.5))
         self.still_dq = float(v.get("still_dq", 0.05))
@@ -35,7 +36,7 @@ class Dex1Hand(Hand):
         st = self.ctrl.get_state(side)
         q, dq, tau = float(st["q"][0]), float(st["dq"][0]), float(st["tau"][0])
         settled = abs(dq) < self.still_dq
-        stalled_short = abs(q - self.close_v) > self.stall_margin
+        stalled_short = abs(q - self._last_close_target) > self.stall_margin
         return bool((settled and stalled_short) or abs(tau) > self.tau_threshold)
 
     def _wait_settled(self, side, timeout):
@@ -47,8 +48,10 @@ class Dex1Hand(Hand):
             self._sleep(0.02)
         return False
 
-    def close(self, side, verify=True) -> bool:
-        self.ctrl.command(side, self.close_v)
+    def close(self, side, verify=True, fraction=1.0) -> bool:
+        target = self.open_v + float(fraction) * (self.close_v - self.open_v)
+        self._last_close_target = target
+        self.ctrl.command(side, target)
         if not verify:
             self._sleep(self.close_timeout_s)   # block until the gripper actually moves
             return True

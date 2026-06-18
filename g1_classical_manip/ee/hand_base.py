@@ -28,9 +28,10 @@ class Hand(ABC):
         """Command the open preset; if verify, confirm it reached open."""
 
     @abstractmethod
-    def close(self, side: str, verify: bool = True) -> bool:
-        """Command the close preset; if verify, return whether an object is held
-        (motor stall short of target OR tau_est OR press sensor over threshold)."""
+    def close(self, side: str, verify: bool = True, fraction: float = 1.0) -> bool:
+        """Command the close target, interpolated open->close by `fraction` (1.0 = full
+        close, 0.5 = halfway). If verify, return whether an object is held (motor stall
+        short of target OR tau_est OR press sensor over threshold)."""
 
     @abstractmethod
     def grasped(self, side: str) -> bool:

@@ -76,6 +76,19 @@ def _confirm(step: str, auto: bool):
         raise KeyboardInterrupt(f"operator aborted before '{step}'")
 
 
+def _do_move(robot, side, goal, label):
+    """move() to a wrist goal, then print the achieved-vs-target error: the wrist FK pose
+    after the move vs the commanded goal (position mm + orientation deg)."""
+    r = P.move(robot, side, goal)
+    ach = robot.planner.fk(side, robot.arm.get_current_dual_arm_q())
+    dp_mm = (goal.translation - ach.translation) * 1000.0
+    R_err = goal.rotation.T @ ach.rotation
+    ang = float(np.degrees(np.arccos(np.clip((np.trace(R_err) - 1) / 2, -1, 1))))
+    print(f"{label:8s}: {r} | reached err: pos {np.linalg.norm(dp_mm):.1f} mm "
+          f"{np.round(dp_mm, 1).tolist()}, rot {ang:.1f} deg")
+    return r
+
+
 def main():
     ap = argparse.ArgumentParser()
     _rig.add_target_arg(ap)
@@ -96,6 +109,8 @@ def main():
                     help="trajectory playback time-dilation (<1 = slower; same path/goal)")
     ap.add_argument("--no-confirm", action="store_true",
                     help="run straight through without the per-step Enter prompt")
+    ap.add_argument("--close-frac", type=float, default=0.5,
+                    help="hand close fraction (1.0 full, 0.5 half); interpolates open->close")
     args = ap.parse_args()
 
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
@@ -153,23 +168,21 @@ def main():
 
         # 4. approach -> descend -> close -> lift -> home (operator-gated each step)
         _confirm("move to APPROACH", auto)
-        r = P.move(robot, side, approach)
-        print("approach:", r)
+        r = _do_move(robot, side, approach, "approach")
         if not r.ok:
             raise RuntimeError(f"approach move failed: {r.info}")
 
         _confirm("move to GRASP (descend)", auto)
-        r = P.move(robot, side, grasp)
-        print("descend :", r)
+        r = _do_move(robot, side, grasp, "descend")
         if not r.ok:
             raise RuntimeError(f"descend move failed: {r.info}")
 
-        _confirm("CLOSE hand", auto)
-        print("close   :", P.close_hand(robot, side, verify=args.verify))
+        _confirm(f"CLOSE hand to {args.close_frac:.2f}", auto)
+        print("close   :", P.close_hand(robot, side, verify=args.verify,
+                                         fraction=args.close_frac))
 
         _confirm("move to LIFT", auto)
-        r = P.move(robot, side, lift)
-        print("lift    :", r)
+        r = _do_move(robot, side, lift, "lift")
         if not r.ok:
             raise RuntimeError(f"lift move failed: {r.info}")
 

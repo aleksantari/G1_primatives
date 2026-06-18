@@ -29,7 +29,7 @@ retiming step. The executor holds the only handle to `G1_29_ArmController`.
 home(robot)                       # both arms to the launch pose (forearms forward), settle
 move(robot, side, goal_pose)      # one wrist to goal_pose (pelvis frame); other arm holds
 open_hand(robot, side)            # blocks until the fingers finish moving
-close_hand(robot, side, verify=)  # verify=True returns whether an object is held
+close_hand(robot, side, verify=, fraction=)  # fraction<1 closes partway; verify=True = held?
 detect(robot, target="block")     # head-cam AprilTag → object pose (pelvis frame)
 ```
 Action verbs return `Result(ok, info)`; `detect` returns a `Detection` whose `.pose` feeds
@@ -90,7 +90,7 @@ python scripts/02_check_image.py --target sim    # head-cam feed (sim mono / rea
 python scripts/03_hands.py       --target sim --side right   # close/open hand primitives
 python scripts/04_move.py        --target sim                # home (add --dz 0.1 for a lift)
 python scripts/05_mvp_demo.py    --target sim    # home → move → close → open → home
-python scripts/06_detect.py      --target sim    # AprilTag feed + pose vs ground truth
+python scripts/06_detect.py      --target sim    # AprilTag feed: 3D pose axes + rpy vs ground truth
 python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` and `07`

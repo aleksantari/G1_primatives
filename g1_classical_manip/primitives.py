@@ -80,7 +80,7 @@ def open_hand(robot, side: str, verify: bool = False) -> Result:
                   "opened" if ok else ("open failed" if verify else "open commanded"))
 
 
-def close_hand(robot, side: str, verify: bool = False) -> Result:
-    grasped = robot.hand.close(side, verify=verify)
+def close_hand(robot, side: str, verify: bool = False, fraction: float = 1.0) -> Result:
+    grasped = robot.hand.close(side, verify=verify, fraction=fraction)
     return Result(bool(grasped) if verify else True,
                   "grasped" if grasped else ("no grasp" if verify else "close commanded"))

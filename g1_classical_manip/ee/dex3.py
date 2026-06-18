@@ -78,8 +78,13 @@ class Dex3Hand(Hand):
         return False
 
     # ------------------------------------------------------------------- ops
-    def close(self, side, verify=True, preset=None) -> bool:
-        target = self._preset(preset or self.close_preset, side)
+    def close(self, side, verify=True, preset=None, fraction=1.0) -> bool:
+        full = self._preset(preset or self.close_preset, side)
+        if fraction >= 1.0:
+            target = full
+        else:   # interpolate open -> close (e.g. fraction=0.5 -> half-closed)
+            q_open = self._preset("open", side)
+            target = q_open + float(fraction) * (full - q_open)
         self._last_close_target[side] = target
         self.ctrl.command(side, target)
         if not verify:
