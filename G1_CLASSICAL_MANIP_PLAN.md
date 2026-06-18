@@ -31,8 +31,10 @@ the pelvis frame, dual-arm-as-one-14-vector, config-driven, and abort-to-hold sa
 
 ## 1. Current state (what exists and works)
 
-**MVP — sim-validated** on `unitree_sim_isaaclab`: `home → move → close_hand → open_hand →
-home` runs end-to-end with zero executor aborts; `home`/`move` are collision-aware via cuRobo.
+**MVP — validated on the REAL G1 (2026-06-18)** and in `unitree_sim_isaaclab`: `home → move →
+close_hand → open_hand → home` runs end-to-end (sim: zero executor aborts; real: with gravity
+comp + `time_dilation 0.5`, see §3 and `HARDWARE_TODO.md`). `home`/`move` are collision-aware via
+cuRobo. `detect()` is sim-validated only (real needs the ZED calibration).
 
 Four primitives (`g1_classical_manip/primitives.py`), each returning `Result(ok, info)`:
 - `home(robot)` — both arms to the launch pose (forearms forward), settle.
@@ -109,8 +111,14 @@ tests/    test_pose, test_grasp, test_detect   (pure-math; 18 pass)
   position/velocity/acceleration + `dt`); `compute_kinematics(...).tool_poses.get_link_pose`.
 - Goal frame is the **wrist-yaw link** directly; the 5 cm `L_ee`/palm grasp-frame offset is a
   later refinement.
-- **Speed** is governed by the cuRobo robot config's joint limits — there is no speed knob in
-  `planner.yaml` (only `executor.{control_hz, tracking_error_abort_rad}`).
+- **Speed** is governed by the cuRobo robot config's joint limits, but the executor plays the
+  plan back at `planner.yaml: executor.time_dilation` (default 0.5 on real, forced 1.0 in sim).
+  Real needs the slowdown: the arm controller's velocity clip is measured-relative, so it caps PD
+  torque at `~kp·arm_velocity_limit·control_dt` and the arm can't track a full-speed trajectory →
+  tracking error diverges → abort. Hardware run config (2026-06-18, MVP validated on the real G1):
+  gravity comp ON, `arm_velocity_limit ≥ 12`, `time_dilation 0.5`, operator-set debug mode (no
+  MotionSwitcher). Root fix (deferred): stop re-rate-limiting cuRobo's already-feasible trajectory
+  during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
 
 ---
 

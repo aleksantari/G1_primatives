@@ -1,10 +1,11 @@
 # HARDWARE_TODO — what's left for the robot & camera
 
-The **cuRobo-native MVP is sim-validated** (`home → move → close_hand → open_hand → home`
-on `unitree_sim_isaaclab`, zero executor aborts; `home`/`move` collision-aware via cuRobo).
-It has **never been exercised on the physical robot** — no real DDS/camera path has been run.
-This file lists what still needs the physical G1 / Dex3 / head camera, with the command and
-the pass criterion.
+The **cuRobo-native MVP now runs on the PHYSICAL G1** (2026-06-18): `home → move → close_hand
+→ open_hand → home` end-to-end on the real robot, after first validating in `unitree_sim_isaaclab`.
+Getting there needed: operator-set debug mode (no MotionSwitcher), a direct un-planned launch home,
+gravity comp on, `arm_velocity_limit ≥ ~12`, and trajectory `time_dilation 0.5` — see the Motion
+section below and `docs/gravity_comp.md`. This file lists what still needs the physical G1 / Dex3 /
+head camera, with the command and the pass criterion.
 
 > Everything runs in the **`g1_curobo`** env (`bash -ic 'use_conda g1_curobo && …'`). The
 > hardware entry points are the numbered bring-up ladder `scripts/0{1..6}_*.py` (each
@@ -16,20 +17,27 @@ the pass criterion.
 ---
 
 ## Launch readiness — where we are
-**The code path to a first cautious `home` on the robot is complete.** What's left is config
-(the USER-PROVIDED fields below) and on-hardware tuning — **no code blockers remain.**
+**The action-primitive MVP runs on the physical robot (2026-06-18):** `home → move → close_hand →
+open_hand → home` end-to-end. Remaining work is perception calibration (ZED) + tuning, not the
+motion code path.
 
-**Wired & sim-validated (code complete):**
+**Validated on hardware (action primitives):**
 - DDS arm/hand control (`debug` mode = `rt/lowcmd` + non-arm joints locked).
-- `MotionSwitcher.Enter_Debug_Mode()` auto-runs on the real path (`mode != "sim"`).
-- Velocity cap (`robot.yaml: arm_velocity_limit`) — a real, lowerable last-line-of-defence ceiling.
-- Gravity-comp feed-forward (cuRobo RNEA, **off by default**, sign-validated — `docs/gravity_comp.md`).
+- **Debug mode is operator-set via the physical remote** — `make_robot` does NOT call
+  `MotionSwitcher` by default (auto-`ReleaseMode` dropped the robot out of low-level control;
+  opt in with `enter_debug_mode=True`).
+- Direct un-planned **launch home** (`Executor.go_home_direct`, `home_on_connect=True`) — moves the
+  arms out of the folded power-on pose, which cuRobo's collision-aware planner won't plan out of.
+- Velocity cap (`robot.yaml: arm_velocity_limit`) — keep `≥ ~12` (it also caps PD torque).
+- **Gravity-comp feed-forward ON for real** (cuRobo RNEA, sign-validated — `docs/gravity_comp.md`),
+  forced off in sim.
+- **Trajectory `time_dilation 0.5`** so the torque-throttled arm tracks the plan (`planner.yaml`).
 - Perception: AprilTag `detect()` + head-camera client. Real ZED **wired** (stereo-slice, RGB-first,
   `camera_real.yaml`); sim is `camera_sim.yaml`; selected by `--target`.
 
-**Needs the physical robot / camera:** fill the config table below, then walk the
-`01 → 06 --target real` ladder; tune hand presets, the tracking abort threshold, and `gravity_scale`
-on hardware. Nothing here is a code change.
+**Still needs the physical robot / camera:** fill the camera config (ZED intrinsics/mount) and run
+`06_detect --target real`; tune hand presets; and resolve the velocity-clip torque root-cause so
+moves track at full speed (time-dilation is the current workaround). Not motion-code blockers.
 
 ---
 

@@ -102,13 +102,14 @@ cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_h
 end-to-end on `unitree_sim_isaaclab` with zero executor aborts; `home`/`move` are
 collision-aware via cuRobo. `detect()` is **sim-validated** too — the head-cam AprilTag
 (ID 14) block pose lands within ~3.5 cm of ground truth. Hand presets are untuned
-placeholders. **On hardware:** `home` runs on the physical G1 — the arms power-on folded, a
-direct un-planned launch home (PD, velocity-capped) brings them to the launch pose, then the
-collision-aware planned `home` lands within ~3°. Gravity comp is **on for real**
-(hardware-validated 2026-06-17, off in sim), the head-cam ZED client is wired, and debug mode is
-set by the operator via the physical remote (we don't call `MotionSwitcher`). Keep
-`arm_velocity_limit ≥ ~12` so the velocity clip doesn't starve PD torque (see
-`docs/gravity_comp.md`). Still to do on the robot: `move`/`detect` validation, ZED
-intrinsics/mount, hand-preset tuning. Rerun
+placeholders. **On hardware (2026-06-18): the MVP `home → move → close_hand → open_hand → home`
+runs end-to-end on the physical G1.** The arms power-on folded, so a direct un-planned launch home
+(PD, velocity-capped) brings them to the launch pose, then the collision-aware planned `home` lands
+within ~3° and `move` tracks clean. What makes it work on real: gravity comp **on** (hardware-
+validated, off in sim), trajectory **`time_dilation 0.5`** (the velocity clip throttles PD torque,
+so the full-speed plan can't be tracked — play it back slower), **`arm_velocity_limit ≥ ~12`**, and
+debug mode set by the operator via the physical remote (we don't call `MotionSwitcher`). See
+`docs/gravity_comp.md`. Still to do on the robot: `detect` validation + ZED intrinsics/mount,
+hand-preset tuning, and the velocity-clip torque root-fix (time-dilation is a workaround). Rerun
 logging and richer primitives (grasp-frame offset, `detect → move` pick) are open — see
 `HARDWARE_TODO.md` and the PLAN's roadmap.
