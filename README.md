@@ -50,7 +50,7 @@ g1_classical_manip/
   perception/      transforms (frame math, cuRobo FK) · base (Detector seam) ·
                    apriltag_block · ground_truth   (Detector = apriltag | ground_truth)
 configs/           robot, planner, hands, camera, perception (+ curobo/, cyclonedds_loopback.xml)
-scripts/           01_check_dds → 06_detect bring-up ladder (--target sim|real) + hand_diag.py
+scripts/           01_check_dds → 07_pick_place bring-up ladder (--target sim|real) + hand_diag.py
 tests/             test_pose, test_grasp, test_detect   (pure-math, no robot)
 ```
 
@@ -91,11 +91,13 @@ python scripts/03_hands.py       --target sim --side right   # close/open hand p
 python scripts/04_move.py        --target sim                # home (add --dz 0.1 for a lift)
 python scripts/05_mvp_demo.py    --target sim    # home → move → close → open → home
 python scripts/06_detect.py      --target sim    # AprilTag feed + pose vs ground truth
+python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
 ```
-Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` command
-the arms/hands, `06` is camera-only. `02`/`06` work on both targets: `--target real` uses the ZED
-head via `camera_real.yaml` (fill its intrinsics + mount first). The camera scripts don't use the
-`CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand command→state diagnostic.
+Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` and `07`
+command the arms/hands, `06` is camera-only. `02`/`06`/`07` work on both targets: `--target real`
+uses the ZED head via `camera_real.yaml` (fill its intrinsics + mount first). The camera scripts
+don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand
+command→state diagnostic.
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs

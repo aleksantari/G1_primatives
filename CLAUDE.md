@@ -72,8 +72,9 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   refinement (goals are wrist-yaw poses for now).
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp
-  signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. **Presets are
-  PLACEHOLDERS — untuned** (the right thumb stalls on `power_close`).
+  signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. Presets are being
+  tuned: the right-thumb `power_close` stall is **fixed**; `pinch` (not yet per-hand) and the
+  `verify` thresholds still need tuning.
 - Arm controller: debug mode = `rt/lowcmd` + locks non-arm joints at current q
   (suspended-robot correct); `simulation_mode` bypasses the velocity clip.
 - DDS domain/interface live ONLY in `configs/robot.yaml`. Real = (0, NIC-to-PC2);
@@ -98,8 +99,8 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
 - **Live now (not dormant):** the perception stack
   (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
   `image_server/image_client.py`. Current scripts: the numbered bring-up ladder
-  `scripts/0{1..6}_*.py` (check_dds → check_image → hands → move → mvp_demo → detect; each
-  `--target sim|real`, shared `scripts/_rig.py`) + `hand_diag.py` (low-level hand diagnostic).
+  `scripts/0{1..7}_*.py` (check_dds → check_image → hands → move → mvp_demo → detect → pick_place;
+  each `--target sim|real`, shared `scripts/_rig.py`) + `hand_diag.py` (low-level hand diagnostic).
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
   `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is wired but
   **opt-in** — `make_robot` lazily imports it only when `enter_debug_mode=True`; default off,

@@ -8,7 +8,7 @@ section below and `docs/gravity_comp.md`. This file lists what still needs the p
 head camera, with the command and the pass criterion.
 
 > Everything runs in the **`g1_curobo`** env (`bash -ic 'use_conda g1_curobo && …'`). The
-> hardware entry points are the numbered bring-up ladder `scripts/0{1..6}_*.py` (each
+> hardware entry points are the numbered bring-up ladder `scripts/0{1..7}_*.py` (each
 > `--target real`), run **in order** — `01_check_dds` (read-only) and `02_check_image` are
 > safe/no-motion, `03`–`05` command the arms/hands, `06` is camera-only. `scripts/hand_diag.py`
 > is the low-level hand command→state diagnostic. The real image client (ZED) is **wired**;
@@ -46,7 +46,7 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
 |---|---|---|
 | `configs/robot.yaml` | `dds.interface` | NIC on this workstation wired to PC2 (e.g. `enp5s0`); set `mode: debug`. Real robot = domain 0; sim loopback = domain 1 / `lo`. |
 | `configs/robot.yaml` | `home_q14_deg` | The launch/ready pose (default zeros = forearms forward). Confirm it's safe + reachable on the suspended robot. |
-| `configs/hands.yaml` | `dex3.presets` (`open`/`power_close`/`pinch`) + `verify` thresholds | **Placeholders — untuned.** The right thumb stalls on `power_close` in sim; tune against the real hand. |
+| `configs/hands.yaml` | `dex3.presets` (`open`/`power_close`/`pinch`) + `verify` thresholds | Being tuned: right-thumb `power_close` stall **fixed**; still make `pinch` per-hand and tune the `verify` thresholds against the real hand. |
 | `configs/camera_real.yaml` | `intrinsics` (fx,fy,cx,cy @1280×720) + `extrinsics.mount` + `stereo_side` | **Real head = ZED stereo.** Per-eye intrinsics for the chosen eye (ZED calibration) + the `d435_link`→eye `mount` offset (~half the stereo baseline) or detected block poses are laterally biased. |
 | `configs/curobo/g1_dex3_curobo.yml` | `lock_joints` values (+ `velocity_scale`) | Leg+waist locked positions if the mount tilts the pelvis; lower `velocity_scale` to slow the robot for bring-up. |
 | cuRobo world model | table / obstacles | **Not yet wired** — no world is configured. Add the table (and any obstacle) to the planner's world before relying on collision avoidance near it. |

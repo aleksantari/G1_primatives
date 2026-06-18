@@ -14,7 +14,7 @@ SIM_DOMAIN, SIM_IFACE = 1, "lo"
 def add_target_arg(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
     ap.add_argument("--target", choices=["sim", "real"], default="sim",
                     help="sim = unitree_sim_isaaclab loopback (domain 1/lo, mode=sim); "
-                         "real = robot.yaml DDS + mode=debug (auto Enter_Debug_Mode).")
+                         "real = robot.yaml DDS + mode=debug (operator sets debug via the remote).")
     return ap
 
 
