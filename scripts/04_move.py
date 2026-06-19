@@ -50,7 +50,17 @@ def main():
         goal = cur.copy()
         goal.translation = cur.translation + np.array([0.0, 0.0, args.dz])
         print(f"goal {args.side} wrist:", np.round(goal.translation, 3))
-        print(f"move {args.side} +{args.dz:.2f} z:", P.move(robot, args.side, goal))
+        r = P.move(robot, args.side, goal)
+        # let the PD converge first: move()/run() returns when the trajectory clock ends,
+        # before the arm finishes settling, so the FK error would otherwise read high.
+        robot.executor.settle(robot.arm.q_target, tol=0.02, timeout=1.5)
+        # achieved-vs-target error: wrist FK after the move vs the commanded goal
+        ach = robot.planner.fk(args.side, robot.arm.get_current_dual_arm_q())
+        dp_mm = (goal.translation - ach.translation) * 1000.0
+        R_err = goal.rotation.T @ ach.rotation
+        ang = float(np.degrees(np.arccos(np.clip((np.trace(R_err) - 1) / 2, -1, 1))))
+        print(f"move {args.side} +{args.dz:.2f} z: {r} | reached err: pos "
+              f"{np.linalg.norm(dp_mm):.1f} mm {np.round(dp_mm, 1).tolist()}, rot {ang:.1f} deg")
         print("home:", P.home(robot))
 
 

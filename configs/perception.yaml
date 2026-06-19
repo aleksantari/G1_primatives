@@ -8,7 +8,8 @@ detector: apriltag
 # AprilTag block detection (params for the `apriltag` detector).
 tag:
   family: "tag36h11"
-  size_m: 0.0481           # tag black-square edge (m) = 0.801 (black fraction of
+  size_m: 0.05
+  #size_m: 0.0481           # tag black-square edge (m) = 0.801 (black fraction of
                            # apriltag_14.png) x 0.06 (cube top face). Geometric/true
                            # value; GT depth cross-check agreed to ~5%. On hardware,
                            # measure the printed tag's black-square edge.

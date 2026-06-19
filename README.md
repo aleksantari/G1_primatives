@@ -99,6 +99,13 @@ uses the ZED head via `camera_real.yaml` (fill its intrinsics + mount first). Th
 don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand
 command→state diagnostic.
 
+**Reset the block (sim only)** — re-place the red block at its spawn pose between pick
+attempts. Runs in the **`unitree`** (sim) env, on the same loopback bus:
+```bash
+UNITREE_DDS_IFACE=lo CYCLONEDDS_URI=file://$HOME/repos/G1_classical_manip/configs/cyclonedds_loopback.xml \
+  bash -ic 'use_conda unitree && python reset_pose_test.py'
+```
+
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs
 end-to-end on `unitree_sim_isaaclab` with zero executor aborts; `home`/`move` are

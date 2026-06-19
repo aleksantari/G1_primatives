@@ -77,9 +77,12 @@ def _confirm(step: str, auto: bool):
 
 
 def _do_move(robot, side, goal, label):
-    """move() to a wrist goal, then print the achieved-vs-target error: the wrist FK pose
-    after the move vs the commanded goal (position mm + orientation deg)."""
+    """move() to a wrist goal, then -- after letting the PD CONVERGE -- print the
+    achieved-vs-target error: wrist FK vs the commanded goal (position mm + orientation
+    deg). move()/run() returns when the trajectory clock ends, BEFORE the arm finishes
+    settling, so settle to the final commanded config first or the error reads high."""
     r = P.move(robot, side, goal)
+    robot.executor.settle(robot.arm.q_target, tol=0.02, timeout=1.5)  # converge before measuring
     ach = robot.planner.fk(side, robot.arm.get_current_dual_arm_q())
     dp_mm = (goal.translation - ach.translation) * 1000.0
     R_err = goal.rotation.T @ ach.rotation
