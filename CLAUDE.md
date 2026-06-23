@@ -68,8 +68,10 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   (torque headroom), `time_dilation 0.5` (tracks). Sim bypasses the clip entirely, so it runs full
   speed with no gravity comp. The root fix (deferred) is to not re-rate-limit cuRobo's already-
   feasible trajectory during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
-- Goal frame is the **wrist-yaw link** directly. The 5 cm `L_ee`/palm offset is a later
-  refinement (goals are wrist-yaw poses for now).
+- Goal frame is the **wrist-yaw link** directly in the primitives (keeps them composable).
+  The palm/grasp-frame offset (wrist-yaw → index/middle finger midpoint, URDF-measured at q=0,
+  side-aware) is applied in **composite tasks** (`scripts/07_pick_place.py`) so a detected pose
+  becomes a grasp pose — to be promoted into the planner later.
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp
   signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. Presets are being

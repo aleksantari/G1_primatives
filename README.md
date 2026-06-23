@@ -1,7 +1,8 @@
 # g1_classical_manip
 
 A **cuRobo-native motion library** for the Unitree G1 (29-DoF, Dex3-1 hands), exposing a
-small set of **action primitives** meant to be called as tools (eventually by an LLM agent).
+small set of **action + perception primitives** meant to be **composed by an LLM agent** as a
+**baseline for pick-and-place** tasks. This is the **beta** primitive surface — to be expanded.
 It runs **off-board** on an RTX 5090 workstation that talks to the robot's PC2 (or the Isaac
 sim) over CycloneDDS. The robot is **suspended on a back-plate mount**: only the 14 arm
 joints and 2×7 hand joints are ever commanded.
@@ -120,5 +121,7 @@ so the full-speed plan can't be tracked — play it back slower), **`arm_velocit
 debug mode set by the operator via the physical remote (we don't call `MotionSwitcher`). See
 `docs/gravity_comp.md`. Still to do on the robot: `detect` validation + ZED intrinsics/mount,
 hand-preset tuning, and the velocity-clip torque root-fix (time-dilation is a workaround). Rerun
-logging and richer primitives (grasp-frame offset, `detect → move` pick) are open — see
+logging is still open. `scripts/07_pick_place.py` is the first **composite task** — a single-arm
+pick+lift (home→open→detect→approach→grasp→close→lift→home) with a URDF-measured palm/grasp
+offset, the LLM-composable baseline to expand (place/handover, dual-arm, multi-object) — see
 `HARDWARE_TODO.md` and the PLAN's roadmap.

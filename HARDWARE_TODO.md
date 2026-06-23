@@ -121,9 +121,11 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
 - [ ] **AprilTag pose** — `python scripts/06_detect.py --target real`; validate the detected block
       pose against a tape-measured position (confirms intrinsics + mount).
 
-## Deferred (not on the MVP path)
-- [ ] **Composite tasks** — pick (home → move-above → move-down → close → lift) and handover,
-      composed from the primitives; add a grasp-frame (palm) offset so goals are grasp poses.
+## Composite tasks (the LLM-composable baseline)
+- [x] **Pick + lift — DONE** (`scripts/07_pick_place.py`): home → open → detect → approach →
+      grasp → close → lift → home, single arm, per-step operator gating (`--no-confirm` to skip),
+      with a URDF-measured side-aware palm/grasp offset so a detected pose becomes a grasp pose.
+      **Open:** place / handover, dual-arm, multi-object, and tuning the grasp on hardware.
 - [ ] **Rerun logging** — wire current q / target pose / state into the primitives for debugging.
 
 ---

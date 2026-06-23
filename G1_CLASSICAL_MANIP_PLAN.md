@@ -1,8 +1,10 @@
 # g1_classical_manip — Plan & Source of Truth
 
 A **cuRobo-native motion library** for the Unitree G1 (29-DoF, Dex3-1 hands), exposing a
-small, growing set of **configurable action primitives** intended to be called as tools —
-ultimately by an LLM agent. It runs **off-board** on an RTX 5090 workstation talking to the
+small, growing set of **configurable action + perception primitives** an **LLM agent composes**
+into pick-and-place tasks. This repo is the **beta baseline** of that primitive surface, to be
+expanded (the first composite task, `scripts/07_pick_place.py`, is a single-arm pick+lift).
+It runs **off-board** on an RTX 5090 workstation talking to the
 robot's PC2 (or the Isaac sim) over CycloneDDS. The robot is **suspended on a back-plate
 mount**: only the 14 arm joints + 2×7 hand joints are ever commanded.
 
