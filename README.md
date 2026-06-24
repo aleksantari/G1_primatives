@@ -51,7 +51,7 @@ g1_classical_manip/
   perception/      transforms (frame math, cuRobo FK) · base (Detector seam) ·
                    apriltag_block · ground_truth   (Detector = apriltag | ground_truth)
 configs/           robot, planner, hands, camera, perception (+ curobo/, cyclonedds_loopback.xml)
-scripts/           01_check_dds → 07_pick_place bring-up ladder (--target sim|real) + hand_diag.py
+scripts/           01_check_dds → 08_check_depth bring-up ladder (--target sim|real) + hand_diag.py
 tests/             test_pose, test_grasp, test_detect   (pure-math, no robot)
 ```
 
@@ -93,10 +93,12 @@ python scripts/04_move.py        --target sim                # home (add --dz 0.
 python scripts/05_mvp_demo.py    --target sim    # home → move → close → open → home
 python scripts/06_detect.py      --target sim    # AprilTag feed: 3D pose axes + rpy vs ground truth
 python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
+python scripts/08_check_depth.py  --target real   # head-cam DEPTH feed (real only): mm stats + colorized view
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` and `07`
-command the arms/hands, `06` is camera-only. `02`/`06`/`07` work on both targets: `--target real`
-uses the ZED head via `camera_real.yaml` (fill its intrinsics + mount first). The camera scripts
+command the arms/hands, `06`/`08` are camera-only (`08` is the head **depth** feed — real only;
+sim is color-only and exits cleanly). `02`/`06`/`07` work on both targets: `--target real`
+uses the ZED head via `camera_real.yaml`. The camera scripts
 don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand
 command→state diagnostic.
 
@@ -125,3 +127,8 @@ logging is still open. `scripts/07_pick_place.py` is the first **composite task*
 pick+lift (home→open→detect→approach→grasp→close→lift→home) with a URDF-measured palm/grasp
 offset, the LLM-composable baseline to expand (place/handover, dual-arm, multi-object) — see
 `HARDWARE_TODO.md` and the PLAN's roadmap.
+
+The head-camera **depth** stream is now consumed (`HeadCamera.get_depth_frame()` — the real
+ZED's dedicated raw-float32 720×1280 mm stream; validated on the G1 at ~89% finite / ~30 fps via
+`scripts/08_check_depth.py`), the first step toward a point-cloud → grasp-pose pipeline. The wire
+spec is in `docs/depth_integration_handoff.md`.

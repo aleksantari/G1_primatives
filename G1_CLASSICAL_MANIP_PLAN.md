@@ -79,7 +79,7 @@ g1_classical_manip/
 ├── perception/                # DORMANT (pinocchio-bound; reworked cuRobo-native later)
 ├── image_server/              # HeadCamera (head-cam frames; camera_rig dormant)
 configs/  robot, planner, hands, camera, perception, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
-scripts/  01_check_dds → 07_pick_place bring-up ladder (--target sim|real) + hand_diag.py
+scripts/  01_check_dds → 08_check_depth bring-up ladder (--target sim|real) + hand_diag.py
 tests/    test_pose, test_grasp, test_detect   (pure-math; 18 pass)
 ```
 

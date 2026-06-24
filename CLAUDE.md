@@ -100,9 +100,11 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   to return instantly, so close→open fired back-to-back and looked like nothing happened).
 - **Live now (not dormant):** the perception stack
   (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
-  `image_server/image_client.py`. Current scripts: the numbered bring-up ladder
-  `scripts/0{1..7}_*.py` (check_dds → check_image → hands → move → mvp_demo → detect → pick_place;
-  each `--target sim|real`, shared `scripts/_rig.py`) + `hand_diag.py` (low-level hand diagnostic).
+  `image_server/image_client.py` (head color **+ depth** — `HeadCamera.get_depth_frame()`, the
+  real ZED's raw-float32 720×1280 mm stream). Current scripts: the numbered bring-up ladder
+  `scripts/0{1..8}_*.py` (check_dds → check_image → hands → move → mvp_demo → detect →
+  pick_place → check_depth; each `--target sim|real`, shared `scripts/_rig.py`) + `hand_diag.py`
+  (low-level hand diagnostic).
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
   `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is wired but
   **opt-in** — `make_robot` lazily imports it only when `enter_debug_mode=True`; default off,

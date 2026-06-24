@@ -8,11 +8,12 @@ section below and `docs/gravity_comp.md`. This file lists what still needs the p
 head camera, with the command and the pass criterion.
 
 > Everything runs in the **`g1_curobo`** env (`bash -ic 'use_conda g1_curobo && …'`). The
-> hardware entry points are the numbered bring-up ladder `scripts/0{1..7}_*.py` (each
+> hardware entry points are the numbered bring-up ladder `scripts/0{1..8}_*.py` (each
 > `--target real`), run **in order** — `01_check_dds` (read-only) and `02_check_image` are
-> safe/no-motion, `03`–`05` command the arms/hands, `06` is camera-only. `scripts/hand_diag.py`
-> is the low-level hand command→state diagnostic. The real image client (ZED) is **wired**;
-> `02`/`06 --target real` need the ZED intrinsics + mount filled in `configs/camera_real.yaml`.
+> safe/no-motion, `03`–`05` command the arms/hands, `06`/`08` are camera-only (`08` is the head
+> **depth** feed). `scripts/hand_diag.py` is the low-level hand command→state diagnostic. The real
+> image client (ZED) is **wired** (color + a raw-float32 **depth** stream); `02`/`06 --target real`
+> use the ZED intrinsics + mount in `configs/camera_real.yaml`.
 
 ---
 
@@ -33,7 +34,7 @@ motion code path.
   forced off in sim.
 - **Trajectory `time_dilation 0.5`** so the torque-throttled arm tracks the plan (`planner.yaml`).
 - Perception: AprilTag `detect()` + head-camera client. Real ZED **wired** (stereo-slice, RGB-first,
-  `camera_real.yaml`); sim is `camera_sim.yaml`; selected by `--target`.
+  **+ a raw-float32 depth stream**, `camera_real.yaml`); sim is `camera_sim.yaml`; selected by `--target`.
 
 **Still needs the physical robot / camera:** fill the camera config (ZED intrinsics/mount) and run
 `06_detect --target real`; tune hand presets; and resolve the velocity-clip torque root-cause so
@@ -115,6 +116,14 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
 - [x] **Image client — WIRED.** Real head = ZED stereo: `make_robot(camera_config="camera_real.yaml")`
       (via `--target real`) opens the vendored ZMQ client, slices the 720×2560 side-by-side frame to a
       single 1280×720 eye (`stereo_side`), serves RGB-first frames. Sim stays on `camera_sim.yaml`.
+- [x] **Head DEPTH — WIRED (2026-06-23).** A dedicated raw-float32 ZMQ stream (server port 56555,
+      720×1280, single left eye, **millimeters**, NaN/inf = invalid) consumed via
+      `HeadCamera.get_depth_frame()`, gated by `camera_real.yaml: stream.depth`. **Validated on the
+      real G1:** (720,1280), ~88.9% finite, ~30 fps, thousands of frames decoded with zero errors.
+      **Feed check:** `python scripts/08_check_depth.py --target real` (mm stats + colorized view).
+      Wire spec: `docs/depth_integration_handoff.md`. **Next (out of scope here):** deproject → point
+      cloud → grasp-pose model — intrinsics from `camera_real.yaml`, extrinsics from
+      `perception/transforms.py Frames.T_pelvis_camera`, GPU deprojection via cuRobo.
 - [ ] **ZED calibration (USER-PROVIDED)** — fill `camera_real.yaml` intrinsics (chosen eye @1280×720)
       + `extrinsics.mount` (d435_link→eye, ~half the stereo baseline); pick `stereo_side`.
 - [ ] **Feed check** — `python scripts/02_check_image.py --target real` shows one sliced ZED eye.
