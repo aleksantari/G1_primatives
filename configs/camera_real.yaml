@@ -50,3 +50,8 @@ stream:
   request_port: 60000         # config-request port (REQ); per-camera ZMQ ports come back.
   stereo: true               # ZED head is binocular side-by-side -> slice at width//2.
   stereo_side: left          # which eye to feed perception: "left" | "right".
+  depth: true                # consume the head DEPTH stream (HeadCamera.get_depth_frame()).
+                             # Client-side on/off gate; the port itself comes from the
+                             # server's REQ-config (head_camera.zmq_depth_port, e.g. 56555).
+                             # A dedicated raw-float32 720x1280 mm map (single left eye) --
+                             # see docs/depth_integration_handoff.md. Set false to opt out.

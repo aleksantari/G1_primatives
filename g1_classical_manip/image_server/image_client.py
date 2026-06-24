@@ -35,6 +35,9 @@ class HeadCamera:
         # stereo: slice the side-by-side frame and keep one eye (real ZED head).
         self._stereo = bool(kwargs.get("stereo", False))
         self._stereo_side = str(kwargs.get("stereo_side", "left"))
+        # depth: tri-state gate. None -> follow the server cam_config; True/False -> force
+        # on/off (a True gate can't conjure a stream the server doesn't advertise).
+        self._depth_pref = kwargs.get("depth", None)
 
         if backend == "unitree":
             from g1_classical_manip.image_server.zmq_image_client import ImageClient
@@ -107,6 +110,24 @@ class HeadCamera:
         if cv2 is None:
             return np.asarray(bgr).mean(axis=-1).astype(np.uint8)
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+    # --------------------------------------------------------------------- depth
+    @property
+    def has_depth(self) -> bool:
+        """Whether a head depth stream is available on this backend/target. Only the real
+        ZED (``unitree`` backend) publishes depth; sim/teleimager are color-only."""
+        if self.backend != "unitree" or self._client is None or self._depth_pref is False:
+            return False
+        return bool(getattr(self._client, "has_depth", False))
+
+    def get_depth_frame(self) -> Optional[np.ndarray]:
+        """Latest head depth as float32 (720,1280) in MILLIMETERS, NaN/inf = invalid (the
+        mask is the consumer's job; meters = depth/1000). NOT stereo-sliced -- head depth
+        is already a single left-eye map. Returns None when no depth stream exists (sim /
+        teleimager / depth disabled) or no frame has arrived yet."""
+        if not self.has_depth:
+            return None
+        return self._client.get_head_depth_frame()
 
     def shape(self) -> Tuple[int, int]:
         bgr = self.get_bgr_frame()

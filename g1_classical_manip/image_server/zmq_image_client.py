@@ -299,6 +299,25 @@ class ZMQ_PublisherManager:
 # ========================================================
 # ZMQ subscribe
 # ========================================================
+# Head-camera DEPTH wire format (a dedicated ZMQ PUB stream, NOT JPEG): raw np.float32
+# `.tobytes()`, a single left-eye map in MILLIMETERS with NaN/inf for invalid pixels.
+# Empirically probed against the live robot -- see docs/depth_integration_handoff.md.
+DEPTH_SHAPE = (720, 1280)
+DEPTH_NBYTES = DEPTH_SHAPE[0] * DEPTH_SHAPE[1] * 4   # 3,686,400 bytes/frame (float32)
+
+
+def _decode_depth(buf) -> Optional[np.ndarray]:
+    """Decode a raw head-depth payload -> float32 (720,1280) array in millimeters.
+
+    Invalid pixels are NaN/inf and pass through unmasked (the consumer picks the policy;
+    meters = depth/1000). Returns a writable copy so downstream may mutate it. Returns
+    None on a missing/short payload (never raises) -- e.g. the subscriber's idle sentinel.
+    """
+    if buf is None or len(buf) != DEPTH_NBYTES:
+        return None
+    return np.frombuffer(buf, dtype=np.float32).reshape(DEPTH_SHAPE).copy()
+
+
 class TeleImage:
     _NOT_SET = object()
     __slots__ = ["jpg", "_bgr", "fps"]
@@ -342,26 +361,34 @@ class TeleImage:
 class ZMQ_SubscriberThread(threading.Thread):
     """Thread that owns a SUB socket and handles receiving the latest message."""
 
-    def __init__(self, host: str, port: int, context: Optional[zmq.Context] = None, request_bgr: bool = False):
+    def __init__(self, host: str, port: int, context: Optional[zmq.Context] = None, request_bgr: bool = False,
+                 mode: str = "jpg"):
         """Initialize subscriber thread.
 
         Args:
             port: The port number to connect to.
             host: The server host address to connect to.
             context: Optional ZMQ context to use. If None, a new context will be created.
+            request_bgr: Whether to decode JPEG->BGR in a background thread (color/`jpg` mode only).
+            mode: ``"jpg"`` (default, color JPEG -> TeleImage) or ``"depth"`` (raw float32
+                head depth -> ndarray in mm; no JPEG/BGR machinery). See ``_decode_depth``.
         """
         super().__init__(daemon=True)
         self._host = host
         self._port = port
         self._context = context or zmq.Context.instance()
-        self._request_bgr = request_bgr
+        self._mode = mode
+        # depth carries no JPEG, so a BGR decode is meaningless there.
+        self._request_bgr = bool(request_bgr) and mode == "jpg"
 
         self._socket = None
         self._running = True
         self._started = threading.Event()
 
-        self._jpg_3ring_buffer = TripleRingBuffer()
         self._fps_monitor = SimpleFPSMonitor(window_size=10)
+        # depth mode: a single ring of decoded float32 arrays, no JPEG/BGR buffers.
+        self._depth_ring_buffer = TripleRingBuffer() if mode == "depth" else None
+        self._jpg_3ring_buffer = TripleRingBuffer() if mode == "jpg" else None
         if self._request_bgr:
             self._bgr_3ring_buffer = TripleRingBuffer()
             self._bgr_decode_queue = queue.Queue(maxsize=1)
@@ -402,12 +429,15 @@ class ZMQ_SubscriberThread(threading.Thread):
     # --------------------------------------------------------
     # public api
     # --------------------------------------------------------
-    def recv(self) -> TeleImage:
+    def recv(self):
         """Get the latest received message.
 
         Returns:
-            The latest message as a TeleImage object containing raw bytes, decoded BGR image (if enabled), and FPS.
+            ``jpg`` mode: a TeleImage (raw bytes, decoded BGR if enabled, FPS).
+            ``depth`` mode: the latest float32 (720,1280) depth ndarray in mm, or None.
         """
+        if self._mode == "depth":
+            return self._depth_ring_buffer.read()
         current_fps = self._fps_monitor.fps
         jpg_data = self._jpg_3ring_buffer.read()
         if not self._request_bgr:
@@ -444,6 +474,11 @@ class ZMQ_SubscriberThread(threading.Thread):
                     try:
                         # receive the latest message
                         img_bytes = self._socket.recv()
+                        if self._mode == "depth":
+                            # raw float32 -> (720,1280) mm; no JPEG/BGR machinery
+                            self._depth_ring_buffer.write(_decode_depth(img_bytes))
+                            self._fps_monitor.tick()
+                            continue
                         # write to 3-ring-buffer
                         self._jpg_3ring_buffer.write(img_bytes)
                         # enqueue for decoding if needed
@@ -462,6 +497,11 @@ class ZMQ_SubscriberThread(threading.Thread):
                             logger_mp.error(f"Error in subscriber loop: {e}")
                         break
                 else:
+                    if self._mode == "depth":
+                        self._depth_ring_buffer.write(None)
+                        self._fps_monitor.reset()
+                        logger_mp.debug(f"No message received from {self._host}:{self._port} within timeout.")
+                        continue
                     self._jpg_3ring_buffer.write(None)
                     if self._request_bgr:
                         try:
@@ -496,9 +536,10 @@ class ZMQ_SubscriberManager:
     def __init__(self):
         self._context = zmq.Context()
 
-    def _create_subscriber_thread(self, host: str, port: int, request_bgr: bool = False) -> ZMQ_SubscriberThread:
+    def _create_subscriber_thread(self, host: str, port: int, request_bgr: bool = False,
+                                  mode: str = "jpg") -> ZMQ_SubscriberThread:
         try:
-            subscriber_thread = ZMQ_SubscriberThread(host, port, self._context, request_bgr)
+            subscriber_thread = ZMQ_SubscriberThread(host, port, self._context, request_bgr, mode)
             subscriber_thread.start()
             # Wait for the thread to start and socket to be ready
             if not subscriber_thread._wait_for_start(timeout=1.0):
@@ -508,11 +549,12 @@ class ZMQ_SubscriberManager:
             logger_mp.error(f"Failed to create subscriber thread for {host}:{port}: {e}")
             raise
 
-    def _get_subscriber_thread(self, host: str, port: int, request_bgr: bool = False) -> ZMQ_SubscriberThread:
+    def _get_subscriber_thread(self, host: str, port: int, request_bgr: bool = False,
+                               mode: str = "jpg") -> ZMQ_SubscriberThread:
         key = (host, port)
         with self._lock:
             if key not in self._subscriber_threads:
-                self._subscriber_threads[key] = self._create_subscriber_thread(host, port, request_bgr)
+                self._subscriber_threads[key] = self._create_subscriber_thread(host, port, request_bgr, mode)
             return self._subscriber_threads[key]
 
     # --------------------------------------------------------
@@ -527,20 +569,22 @@ class ZMQ_SubscriberManager:
                     cls._instance = cls()
         return cls._instance
 
-    def subscribe(self, host: str, port: int, request_bgr: bool = False) -> TeleImage:
+    def subscribe(self, host: str, port: int, request_bgr: bool = False, mode: str = "jpg"):
         """Receive the latest message from the specified subscriber.
         Args:
             host: The server address
             port: The port number
-            request_bgr: Whether to request BGR decoding
+            request_bgr: Whether to request BGR decoding (``jpg`` mode only)
+            mode: ``"jpg"`` (TeleImage) or ``"depth"`` (raw float32 ndarray in mm, or None)
 
         Returns:
-            The latest message as a TeleImage object containing current fps, raw bytes and decoded BGR image (if enabled).
+            ``jpg`` mode: a TeleImage (current fps, raw bytes, decoded BGR if enabled).
+            ``depth`` mode: the latest float32 (720,1280) depth ndarray in mm, or None.
         """
         if not self._running:
             raise RuntimeError("SubscriberManager is closed.")
 
-        subscriber_thread = self._get_subscriber_thread(host, port, request_bgr=request_bgr)
+        subscriber_thread = self._get_subscriber_thread(host, port, request_bgr=request_bgr, mode=mode)
         return subscriber_thread.recv()
 
     def close(self) -> None:
@@ -717,6 +761,13 @@ class ImageClient:
         if self._cam_config is None:
             raise RuntimeError("Failed to get camera configuration.")
 
+        # Head DEPTH: a dedicated raw-float32 ZMQ stream the server advertises alongside
+        # the color ports. Read the flag/port here; subscribe lazily on first request so a
+        # depth-less robot pays nothing. See docs/depth_integration_handoff.md.
+        _head = self._cam_config.get("head_camera", {})
+        self._depth_enabled = bool(_head.get("enable_depth", False))
+        self._depth_port = _head.get("zmq_depth_port")
+
         if self._cam_config["head_camera"]["enable_zmq"]:
             self._subscriber_manager.subscribe(
                 self._host, self._cam_config["head_camera"]["zmq_port"], request_bgr=self._request_bgr
@@ -741,10 +792,23 @@ class ImageClient:
     def get_cam_config(self):
         return self._cam_config
 
+    @property
+    def has_depth(self) -> bool:
+        """True if the server advertises a head depth stream (enable_depth + a depth port)."""
+        return self._depth_enabled and self._depth_port is not None
+
     def get_head_frame(self):
         return self._subscriber_manager.subscribe(
             self._host, self._cam_config["head_camera"]["zmq_port"], request_bgr=self._request_bgr
         )
+
+    def get_head_depth_frame(self) -> Optional[np.ndarray]:
+        """Latest head depth as float32 (720,1280) in MILLIMETERS (NaN/inf = invalid), or
+        None if depth is unavailable or no frame has arrived yet. Lazily subscribes to the
+        dedicated raw-float32 depth port the first time it is called."""
+        if not self.has_depth:
+            return None
+        return self._subscriber_manager.subscribe(self._host, int(self._depth_port), mode="depth")
 
     def get_left_wrist_frame(self):
         return self._subscriber_manager.subscribe(
