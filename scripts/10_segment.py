@@ -1,16 +1,18 @@
 #!/usr/bin/env python
-"""10 - SAM3 segmentation tool (NO motion). Get a head-cam frame (live ZED) OR a static
-image file, refine a SAM3 mask (interactive cv2 GUI, or one auto call), and report the
-result. For developing segmentation before the grasp run.
+"""10 - SAM3 segmentation tool (NO motion). Get a head-cam frame (live ZED), a captured
+.npz, or a static image, refine a SAM3 mask (interactive cv2 GUI, or one auto call), and
+report the masked single-object point cloud. For developing segmentation + cloud offline.
 
-  --image PATH        segment a static image file -- SAM3 only, NO robot / depth / cloud
-                      (the tightest loop for iterating on prompts; pairs with --mode auto)
+  --frame PATH.npz    replay a captured frame (11_capture_frame): rgb+depth+intrinsics+
+                      extrinsics -> full segment -> cloud, NO robot (the offline loop)
+  --image PATH        segment a static image -- SAM3 only, NO robot / depth / cloud
   --mode interactive  cv2 GUI: text/box/points, cycle candidates, accept (needs a display)
   --mode auto         one SAM3 call with --text / grasp.yaml default_prompt
 
-Live mode needs the real ZED depth stream; both modes need a running SAM3 server
+Live mode needs the real ZED depth stream; all modes need a running SAM3 server
 (python -m sam3.serving --port 5557).
 
+  frame: bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --frame captures/scene1.npz --mode interactive'
   image: bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --image ~/repos/sam3/assets/images/groceries.jpg --mode auto --text "a bottle"'
   live : bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --target real --mode interactive'
 """
@@ -20,6 +22,7 @@ import time
 import numpy as np
 import _rig
 from g1_classical_manip.factory import make_robot, load_configs
+from g1_classical_manip.spatial.pose import Pose
 from g1_classical_manip.perception.depth import deproject_depth
 from g1_classical_manip.perception.segment import Sam3Segmenter, SegmentationAborted
 from g1_classical_manip.perception.sam3_client import Sam3Client
@@ -63,10 +66,22 @@ def _grab_pair(cam, timeout_s: float = 6.0):
     return cam.get_rgb_frame(), cam.get_depth_frame()   # both warm -> back-to-back
 
 
+def _load_frame(path):
+    """Load a captured .npz (11_capture_frame) -> (rgb, depth, intrinsics, T_pelvis_camera)."""
+    z = np.load(path)
+    rgb = np.asarray(z["rgb"], np.uint8)
+    depth = np.asarray(z["depth"], np.float32)
+    intr = {k: float(z[k]) for k in ("fx", "fy", "cx", "cy")}
+    T_pc = Pose.from_homogeneous(np.asarray(z["T_pelvis_camera"], float))
+    return rgb, depth, intr, T_pc
+
+
 def main():
     ap = _rig.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--image", default=None,
                     help="segment a static image file instead of the live camera (SAM3 only)")
+    ap.add_argument("--frame", default=None,
+                    help="replay a captured .npz (11_capture_frame): rgb+depth+cloud, no robot")
     ap.add_argument("--mode", choices=["interactive", "auto"], default="interactive")
     ap.add_argument("--text", default=None, help="text prompt (auto, or seeds interactive)")
     ap.add_argument("--top-k", type=int, default=3)
@@ -82,9 +97,12 @@ def main():
                           port=int(seg_cfg.get("port", 5557)),
                           timeout_ms=int(seg_cfg.get("timeout_ms", 60000)))
 
-    # --- source the frame: static image (no robot) OR the live ZED (rgb+depth) ---
-    robot, depth = None, None
-    if args.image:
+    # --- source the frame: captured .npz (offline) | static image | live ZED ---
+    robot, depth, intr, T_pc = None, None, None, None
+    if args.frame:
+        rgb, depth, intr, T_pc = _load_frame(args.frame)
+        print(f"frame: {args.frame}  rgb {rgb.shape}  depth {depth.shape}  (offline replay)")
+    elif args.image:
         if cv2 is None:
             print("cv2 is required to read --image.")
             return
@@ -106,6 +124,8 @@ def main():
             print(f"no {missing} frame after warmup -- is that stream publishing? "
                   f"(depth = 08_check_depth, color = 02_check_image; both must show frames)")
             return
+        intr = cfg["camera"]["intrinsics"]
+        T_pc = robot.frames.T_pelvis_camera(None)        # head cam is q-independent
         print(f"[{args.target}] frame: rgb {rgb.shape}  depth {depth.shape}")
 
     # --- segment ---
@@ -131,10 +151,9 @@ def main():
         _show_or_save(_overlay(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), mask),
                       "segmentation (any key to exit)", "/tmp/segmented_mask.png")
 
-    # cloud counts only when we have depth (live ZED): mask applied pre-deproject
-    if depth is not None:
-        intr = cfg["camera"]["intrinsics"]
-        T_pc = robot.frames.T_pelvis_camera(None)    # head cam is q-independent
+    # cloud counts only when we have depth (live ZED or a captured --frame): the mask is
+    # applied pre-deproject, with the captured/live intrinsics + T_pelvis_camera.
+    if depth is not None and intr is not None and T_pc is not None:
         full = deproject_depth(depth, intr, T_pc)
         obj = deproject_depth(depth, intr, T_pc, mask=mask)
         print(f"full-scene cloud      : {full.n} points")
