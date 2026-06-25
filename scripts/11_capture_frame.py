@@ -11,6 +11,7 @@ previews next to the npz.
 """
 import argparse
 import os
+import sys
 import time
 
 import numpy as np
@@ -90,3 +91,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # The work is done + saved above. cuRobo/torch (CUDA) + the ZMQ camera daemon threads
+    # abort during interpreter teardown ("terminate called ... / Aborted") AFTER all of it.
+    # Hard-exit to skip the messy atexit/destructor teardown (exit 0, no core dump).
+    sys.stdout.flush()
+    os._exit(0)
