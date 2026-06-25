@@ -1,0 +1,77 @@
+"""GraspGenX grasp source: depth -> segmented cloud -> GraspGenX ZMQ -> ranked grasps.
+
+Pipeline (all pelvis-frame, meters): capture the rgb+depth pair, get a 2D object mask from
+the segmenter (SAM3 / interactive / none), deproject ONLY the masked-in depth pixels into a
+single-object cloud, send it to the GraspGenX service, map each returned 6-DoF grasp through
+the fixed grasp->tool transform to a wrist-yaw goal, return ranked by confidence. The service
+centers/uncenters internally, so the cloud is sent in the pelvis frame and grasps come back in
+the pelvis frame (no client centering / normals / table plane).
+"""
+from __future__ import annotations
+
+from typing import List
+
+import numpy as np
+
+from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
+from g1_classical_manip.perception.depth import deproject_depth
+from g1_classical_manip.perception.segment import SegmentationAborted
+from g1_classical_manip.grasp.base import GraspSource, GraspCandidate
+from g1_classical_manip.grasp.tool_transform import (
+    build_T_wristyaw_grasp, wrist_goal_from_grasp)
+
+
+class GraspGenXGraspSource(GraspSource):
+    def __init__(self, frames, segmenter, client_factory, gcfg: dict, camera_cfg: dict):
+        self.frames = frames
+        self.segmenter = segmenter                     # perception.segment.Segmenter (.mask(rgb))
+        self.client_factory = client_factory           # () -> GraspGenXClient (ctx manager)
+        self.gcfg = gcfg
+        self.intrinsics = (camera_cfg or {}).get("intrinsics", {})
+        self.palm_offset_xyz = np.asarray(gcfg["palm_offset_xyz"], float)
+        self.R_wristyaw_grasp = rpy_to_matrix(*gcfg["wristyaw_grasp_rpy"])
+
+    def grasps(self, robot, side: str, target: str) -> List[GraspCandidate]:
+        cam = getattr(robot, "camera", None)
+        if cam is None:
+            return []
+        rgb = cam.get_rgb_frame()                      # same-instant pair (rgb then depth)
+        depth = cam.get_depth_frame()
+        if depth is None or rgb is None:
+            return []                                  # no depth (sim/off) -> caller fails loudly
+        arm = getattr(robot, "arm", None)
+        q14 = arm.get_current_dual_arm_q() if arm is not None else None
+        T_pc = self.frames.T_pelvis_camera(q14)
+
+        try:
+            mask = self.segmenter.mask(rgb)            # (H,W) bool / all-False / None (whole frame)
+        except SegmentationAborted:
+            return []                                  # operator aborted -> no grasps (loud)
+
+        cloud = deproject_depth(depth, self.intrinsics, T_pc,
+                                voxel_m=self.gcfg.get("voxel_m"), mask=mask)
+        if cloud.is_empty():
+            return []
+        assert cloud.frame == "pelvis", f"cloud must be pelvis-frame, got {cloud.frame!r}"
+
+        with self.client_factory() as client:
+            grasps, conf = client.infer(
+                cloud.points, gripper_name=self.gcfg.get("gripper_name", "unitree_g1"),
+                num_grasps=int(self.gcfg.get("num_grasps", 200)),
+                grasp_threshold=float(self.gcfg.get("grasp_threshold", -1.0)),
+                topk_num_grasps=int(self.gcfg.get("topk", 100)))
+        grasps = np.asarray(grasps, dtype=np.float32)
+        conf = np.asarray(conf, dtype=np.float32).reshape(-1)
+        k = min(grasps.shape[0], conf.shape[0])        # guard a grasps/conf length mismatch
+        if k == 0:
+            return []
+        grasps, conf = grasps[:k], conf[:k]
+
+        T_wg = build_T_wristyaw_grasp(self.palm_offset_xyz, side, self.R_wristyaw_grasp)
+        out: List[GraspCandidate] = []
+        for i in np.argsort(-conf):                    # confidence descending
+            T_pelvis_grasp = Pose.from_homogeneous(grasps[i])
+            wrist = wrist_goal_from_grasp(T_pelvis_grasp, T_wg)
+            out.append(GraspCandidate(wrist_goal=wrist, confidence=float(conf[i]),
+                                      grasp_pose=T_pelvis_grasp))
+        return out

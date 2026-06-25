@@ -24,6 +24,8 @@ dependencies = [
     "pupil-apriltags>=1.0",
     "opencv-python",
     "pyzmq",
+    "msgpack",            # GraspGenX ZMQ wire protocol (thin standalone client)
+    "msgpack-numpy",      # numpy arrays serialize natively over msgpack
     "tyro",
     "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git",
 ]

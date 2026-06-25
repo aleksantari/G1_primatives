@@ -6,7 +6,10 @@ from __future__ import annotations
 import argparse
 import os
 
+import numpy as np
+
 from g1_classical_manip.factory import make_robot, load_configs
+from g1_classical_manip import primitives as P
 
 SIM_DOMAIN, SIM_IFACE = 1, "lo"
 
@@ -52,6 +55,35 @@ def connect(target: str, **kwargs):
         return make_robot(connect_dds=True, dds_domain=SIM_DOMAIN,
                           dds_interface=SIM_IFACE, mode="sim", **kwargs)
     return make_robot(connect_dds=True, mode="debug", **kwargs)
+
+
+def confirm(step: str, auto: bool):
+    """Operator gate before a step. Enter -> run; 'q'/Ctrl-D -> abort (raises
+    KeyboardInterrupt -> the caller HOLDS position, no recovery motion). auto=True skips."""
+    if auto:
+        return
+    try:
+        ans = input(f"  >> next: {step} -- Enter to run, 'q' to abort: ").strip().lower()
+    except EOFError:
+        raise KeyboardInterrupt("stdin closed")
+    if ans in ("q", "quit", "n", "no", "abort"):
+        raise KeyboardInterrupt(f"operator aborted before '{step}'")
+
+
+def do_move(robot, side, goal, label):
+    """move() to a wrist goal, then -- after letting the PD CONVERGE -- print the
+    achieved-vs-target error (wrist FK vs the commanded goal, pos mm + orientation deg).
+    run() returns when the trajectory clock ends, BEFORE the arm finishes settling, so
+    settle to the final commanded config first or the error reads high. Shared by 07/09."""
+    r = P.move(robot, side, goal)
+    robot.executor.settle(robot.arm.q_target, tol=0.02, timeout=1.5)
+    ach = robot.planner.fk(side, robot.arm.get_current_dual_arm_q())
+    dp_mm = (goal.translation - ach.translation) * 1000.0
+    R_err = goal.rotation.T @ ach.rotation
+    ang = float(np.degrees(np.arccos(np.clip((np.trace(R_err) - 1) / 2, -1, 1))))
+    print(f"{label:8s}: {r} | reached err: pos {np.linalg.norm(dp_mm):.1f} mm "
+          f"{np.round(dp_mm, 1).tolist()}, rot {ang:.1f} deg")
+    return r
 
 
 class Viewer:

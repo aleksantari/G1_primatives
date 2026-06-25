@@ -1,0 +1,46 @@
+# Grasp-source config. `grasp_source` selects where candidate grasp poses come from
+# (both implement the same GraspSource interface -> ranked wrist-yaw goal Poses):
+#   apriltag  -- the known-good A-B reference: detected pose + URDF palm offset (one grasp).
+#   graspgenx -- learned 6-DoF grasps from the GraspGenX ZMQ service (segmented cloud in).
+# 09_graspgen.py --source overrides this per run for A-B comparison.
+grasp_source: apriltag
+
+# AprilTag source. Its palm_offset_xyz is the URDF-measured wrist_yaw->palm offset, shared
+# by the GraspGenX source too (same gripper). Mirrors 07_pick_place's inline constants.
+apriltag:
+  palm_offset_xyz: [0.1192, -0.0346, 0.0]   # wrist_yaw -> palm grasp center (side-mirrored)
+  grasp_offset:    [0.0, 0.0, 0.02]          # contact margin past the finger-base midpoint
+  grasp_rpy: null                            # null = use the wrist's current FK orientation
+
+# GraspGenX source: depth -> segmented cloud -> ZMQ infer -> ranked grasps -> wrist goals.
+graspgenx:
+  host: "127.0.0.1"       # GraspGenX server (runs on the workstation GPU). USER-PROVIDED.
+  port: 5556
+  gripper_name: "unitree_g1"
+  num_grasps: 200
+  topk: 100
+  grasp_threshold: -1.0   # -1 = take the top-K ranked (no hard confidence threshold)
+  timeout_ms: 60000
+  voxel_m: 0.003          # ~3 mm voxel downsample of the cloud before infer
+  # grasp(+Z approach, +X closing) -> wrist_yaw axis map. *** EMPIRICAL -- verify on hardware. ***
+  # pitch +90deg maps the grasp APPROACH axis (+Z) onto wrist_yaw +X (the palm-forward
+  # direction the AprilTag palm offset confirms). The ROLL (first value) sets the CLOSING-axis
+  # alignment and is the part to tune; check in sim + one gated hardware grasp before trusting
+  # (the AprilTag path never committed a grasp orientation, so there's nothing to copy from).
+  # [roll, pitch, yaw] radians.
+  wristyaw_grasp_rpy: [0.0, 1.5707963, 0.0]
+
+# Object segmentation (SAM3 over ZMQ) -> a 2D mask applied to the depth BEFORE deproject.
+#   mode: null|none -> NullSegmenter (whole frame; sim has no SAM3).
+#         auto       -> one SAM3 call with default_prompt below (headless).
+#         interactive-> cv2 GUI to refine text/box/points before accepting (10_segment / 09 --segment).
+segment:
+  mode: null              # default off; --segment auto|interactive overrides per run
+  host: "127.0.0.1"       # SAM3 server (workstation GPU). USER-PROVIDED.
+  port: 5557
+  timeout_ms: 60000
+  top_k: 3                # >1 so points/box ambiguity candidates can be cycled in the GUI
+  default_prompt:         # exactly ONE of text/box/points; used by auto, seeds interactive
+    text: "red block"
+    # box: [x0, y0, x1, y1]
+    # points: [[x, y], ...]   # (+ optional point_labels: [1, 0, ...])

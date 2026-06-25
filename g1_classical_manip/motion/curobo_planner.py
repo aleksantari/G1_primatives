@@ -187,3 +187,24 @@ class CuroboArmPlanner:
             raise PlanningError(
                 f"cuRobo plan_pose failed: {side} -> {np.round(goal_pose.translation, 3)}")
         return self._to_trajectory(result, f"{side}_goal")
+
+    def plan_to_pose_set(self, start_q_repo14, side: str,
+                         goal_poses) -> JointTrajectory:
+        """Plan to the FIRST reachable goal in a ranked list of candidate wrist poses
+        (e.g. grasp candidates, best-first). Tries each via plan_to_pose and returns the
+        first that solves; raises PlanningError only if ALL fail. This is the multi-
+        candidate path -- the planner picks a reachable/collision-free grasp instead of
+        assuming one. (FUTURE: a single native cuRobo goalset solve with num_goalset=K
+        would let the optimizer choose globally; deferred -- needs GPU/hardware to
+        validate the goalset tensor shapes + per-goalset success mask.)"""
+        goals = list(goal_poses)
+        if not goals:
+            raise PlanningError("plan_to_pose_set: no candidate goals")
+        last = None
+        for gp in goals:
+            try:
+                return self.plan_to_pose(start_q_repo14, side, gp)
+            except PlanningError as e:
+                last = e
+        raise PlanningError(
+            f"plan_to_pose_set: all {len(goals)} candidates failed; last: {last}")

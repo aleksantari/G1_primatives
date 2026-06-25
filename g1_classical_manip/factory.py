@@ -28,7 +28,7 @@ from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner
 from g1_classical_manip.motion.executor import Executor
 
 _CONFIG_FILES = {"robot": "robot.yaml", "planner": "planner.yaml", "hands": "hands.yaml",
-                 "perception": "perception.yaml"}
+                 "perception": "perception.yaml", "grasp": "grasp.yaml"}
 # Camera config is chosen separately (sim mono vs real ZED stereo); the --target
 # ladder passes camera_config=camera_real.yaml.
 DEFAULT_CAMERA_CONFIG = "camera_sim.yaml"
@@ -57,6 +57,7 @@ class Robot:
     executor: Optional[Executor] = None
     frames: Any = None          # transforms.Frames (frame-math owner)
     detector: Any = None        # perception Detector (apriltag | ground_truth)
+    grasp_source: Any = None    # grasp.GraspSource (apriltag | graspgenx)
     camera: Any = None          # image_server.HeadCamera (None unless connect_camera)
     connected: bool = False
 
@@ -88,6 +89,54 @@ def _build_perception(planner, cfg: Dict[str, Any]):
     else:
         raise ValueError(f"unknown detector: {kind}")
     return frames, detector
+
+
+def _build_segmenter(seg_cfg: Dict[str, Any]):
+    """Object segmenter from grasp.yaml `segment` (mode: null|auto|interactive). null/sim ->
+    whole frame; auto/interactive -> SAM3 (lazy ZMQ socket). Mirrors the `detector:` seam."""
+    from g1_classical_manip.perception.segment import (
+        NullSegmenter, Sam3Segmenter, InteractiveSam3Segmenter)
+    mode = seg_cfg.get("mode")
+    if mode in (None, "null", "none", "sim"):
+        return NullSegmenter()
+    from g1_classical_manip.perception.sam3_client import Sam3Client
+
+    def _sam3():
+        return Sam3Client(host=seg_cfg.get("host", "127.0.0.1"),
+                          port=int(seg_cfg.get("port", 5557)),
+                          timeout_ms=int(seg_cfg.get("timeout_ms", 60000)))
+    prompt = seg_cfg.get("default_prompt") or {}
+    top_k = int(seg_cfg.get("top_k", 3))
+    if mode == "auto":
+        return Sam3Segmenter(_sam3, prompt, top_k=1)
+    if mode == "interactive":
+        return InteractiveSam3Segmenter(_sam3, prompt, top_k=top_k)
+    raise ValueError(f"unknown segment mode: {mode}")
+
+
+def _build_grasp_source(frames, cfg: Dict[str, Any]):
+    """Build the configured grasp source (no I/O; the GraspGenX/SAM3 ZMQ sockets open lazily
+    per call). Selector: grasp.yaml `grasp_source` -- mirrors the `detector:` seam."""
+    g = cfg.get("grasp", {}) or {}
+    kind = g.get("grasp_source", "apriltag")
+    apr = g.get("apriltag", {}) or {}
+    if kind == "apriltag":
+        from g1_classical_manip.grasp.apriltag_source import AprilTagGraspSource
+        return AprilTagGraspSource(apr["palm_offset_xyz"], apr["grasp_offset"],
+                                   apr.get("grasp_rpy"))
+    if kind == "graspgenx":
+        from g1_classical_manip.grasp.graspgenx_source import GraspGenXGraspSource
+        from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
+        gx = dict(g.get("graspgenx", {}) or {})
+        gx.setdefault("palm_offset_xyz", apr.get("palm_offset_xyz"))   # shared URDF offset
+
+        def _client():
+            return GraspGenXClient(host=gx.get("host", "127.0.0.1"),
+                                   port=int(gx.get("port", 5556)),
+                                   timeout_ms=int(gx.get("timeout_ms", 60000)))
+        seg = _build_segmenter(g.get("segment", {}) or {})
+        return GraspGenXGraspSource(frames, seg, _client, gx, cfg["camera"])
+    raise ValueError(f"unknown grasp_source: {kind}")
 
 
 def _build_camera(cfg: Dict[str, Any]):
@@ -124,8 +173,10 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     planner = CuroboArmPlanner(curobo_cfg, planner_cfg=cfg["planner"])
     robot = Robot(cfg=cfg, planner=planner)
 
-    # perception (frame math + detector) is always available; camera stream optional.
+    # perception (frame math + detector) + grasp source are always available (cheap, no
+    # I/O); the camera stream is optional.
     robot.frames, robot.detector = _build_perception(planner, cfg)
+    robot.grasp_source = _build_grasp_source(robot.frames, cfg)
     if connect_camera:
         robot.camera = _build_camera(cfg)
 

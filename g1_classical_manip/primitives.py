@@ -48,6 +48,16 @@ def move(robot, side: str, goal_pose: Pose) -> Result:
     return Result(bool(res.success), res.reason)
 
 
+def move_to_candidates(robot, side: str, goal_poses) -> Result:
+    """Move `side` wrist to the FIRST reachable goal in a ranked list (e.g. grasp
+    candidates, best-first); the other arm holds. The planner tries each in order and
+    picks the first that solves -- so callers don't assume a single grasp."""
+    q0 = robot.arm.get_current_dual_arm_q()
+    traj = robot.planner.plan_to_pose_set(q0, side, goal_poses)
+    res = robot.executor.run(traj)
+    return Result(bool(res.success), res.reason)
+
+
 def detect(robot, target: str = "block", frames: int = 5) -> Optional[Detection]:
     """Detect `target` from the head camera; return a Detection whose `.pose` is the
     object pose in the pelvis frame (or None if not found). Pulls up to `frames` head
