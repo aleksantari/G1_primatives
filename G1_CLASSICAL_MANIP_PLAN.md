@@ -3,7 +3,9 @@
 A **cuRobo-native motion library** for the Unitree G1 (29-DoF, Dex3-1 hands), exposing a
 small, growing set of **configurable action + perception primitives** an **LLM agent composes**
 into pick-and-place tasks. This repo is the **beta baseline** of that primitive surface, to be
-expanded (the first composite task, `scripts/07_pick_place.py`, is a single-arm pick+lift).
+expanded. Composite tasks so far: `scripts/07_pick_place.py` (AprilTag pick+lift) and
+`scripts/09_graspgen.py` (pick+lift via a pluggable `GraspSource` — AprilTag A-B reference or
+learned GraspGenX 6-DoF grasps over a SAM3-segmented point cloud).
 It runs **off-board** on an RTX 5090 workstation talking to the
 robot's PC2 (or the Isaac sim) over CycloneDDS. The robot is **suspended on a back-plate
 mount**: only the 14 arm joints + 2×7 hand joints are ever commanded.
@@ -64,9 +66,9 @@ retimer**. The executor owns the only handle to `G1_29_ArmController`; planning 
 ### Layout (current)
 ```
 g1_classical_manip/
-├── spatial/pose.py            # numpy SE(3) Pose (pelvis frame); the pin.SE3 replacement
+├── spatial/                   # pose.py (SE(3) Pose, pin.SE3 replacement) · pointcloud.py (PointCloud)
 ├── motion/
-│   ├── curobo_planner.py      # CuroboArmPlanner: plan_to_pose, plan_joint, fk, default_q
+│   ├── curobo_planner.py      # CuroboArmPlanner: plan_to_pose, plan_to_pose_set, plan_joint, fk
 │   ├── executor.py            # streams JointTrajectory @ control_hz; prime + abort-to-hold; settle
 │   └── planner_base.py        # JointPath / JointTrajectory containers (DOF=14)
 ├── ee/                        # hand_base (ABC), dex3, dex1 — presets + grasp verification
@@ -74,13 +76,18 @@ g1_classical_manip/
 │   ├── robot_arm.py           # G1_29_ArmController (vendored: 250 Hz dual-arm streaming)
 │   ├── robot_hand_unitree.py  # threaded Dex3/Dex1 controllers (vendored DDS plumbing)
 │   └── motion_switcher.py     # Enter/Exit debug mode (hardware)
-├── primitives.py              # home / move / open_hand / close_hand  (the agent tool surface)
-├── factory.py                 # make_robot(): cuRobo planner + DDS controllers + executor
-├── perception/                # DORMANT (pinocchio-bound; reworked cuRobo-native later)
-├── image_server/              # HeadCamera (head-cam frames; camera_rig dormant)
-configs/  robot, planner, hands, camera, perception, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
-scripts/  01_check_dds → 08_check_depth bring-up ladder (--target sim|real) + hand_diag.py
-tests/    test_pose, test_grasp, test_detect   (pure-math; 18 pass)
+├── grasp/                     # GraspSource: base · apriltag_source (A-B ref) · graspgenx_source
+│                              #   · graspgenx_client (ZMQ :5556) · tool_transform (grasp→wrist)
+├── primitives.py              # home / move / move_to_candidates / open_hand / close_hand / detect
+├── factory.py                 # make_robot(): planner + DDS controllers + executor + perception + grasp
+├── perception/                # LIVE: transforms · base · apriltag_block · ground_truth · sim_state
+│                              #   · depth (deproject→PointCloud) · segment (SAM3 mask seam)
+│                              #   · sam3_client (ZMQ :5557) · segment_gui (cv2 mask GUI)
+├── image_server/              # HeadCamera (head-cam color + depth frames; camera_rig dormant)
+configs/  robot, planner, hands, camera, perception, grasp, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
+scripts/  01_check_dds → 10_segment bring-up ladder (--target sim|real) + hand_diag.py
+tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/graspgenx_client/
+          grasp_source/sam3_client/segment   (pure-math; no robot)
 ```
 
 ### Architecture rules (enforced, not aspirational)
@@ -111,8 +118,10 @@ tests/    test_pose, test_grasp, test_detect   (pure-math; 18 pass)
   `plan_pose(GoalToolPose, JointState)` and `plan_cspace(JointState, JointState)` →
   `TrajOptSolverResult` (`.success`, `.get_interpolated_plan()` carrying
   position/velocity/acceleration + `dt`); `compute_kinematics(...).tool_poses.get_link_pose`.
-- Goal frame is the **wrist-yaw link** directly; the 5 cm `L_ee`/palm grasp-frame offset is a
-  later refinement.
+- Goal frame is the **wrist-yaw link** directly; the palm/grasp-frame offset is applied above the
+  planner by the **grasp sources** (`grasp/tool_transform.py`), which return wrist-yaw goals — so
+  `move`/`plan_to_pose` stay wrist-yaw. `plan_to_pose_set` plans the first reachable of a ranked
+  candidate list (native cuRobo goalset deferred).
 - **Speed** is governed by the cuRobo robot config's joint limits, but the executor plays the
   plan back at `planner.yaml: executor.time_dilation` (default 0.5 on real, forced 1.0 in sim).
   Real needs the slowdown: the arm controller's velocity clip is measured-relative, so it caps PD
@@ -151,14 +160,17 @@ finger collisions disabled during final approach — maps onto a future pick pri
 ## 5. Roadmap (rough order; not a rigid phase gate)
 1. **Tune dex3 grasp presets** (`hands.yaml`) — right-thumb `power_close` stall fixed; make
    `pinch` per-hand and tune the `verify` thresholds.
-2. **Grasp-frame offset** — add the wrist→palm offset so `move` goals are grasp poses.
-3. **Pick composite** — `home → move-above → move-down → close_hand → lift`, from primitives.
-4. **Rerun logging** — current q / target pose / state, on every primitive.
-5. **Perception, cuRobo-native** — sim ground-truth (`rt/sim_state`) or AprilTag → block pose
-   in pelvis frame; `transforms.py` reworked.
-6. **World model** — add the table (and obstacles) to the cuRobo world for real avoidance.
-7. **Hardware bring-up** — see `HARDWARE_TODO.md` (DDS, debug mode, tracking, gravity comp).
-8. **Agent layer** — expose the primitives as tools.
+2. ~~**Grasp-frame offset**~~ — **DONE**: the wrist→palm offset lives in `grasp/tool_transform.py`;
+   grasp sources return wrist-yaw goals. (`wristyaw_grasp_rpy` rotation seed still EMPIRICAL.)
+3. ~~**Pick composite**~~ — **DONE**: `07_pick_place` (AprilTag) + `09_graspgen` (GraspSource).
+4. ~~**Grasp sources + perception**~~ — **DONE (offline)**: `GraspSource` seam (`apriltag` |
+   `graspgenx`); depth→`PointCloud` (`perception/depth`); SAM3 segmentation (`perception/segment`,
+   `:5557`) → GraspGenX (`:5556`) → 6-DoF grasps. Real grasp run pending hardware.
+5. **Rerun logging** — current q / target pose / state, on every primitive.
+6. **World model** — add the table (and obstacles) to the cuRobo world (depth → ESDF a natural fit).
+7. **Hardware bring-up** — see `HARDWARE_TODO.md` (DDS, debug mode, tracking, gravity comp, the
+   GraspGenX/SAM3 grasp run + `wristyaw_grasp_rpy` calibration).
+8. **Agent layer** — expose the primitives + grasp source as tools.
 
 ---
 

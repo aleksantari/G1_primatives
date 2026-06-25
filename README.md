@@ -29,30 +29,37 @@ retiming step. The executor holds the only handle to `G1_29_ArmController`.
 ```python
 home(robot)                       # both arms to the launch pose (forearms forward), settle
 move(robot, side, goal_pose)      # one wrist to goal_pose (pelvis frame); other arm holds
+move_to_candidates(robot, side, goal_poses)  # first reachable of a ranked goal list
 open_hand(robot, side)            # blocks until the fingers finish moving
 close_hand(robot, side, verify=, fraction=)  # fraction<1 closes partway; verify=True = held?
 detect(robot, target="block")     # head-cam AprilTag → object pose (pelvis frame)
 ```
 Action verbs return `Result(ok, info)`; `detect` returns a `Detection` whose `.pose` feeds
-straight into `move`. Tasks are composed from these.
+straight into `move`. Tasks are composed from these. **Grasp poses** come from a
+`robot.grasp_source` (a `GraspSource`: `apriltag` A-B reference, or `graspgenx` learned 6-DoF
+grasps) returning ranked wrist-yaw goal `Pose`s that `move_to_candidates` consumes.
 
 ## Layout
 ```
 g1_classical_manip/
-  spatial/         pose.py        — numpy SE(3) Pose (the pin.SE3 replacement), pelvis frame
-  motion/          curobo_planner — the only planner (plan_to_pose / plan_joint, fk)
+  spatial/         pose.py — numpy SE(3) Pose (pin.SE3 replacement) · pointcloud.py — PointCloud
+  motion/          curobo_planner — the only planner (plan_to_pose / plan_to_pose_set / plan_joint, fk)
                    executor       — streams JointTrajectory @ control_hz, abort-to-hold
                    planner_base   — JointPath / JointTrajectory containers
   ee/              hand_base, dex3, dex1 — grasp presets + verification
   robot_control/   robot_arm (G1_29_ArmController), robot_hand_unitree (threaded Dex3/Dex1)
-  primitives.py    home / move / open_hand / close_hand / detect
-  factory.py       make_robot() — cuRobo planner + DDS controllers + executor + perception
-  image_server/    HeadCamera — head-cam frames (zmq | teleimager | unitree_lerobot)
-  perception/      transforms (frame math, cuRobo FK) · base (Detector seam) ·
-                   apriltag_block · ground_truth   (Detector = apriltag | ground_truth)
-configs/           robot, planner, hands, camera, perception (+ curobo/, cyclonedds_loopback.xml)
-scripts/           01_check_dds → 08_check_depth bring-up ladder (--target sim|real) + hand_diag.py
-tests/             test_pose, test_grasp, test_detect   (pure-math, no robot)
+  grasp/           base (GraspSource ABC + GraspCandidate) · apriltag_source (A-B ref) ·
+                   graspgenx_source · graspgenx_client (ZMQ :5556) · tool_transform (grasp→wrist)
+  primitives.py    home / move / move_to_candidates / open_hand / close_hand / detect
+  factory.py       make_robot() — cuRobo planner + DDS controllers + executor + perception + grasp
+  image_server/    HeadCamera — head-cam color + depth frames (zmq | teleimager | unitree_lerobot)
+  perception/      transforms (frame math, cuRobo FK) · base (Detector seam) · apriltag_block ·
+                   ground_truth · depth (deproject→PointCloud) · segment (SAM3 mask seam) ·
+                   sam3_client (ZMQ :5557) · segment_gui (cv2 mask GUI)
+configs/           robot, planner, hands, camera, perception, grasp (+ curobo/, cyclonedds_loopback.xml)
+scripts/           01_check_dds → 10_segment bring-up ladder (--target sim|real) + hand_diag.py
+tests/             test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/
+                   graspgenx_client/grasp_source/sam3_client/segment   (pure-math, no robot)
 ```
 
 ## Environment
@@ -94,13 +101,16 @@ python scripts/05_mvp_demo.py    --target sim    # home → move → close → o
 python scripts/06_detect.py      --target sim    # AprilTag feed: 3D pose axes + rpy vs ground truth
 python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
 python scripts/08_check_depth.py  --target real   # head-cam DEPTH feed (real only): mm stats + colorized view
+python scripts/09_graspgen.py    --target real --source graspgenx --segment interactive  # GraspGenX pick+lift
+python scripts/10_segment.py     --image <img.jpg> --mode auto --text "..."   # SAM3 segmentation (no robot)
 ```
-Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05` and `07`
-command the arms/hands, `06`/`08` are camera-only (`08` is the head **depth** feed — real only;
-sim is color-only and exits cleanly). `02`/`06`/`07` work on both targets: `--target real`
-uses the ZED head via `camera_real.yaml`. The camera scripts
-don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand
-command→state diagnostic.
+Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05`/`07`/`09`
+command the arms/hands, `06`/`08`/`10` are camera-only (`08` = head **depth** feed; `10` = SAM3
+**segmentation**). `02`/`06`/`07` work on both targets; `08`/`09 --source graspgenx` need the real
+ZED; `10` segments either the live ZED (`--target real`) or any static image (`--image`, no robot).
+`09 --source graspgenx`/`10` also need the **GraspGenX** (`:5556`) / **SAM3** (`:5557`) ZMQ servers
+running. `--target real` uses the ZED head via `camera_real.yaml`; the camera scripts don't use the
+`CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand command→state diagnostic.
 
 **Reset the block (sim only)** — re-place the red block at its spawn pose between pick
 attempts. Runs in the **`unitree`** (sim) env, on the same loopback bus:
@@ -128,7 +138,15 @@ pick+lift (home→open→detect→approach→grasp→close→lift→home) with a
 offset, the LLM-composable baseline to expand (place/handover, dual-arm, multi-object) — see
 `HARDWARE_TODO.md` and the PLAN's roadmap.
 
-The head-camera **depth** stream is now consumed (`HeadCamera.get_depth_frame()` — the real
-ZED's dedicated raw-float32 720×1280 mm stream; validated on the G1 at ~89% finite / ~30 fps via
-`scripts/08_check_depth.py`), the first step toward a point-cloud → grasp-pose pipeline. The wire
-spec is in `docs/depth_integration_handoff.md`.
+The head-camera **depth** stream is consumed (`HeadCamera.get_depth_frame()` — the real ZED's
+dedicated raw-float32 720×1280 mm stream; validated on the G1 at ~89% finite / ~30 fps via
+`scripts/08_check_depth.py`), feeding a **grasp pipeline**: `perception/depth.deproject_depth`
+turns masked depth into a pelvis-frame `PointCloud`, segmented by **SAM3** over ZMQ
+(`perception/{segment,sam3_client,segment_gui}`, `:5557`) — a 2D mask applied before deproject,
+with an interactive cv2 GUI (`scripts/10_segment.py`, validated on static images). The single-object
+cloud feeds the **GraspGenX** service (`grasp/graspgenx_client`, `:5556`) which returns ranked 6-DoF
+grasps; a fixed grasp→tool transform (`grasp/tool_transform`) maps them to wrist-yaw goals that
+`plan_to_pose_set` picks a reachable one from. `scripts/09_graspgen.py --source apriltag|graspgenx`
+runs the A-B pick+lift. **Offline-tested only** (mock ZMQ servers, synthetic depth); the real
+GraspGenX/SAM3 grasp run + the **EMPIRICAL `wristyaw_grasp_rpy`** calibration are pending hardware —
+see `HARDWARE_TODO.md`. Depth wire spec: `docs/depth_integration_handoff.md`.

@@ -70,8 +70,21 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   feasible trajectory during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
 - Goal frame is the **wrist-yaw link** directly in the primitives (keeps them composable).
   The palm/grasp-frame offset (wrist-yaw → index/middle finger midpoint, URDF-measured at q=0,
-  side-aware) is applied in **composite tasks** (`scripts/07_pick_place.py`) so a detected pose
-  becomes a grasp pose — to be promoted into the planner later.
+  side-aware) is applied by the **grasp sources** (`grasp/`): `07_pick_place` still inlines it,
+  but the offset now lives in `grasp/tool_transform.py` (`build_T_wristyaw_grasp`, shared by both
+  sources). The GraspGenX source maps a learned 6-DoF grasp to a wrist goal via that transform;
+  its rotation seed `wristyaw_grasp_rpy` (`configs/grasp.yaml`) is **EMPIRICAL** — verify on
+  hardware. Not "later" anymore; the grasp-source seam is shipped (offline-tested).
+- **Grasp pipeline** (`grasp/` + `perception/{depth,segment,sam3_client,segment_gui}.py`,
+  `spatial/pointcloud.py`): `robot.grasp_source` is a `GraspSource` (`grasp.yaml: grasp_source` =
+  `apriltag` A-B ref | `graspgenx`) returning ranked wrist-yaw `GraspCandidate`s; `move_to_candidates`
+  / `plan_to_pose_set` plan the first reachable (native cuRobo goalset deferred). GraspGenX path:
+  head depth → `deproject_depth` (mask-gated) → pelvis `PointCloud` → **SAM3** mask (ZMQ `:5557`,
+  2D mask applied PRE-deproject; `Segmenter.mask(rgb)` seam, interactive cv2 GUI) → **GraspGenX**
+  ZMQ (`:5556`) → 6-DoF grasps → tool transform. Both ZMQ clients are thin standalone shims that
+  do NOT import their service package (the multi-GB import trap); deps `msgpack`/`msgpack-numpy`.
+  Scripts: `09_graspgen` (`--source`/`--segment`), `10_segment` (SAM3 dev tool, `--image` for a
+  no-robot static test). All offline-tested; the real grasp run is pending hardware.
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp
   signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. Presets are being
@@ -101,10 +114,11 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
 - **Live now (not dormant):** the perception stack
   (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
   `image_server/image_client.py` (head color **+ depth** — `HeadCamera.get_depth_frame()`, the
-  real ZED's raw-float32 720×1280 mm stream). Current scripts: the numbered bring-up ladder
-  `scripts/0{1..8}_*.py` (check_dds → check_image → hands → move → mvp_demo → detect →
-  pick_place → check_depth; each `--target sim|real`, shared `scripts/_rig.py`) + `hand_diag.py`
-  (low-level hand diagnostic).
+  real ZED's raw-float32 720×1280 mm stream) + the **grasp pipeline** (`grasp/`,
+  `perception/{depth,segment,sam3_client,segment_gui}.py`, `spatial/pointcloud.py`). Current
+  scripts: the numbered bring-up ladder `scripts/0{1..10}_*.py` (check_dds → check_image → hands →
+  move → mvp_demo → detect → pick_place → check_depth → graspgen → segment; each `--target sim|real`,
+  shared `scripts/_rig.py`) + `hand_diag.py` (low-level hand diagnostic).
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
   `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is wired but
   **opt-in** — `make_robot` lazily imports it only when `enter_debug_mode=True`; default off,

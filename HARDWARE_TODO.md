@@ -8,12 +8,14 @@ section below and `docs/gravity_comp.md`. This file lists what still needs the p
 head camera, with the command and the pass criterion.
 
 > Everything runs in the **`g1_curobo`** env (`bash -ic 'use_conda g1_curobo && …'`). The
-> hardware entry points are the numbered bring-up ladder `scripts/0{1..8}_*.py` (each
+> hardware entry points are the numbered bring-up ladder `scripts/0{1..10}_*.py` (each
 > `--target real`), run **in order** — `01_check_dds` (read-only) and `02_check_image` are
-> safe/no-motion, `03`–`05` command the arms/hands, `06`/`08` are camera-only (`08` is the head
-> **depth** feed). `scripts/hand_diag.py` is the low-level hand command→state diagnostic. The real
-> image client (ZED) is **wired** (color + a raw-float32 **depth** stream); `02`/`06 --target real`
-> use the ZED intrinsics + mount in `configs/camera_real.yaml`.
+> safe/no-motion, `03`–`05`/`07`/`09` command the arms/hands, `06`/`08`/`10` are camera-only
+> (`08` = head **depth** feed; `10` = SAM3 **segmentation**, also runs on a static `--image`).
+> `09_graspgen` is the GraspGenX pick+lift; `09 --source graspgenx` + `10` need the **GraspGenX**
+> (`:5556`) / **SAM3** (`:5557`) ZMQ servers up. `scripts/hand_diag.py` is the low-level hand
+> command→state diagnostic. The real image client (ZED) is **wired** (color + a raw-float32
+> **depth** stream); `02`/`06 --target real` use the ZED intrinsics + mount in `configs/camera_real.yaml`.
 
 ---
 
@@ -121,9 +123,8 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
       `HeadCamera.get_depth_frame()`, gated by `camera_real.yaml: stream.depth`. **Validated on the
       real G1:** (720,1280), ~88.9% finite, ~30 fps, thousands of frames decoded with zero errors.
       **Feed check:** `python scripts/08_check_depth.py --target real` (mm stats + colorized view).
-      Wire spec: `docs/depth_integration_handoff.md`. **Next (out of scope here):** deproject → point
-      cloud → grasp-pose model — intrinsics from `camera_real.yaml`, extrinsics from
-      `perception/transforms.py Frames.T_pelvis_camera`, GPU deprojection via cuRobo.
+      Wire spec: `docs/depth_integration_handoff.md`. **Deproject → cloud → grasp is now built**
+      (`perception/depth.deproject_depth` + the grasp pipeline below); pending = the real grasp run.
 - [ ] **ZED calibration (USER-PROVIDED)** — fill `camera_real.yaml` intrinsics (chosen eye @1280×720)
       + `extrinsics.mount` (d435_link→eye, ~half the stereo baseline); pick `stereo_side`.
 - [ ] **Feed check** — `python scripts/02_check_image.py --target real` shows one sliced ZED eye.
@@ -131,17 +132,34 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
       pose against a tape-measured position (confirms intrinsics + mount).
 
 ## Composite tasks (the LLM-composable baseline)
-- [x] **Pick + lift — DONE** (`scripts/07_pick_place.py`): home → open → detect → approach →
-      grasp → close → lift → home, single arm, per-step operator gating (`--no-confirm` to skip),
-      with a URDF-measured side-aware palm/grasp offset so a detected pose becomes a grasp pose.
-      **Open:** place / handover, dual-arm, multi-object, and tuning the grasp on hardware.
+- [x] **Pick + lift (AprilTag) — DONE** (`scripts/07_pick_place.py`): home → open → detect →
+      approach → grasp → close → lift → home, single arm, per-step operator gating, with a
+      URDF-measured side-aware palm/grasp offset so a detected pose becomes a grasp pose.
+- [x] **Grasp pipeline (GraspGenX + SAM3) — BUILT, offline-tested** (`grasp/`,
+      `perception/{depth,segment,sam3_client,segment_gui}.py`, `spatial/pointcloud.py`,
+      `scripts/09_graspgen.py` + `scripts/10_segment.py`): `GraspSource` seam (`grasp.yaml:
+      grasp_source` = `apriltag` | `graspgenx`); GraspGenX path = head depth → masked deproject →
+      pelvis `PointCloud` → **SAM3** segmentation (`:5557`, 2D mask PRE-deproject, interactive cv2
+      GUI) → **GraspGenX** (`:5556`) 6-DoF grasps → `tool_transform` → `plan_to_pose_set` picks a
+      reachable one. Standalone ZMQ clients (no service import). **SAM3 segmentation validated on
+      static images** (`10_segment --image`).
+  - [ ] **Real grasp run** — start the GraspGenX (`:5556`) + SAM3 (`:5557`) servers + robot, then
+        `09_graspgen --target real --source graspgenx --segment interactive` vs `--source apriltag`
+        (A-B on the same object). `10_segment --target real` first to confirm the live mask + masked
+        point count.
+  - [ ] **`wristyaw_grasp_rpy` calibration (EMPIRICAL)** — the grasp(+Z approach,+X closing) →
+        wrist_yaw axis map in `configs/grasp.yaml` is a best-guess seed (pitch +90°). Tune the roll
+        (closing-axis alignment) in sim, then confirm with one gated hardware grasp before trusting.
+  - **Open:** place / handover, dual-arm, multi-object; native cuRobo goalset (vs the sequential
+        `plan_to_pose_set`); SAM3 `image_jpeg` bandwidth path.
 - [ ] **Rerun logging** — wire current q / target pose / state into the primitives for debugging.
 
 ---
 
 ## Offline status (verified, no robot)
-- `pytest tests/` → **18 passed** (`test_pose` SE(3) conventions, `test_grasp` verification,
-  `test_detect` perception frame-math + stereo/filter).
+- `pytest tests/` → **green** (`test_pose`/`test_grasp`/`test_detect` + the grasp pipeline:
+  `test_pointcloud`, `test_depth_deproject`, `test_tool_transform`, `test_graspgenx_client` +
+  `test_sam3_client` (mock ZMQ servers), `test_grasp_source`, `test_segment`).
 - cuRobo FK parity vs the old pinocchio model: **< 0.001 mm / 0.027°** (cuRobo is a faithful
   drop-in); `Pose` util convention-faithful to ~1e-15.
 - cuRobo → sim execution: EE position error ~0.45 cm, native plan ~1.1 rad/s, zero aborts.
@@ -152,3 +170,7 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
 - **No pinocchio / no numpy<2 pin** — kinematics are cuRobo's. Build is not plain
   `pip install`; see `requirements-curobo.txt`. Sim target = `unitree_sim_isaaclab` (Isaac
   Sim in the `unitree` env), loopback DDS. See `SIM_NOTES.md`.
+- **Grasp pipeline deps:** `msgpack` + `msgpack-numpy` (the GraspGenX/SAM3 ZMQ wire protocol)
+  — pure pip wheels. The **GraspGenX** (`:5556`) and **SAM3** (`:5557`) inference services run
+  **separately on the workstation GPU** (their own repos/envs); this repo only ships thin clients
+  that never import those packages. SAM3 launch: `use_conda sam3 && python -m sam3.serving --port 5557`.
