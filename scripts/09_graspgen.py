@@ -25,6 +25,7 @@ mode via the remote first. Watch the e-stop.
 """
 import argparse
 import sys
+import time
 
 import numpy as np
 import _rig
@@ -119,6 +120,13 @@ def main():
 
         _rig.confirm(f"generate grasps via '{src_kind}' (segment={seg_mode}) -- object in view",
                      auto)
+        cam = getattr(robot, "camera", None)
+        if src_kind == "graspgenx" and cam is not None:   # prime cold/lazy ZED streams so the
+            t0 = time.time()                              # first depth capture in grasps() works
+            while time.time() - t0 < 6.0:
+                if cam.get_rgb_frame() is not None and cam.get_depth_frame() is not None:
+                    break
+                time.sleep(0.05)
         cands = robot.grasp_source.grasps(robot, side, args.object)
         print(f"grasps: {src_kind} -> {len(cands)} candidate(s) for '{args.object}'")
         if not cands:
