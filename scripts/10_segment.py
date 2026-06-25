@@ -15,6 +15,7 @@ Live mode needs the real ZED depth stream; both modes need a running SAM3 server
   live : bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --target real --mode interactive'
 """
 import argparse
+import time
 
 import numpy as np
 import _rig
@@ -47,6 +48,19 @@ def _overlay(bgr, mask) -> np.ndarray:
     tint = np.zeros_like(bgr)
     tint[np.asarray(mask, bool)] = (0, 0, 255)
     return cv2.addWeighted(bgr, 1.0, tint, 0.5, 0)
+
+
+def _grab_pair(cam, timeout_s: float = 6.0):
+    """Poll until BOTH the color and depth streams have warmed up, then grab a
+    same-instant (rgb, depth) pair. The SUB sockets start cold each run (and depth
+    subscribes lazily on the first call), so the very first frame is None -- retry
+    instead of bailing. Returns (rgb, depth); either may still be None at timeout."""
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        if cam.get_rgb_frame() is not None and cam.get_depth_frame() is not None:
+            break
+        time.sleep(0.05)
+    return cam.get_rgb_frame(), cam.get_depth_frame()   # both warm -> back-to-back
 
 
 def main():
@@ -86,9 +100,11 @@ def main():
         if not robot.camera.has_depth:
             print(f"[{args.target}] no head depth stream -- need the real ZED (or use --image).")
             return
-        rgb, depth = robot.camera.get_rgb_frame(), robot.camera.get_depth_frame()
+        rgb, depth = _grab_pair(robot.camera)            # warm up both streams first
         if rgb is None or depth is None:
-            print("no rgb/depth frame yet -- is the camera streaming?")
+            missing = " + ".join(s for s, v in (("color", rgb), ("depth", depth)) if v is None)
+            print(f"no {missing} frame after warmup -- is that stream publishing? "
+                  f"(depth = 08_check_depth, color = 02_check_image; both must show frames)")
             return
         print(f"[{args.target}] frame: rgb {rgb.shape}  depth {depth.shape}")
 
