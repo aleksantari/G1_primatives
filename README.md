@@ -56,10 +56,12 @@ g1_classical_manip/
   perception/      transforms (frame math, cuRobo FK) · base (Detector seam) · apriltag_block ·
                    ground_truth · depth (deproject→PointCloud) · segment (SAM3 mask seam) ·
                    sam3_client (ZMQ :5557) · segment_gui (cv2 mask GUI)
+  viz/             GraspViz (viser) — point cloud + ranked grasps + gripper mesh (offline)
 configs/           robot, planner, hands, camera, perception, grasp (+ curobo/, cyclonedds_loopback.xml)
-scripts/           01_check_dds → 10_segment bring-up ladder (--target sim|real) + hand_diag.py
-tests/             test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/
-                   graspgenx_client/grasp_source/sam3_client/segment   (pure-math, no robot)
+assets/grippers/   <gripper>/{config.json, coll_mesh.obj} for the grasp viz (unitree_g1)
+scripts/           01_check_dds → 11_capture_frame ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
+tests/             test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/ graspgenx_client/
+                   grasp_source/sam3_client/segment/viz   (pure-math, no robot)
 ```
 
 ## Environment
@@ -102,15 +104,18 @@ python scripts/06_detect.py      --target sim    # AprilTag feed: 3D pose axes +
 python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
 python scripts/08_check_depth.py  --target real   # head-cam DEPTH feed (real only): mm stats + colorized view
 python scripts/09_graspgen.py    --target real --source graspgenx --segment interactive  # GraspGenX pick+lift
-python scripts/10_segment.py     --image <img.jpg> --mode auto --text "..."   # SAM3 segmentation (no robot)
+python scripts/10_segment.py     --frame captures/scene1.npz --mode interactive --save   # SAM3 segment + save cloud
+python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.npy                         # GraspGenX grasps in viser
+python scripts/11_capture_frame.py --target real --out captures/scene1.npz               # save a frame (offline demo)
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05`/`07`/`09`
-command the arms/hands, `06`/`08`/`10` are camera-only (`08` = head **depth** feed; `10` = SAM3
-**segmentation**). `02`/`06`/`07` work on both targets; `08`/`09 --source graspgenx` need the real
-ZED; `10` segments either the live ZED (`--target real`) or any static image (`--image`, no robot).
-`09 --source graspgenx`/`10` also need the **GraspGenX** (`:5556`) / **SAM3** (`:5557`) ZMQ servers
-running. `--target real` uses the ZED head via `camera_real.yaml`; the camera scripts don't use the
-`CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand command→state diagnostic.
+command the arms/hands, `06`/`08`/`10`/`11` are camera-only (`08` = head **depth** feed; `10` = SAM3
+**segmentation**; `11` = capture a frame for the offline demo; `10_graspgen_viz` = no robot at all).
+`02`/`06`/`07` work on both targets; `08`/`09 --source graspgenx`/`11` need the real ZED; `10`
+segments either the live ZED (`--target real`), a captured frame (`--frame`), or a static image
+(`--image`, no robot). The **grasp servers + the full offline grasp demo** (`09`/`10`/`10_graspgen_viz`/`11`)
+are in **Grasp pipeline** below. `--target real` uses the ZED head via `camera_real.yaml`; the camera
+scripts don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand diagnostic.
 
 **Reset the block (sim only)** — re-place the red block at its spawn pose between pick
 attempts. Runs in the **`unitree`** (sim) env, on the same loopback bus:
@@ -118,6 +123,44 @@ attempts. Runs in the **`unitree`** (sim) env, on the same loopback bus:
 UNITREE_DDS_IFACE=lo CYCLONEDDS_URI=file://$HOME/repos/G1_classical_manip/configs/cyclonedds_loopback.xml \
   bash -ic 'use_conda unitree && python reset_pose_test.py'
 ```
+
+## Grasp pipeline — servers, offline demo, on-robot run
+The **GraspGenX** grasp model and the **SAM3** segmenter run as **separate GPU services** (their
+own repos + envs); this repo ships only thin ZMQ clients — no torch / checkpoints here. Start
+whichever a run needs (each in its own terminal; leave running):
+
+```bash
+# SAM3 segmentation server (:5557) — in the sam3 repo/env. First run downloads the checkpoint.
+bash -ic 'use_conda sam3 && cd ~/repos/sam3 && python -m sam3.serving --host 0.0.0.0 --port 5557 --device cuda'
+
+# GraspGenX grasp server (:5556) — in the GraspGenX repo/env.
+cd ~/repos/GraspGenX && python client-server/graspgenx_server.py \
+    --config ~/repos/GraspGenX/ext/graspgenx_checkpoints/release \
+    --assets_dir ~/repos/GraspGenX/assets --default_gripper unitree_g1 --port 5556
+```
+
+**Offline demo (no robot)** — capture one frame on the robot, then iterate segmentation + grasps
+on the saved frame, visualized in viser. Needs the SAM3 + GraspGenX servers above:
+```bash
+# 1. capture a frame on the robot (camera-only, no motion) -> captures/scene1.npz (+ preview PNGs)
+bash -ic 'use_conda g1_curobo && python scripts/11_capture_frame.py --target real --out captures/scene1.npz'
+# 2. segment it + save the single-object cloud -> captures/scene1_cloud.npy   (SAM3 :5557)
+bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --frame captures/scene1.npz --mode interactive --save'
+# 3. run GraspGenX on the cloud + visualize ranked grasps    (GraspGenX :5556 -> viser :8080)
+bash -ic 'use_conda g1_curobo && python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.npy'
+```
+Open `http://localhost:8080` for the viser viewer (cloud + ranked grasps + gripper mesh + a
+confidence slider). `10_segment` also segments a static image (`--image foo.jpg`, SAM3 only) or
+the live ZED (`--target real`); `11_capture_frame` saves a reusable offline fixture each run.
+
+**On the robot** — the full pick+lift via the learned grasp (operator-gated each step; watch the
+e-stop; needs both servers + the ZED + debug mode set on the remote):
+```bash
+bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --source graspgenx --segment interactive --visualize'
+```
+A-B against the known-good path with `--source apriltag`. `--visualize` opens the same viser view
+(the chosen reachable grasp in green). The grasp→wrist orientation seed
+(`grasp.yaml: wristyaw_grasp_rpy`) is **EMPIRICAL** — verify it before trusting (`HARDWARE_TODO.md`).
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs

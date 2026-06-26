@@ -115,10 +115,14 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
   `image_server/image_client.py` (head color **+ depth** — `HeadCamera.get_depth_frame()`, the
   real ZED's raw-float32 720×1280 mm stream) + the **grasp pipeline** (`grasp/`,
-  `perception/{depth,segment,sam3_client,segment_gui}.py`, `spatial/pointcloud.py`). Current
-  scripts: the numbered bring-up ladder `scripts/0{1..10}_*.py` (check_dds → check_image → hands →
-  move → mvp_demo → detect → pick_place → check_depth → graspgen → segment; each `--target sim|real`,
-  shared `scripts/_rig.py`) + `hand_diag.py` (low-level hand diagnostic).
+  `perception/{depth,segment,sam3_client,segment_gui}.py`, `spatial/pointcloud.py`, `viz/` +
+  `assets/grippers/`). Current scripts: the numbered bring-up ladder (`01_check_dds … 11_capture_frame`:
+  check_dds → check_image → hands → move → mvp_demo → detect → pick_place → check_depth → graspgen →
+  segment → graspgen_viz → capture_frame; each `--target sim|real`, shared `scripts/_rig.py`) +
+  `hand_diag.py`. **GraspGenX (`:5556`) / SAM3 (`:5557`) ZMQ servers run SEPARATELY** (own repos/envs,
+  launch cmds in README "Grasp pipeline"); `09 --visualize` / `10_graspgen_viz` render cloud + ranked
+  grasps in **viser** (`:8080`). Offline grasp demo: `11_capture_frame` → `10_segment --frame … --save`
+  → `10_graspgen_viz --pcd` (no robot).
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
   `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is wired but
   **opt-in** — `make_robot` lazily imports it only when `enter_debug_mode=True`; default off,

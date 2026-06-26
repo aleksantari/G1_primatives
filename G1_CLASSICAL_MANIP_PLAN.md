@@ -85,7 +85,7 @@ g1_classical_manip/
 │                              #   · sam3_client (ZMQ :5557) · segment_gui (cv2 mask GUI)
 ├── image_server/              # HeadCamera (head-cam color + depth frames; camera_rig dormant)
 configs/  robot, planner, hands, camera, perception, grasp, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
-scripts/  01_check_dds → 10_segment bring-up ladder (--target sim|real) + hand_diag.py
+scripts/  01_check_dds → 11_capture_frame ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
 tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/graspgenx_client/
           grasp_source/sam3_client/segment   (pure-math; no robot)
 ```

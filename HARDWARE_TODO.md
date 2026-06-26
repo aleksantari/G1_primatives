@@ -8,12 +8,13 @@ section below and `docs/gravity_comp.md`. This file lists what still needs the p
 head camera, with the command and the pass criterion.
 
 > Everything runs in the **`g1_curobo`** env (`bash -ic 'use_conda g1_curobo && …'`). The
-> hardware entry points are the numbered bring-up ladder `scripts/0{1..10}_*.py` (each
+> hardware entry points are the numbered bring-up ladder (`scripts/01_*…11_*`, each
 > `--target real`), run **in order** — `01_check_dds` (read-only) and `02_check_image` are
-> safe/no-motion, `03`–`05`/`07`/`09` command the arms/hands, `06`/`08`/`10` are camera-only
-> (`08` = head **depth** feed; `10` = SAM3 **segmentation**, also runs on a static `--image`).
-> `09_graspgen` is the GraspGenX pick+lift; `09 --source graspgenx` + `10` need the **GraspGenX**
-> (`:5556`) / **SAM3** (`:5557`) ZMQ servers up. `scripts/hand_diag.py` is the low-level hand
+> safe/no-motion, `03`–`05`/`07`/`09` command the arms/hands, `06`/`08`/`10`/`11` are camera-only
+> (`08` = head **depth** feed; `10` = SAM3 **segmentation**; `11_capture_frame` saves an offline
+> fixture; `10_graspgen_viz` needs no robot). `09_graspgen` is the GraspGenX pick+lift; `09 --source
+> graspgenx` + `10`/`10_graspgen_viz` need the **GraspGenX** (`:5556`) / **SAM3** (`:5557`) ZMQ
+> servers up (started in their own repos/envs — launch cmds in README "Grasp pipeline"). `scripts/hand_diag.py` is the low-level hand
 > command→state diagnostic. The real image client (ZED) is **wired** (color + a raw-float32
 > **depth** stream); `02`/`06 --target real` use the ZED intrinsics + mount in `configs/camera_real.yaml`.
 
