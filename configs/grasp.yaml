@@ -29,6 +29,16 @@ graspgenx:
   # (the AprilTag path never committed a grasp orientation, so there's nothing to copy from).
   # [roll, pitch, yaw] radians.
   wristyaw_grasp_rpy: [0.0, 1.5707963, 0.0]
+  # Optional client-side viser GUI (point cloud + ranked grasps + gripper mesh,
+  # like the GraspGenX demos). Opt-in; 09_graspgen.py --visualize flips `enabled`.
+  # Renders in the pelvis frame, so grasps sit on the cloud. Server stays headless.
+  visualize:
+    enabled: false
+    port: 8080
+    show_mesh: true          # overlay the gripper collision/visual mesh at the top grasp
+    threshold_tuner: false   # confidence slider; off in the gated pick flow, on in 10_graspgen_viz
+    max_markers: 100         # cap markers drawn (viser slows with thousands)
+    gripper_asset_dir: "assets/grippers"   # <dir>/<gripper_name>/{config.json, *_mesh.obj}
 
 # Object segmentation (SAM3 over ZMQ) -> a 2D mask applied to the depth BEFORE deproject.
 #   mode: null|none -> NullSegmenter (whole frame; sim has no SAM3).

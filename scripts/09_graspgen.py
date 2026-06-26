@@ -72,6 +72,8 @@ def main():
                     help="grasp source (overrides grasp.yaml grasp_source for this run)")
     ap.add_argument("--segment", choices=["auto", "interactive", "none"], default=None,
                     help="SAM3 segmentation mode (overrides grasp.yaml segment.mode)")
+    ap.add_argument("--visualize", action="store_true",
+                    help="show cloud + ranked grasps in a viser GUI (graspgenx source)")
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT)
     ap.add_argument("--object", default="block")
     ap.add_argument("--approach", type=float, default=0.10,
@@ -90,13 +92,16 @@ def main():
 
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
                          camera_config=_rig.camera_config_for(args.target))
-    if args.source or args.segment is not None:           # A-B overrides of grasp.yaml
+    if args.source or args.segment is not None or args.visualize:   # overrides of grasp.yaml
         from g1_classical_manip.factory import _build_grasp_source
         if args.source:
             robot.cfg["grasp"]["grasp_source"] = args.source
         if args.segment is not None:
             robot.cfg["grasp"].setdefault("segment", {})["mode"] = (
                 None if args.segment == "none" else args.segment)
+        if args.visualize:
+            robot.cfg["grasp"].setdefault("graspgenx", {}).setdefault(
+                "visualize", {})["enabled"] = True
         robot.grasp_source = _build_grasp_source(robot.frames, robot.cfg)
     src_kind = robot.cfg["grasp"].get("grasp_source", "apriltag")
     seg_mode = (robot.cfg["grasp"].get("segment", {}) or {}).get("mode")
@@ -135,6 +140,9 @@ def main():
         chosen, grasp = _select_candidate(robot, side, cands, args.grasp_z)
         if chosen is None:
             raise RuntimeError(f"none of the {len(cands)} candidates plan to a reachable grasp")
+        viz = getattr(robot.grasp_source, "viz", None)   # green = the reachable grasp we chose
+        if viz is not None and chosen.grasp_pose is not None:
+            viz.mark_chosen(chosen.grasp_pose.homogeneous)
         approach = _approach_pose(grasp, chosen.grasp_pose, args.approach)
         lift = _shift_z(grasp, args.lift)
         print(f"chosen: confidence {chosen.confidence:.3f} | grasp wrist "

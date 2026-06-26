@@ -22,7 +22,8 @@ from g1_classical_manip.grasp.tool_transform import (
 
 
 class GraspGenXGraspSource(GraspSource):
-    def __init__(self, frames, segmenter, client_factory, gcfg: dict, camera_cfg: dict):
+    def __init__(self, frames, segmenter, client_factory, gcfg: dict, camera_cfg: dict,
+                 viz=None):
         self.frames = frames
         self.segmenter = segmenter                     # perception.segment.Segmenter (.mask(rgb))
         self.client_factory = client_factory           # () -> GraspGenXClient (ctx manager)
@@ -30,6 +31,7 @@ class GraspGenXGraspSource(GraspSource):
         self.intrinsics = (camera_cfg or {}).get("intrinsics", {})
         self.palm_offset_xyz = np.asarray(gcfg["palm_offset_xyz"], float)
         self.R_wristyaw_grasp = rpy_to_matrix(*gcfg["wristyaw_grasp_rpy"])
+        self.viz = viz                                  # optional viz.GraspViz (None = off)
 
     def grasps(self, robot, side: str, target: str) -> List[GraspCandidate]:
         cam = getattr(robot, "camera", None)
@@ -66,6 +68,9 @@ class GraspGenXGraspSource(GraspSource):
         if k == 0:
             return []
         grasps, conf = grasps[:k], conf[:k]
+
+        if self.viz is not None:                        # cloud + all grasps (pelvis frame)
+            self.viz.show_candidates(cloud.points, grasps, conf)
 
         T_wg = build_T_wristyaw_grasp(self.palm_offset_xyz, side, self.R_wristyaw_grasp)
         out: List[GraspCandidate] = []
