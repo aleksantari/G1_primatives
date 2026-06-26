@@ -125,18 +125,24 @@ UNITREE_DDS_IFACE=lo CYCLONEDDS_URI=file://$HOME/repos/G1_classical_manip/config
 ```
 
 ## Grasp pipeline — servers, offline demo, on-robot run
-The **GraspGenX** grasp model and the **SAM3** segmenter run as **separate GPU services** (their
-own repos + envs); this repo ships only thin ZMQ clients — no torch / checkpoints here. Start
-whichever a run needs (each in its own terminal; leave running):
+The **GraspGenX** grasp model and the **SAM3** segmenter run as **separate GPU services** in their
+own repos + **conda envs** (`graspgenx`, `sam3`); this repo ships only thin ZMQ clients — no torch /
+checkpoints here. Each server needs the ZMQ wire deps in ITS env (one-time; use `python -m pip` so
+they land in the env that runs the server, not base/user-site):
 
 ```bash
-# SAM3 segmentation server (:5557) — in the sam3 repo/env. First run downloads the checkpoint.
+bash -ic 'use_conda graspgenx && python -m pip install msgpack msgpack-numpy'
+bash -ic 'use_conda sam3       && python -m pip install msgpack msgpack-numpy'   # if not already present
+```
+
+Then start whichever a run needs (each in its own terminal; leave running):
+
+```bash
+# SAM3 segmentation server (:5557) — `sam3` env. First run downloads the checkpoint.
 bash -ic 'use_conda sam3 && cd ~/repos/sam3 && python -m sam3.serving --host 0.0.0.0 --port 5557 --device cuda'
 
-# GraspGenX grasp server (:5556) — in the GraspGenX repo/env.
-cd ~/repos/GraspGenX && python client-server/graspgenx_server.py \
-    --config ~/repos/GraspGenX/ext/graspgenx_checkpoints/release \
-    --assets_dir ~/repos/GraspGenX/assets --default_gripper unitree_g1 --port 5556
+# GraspGenX grasp server (:5556) — `graspgenx` env (paths relative to the repo after cd).
+bash -ic 'use_conda graspgenx && cd ~/repos/GraspGenX && python client-server/graspgenx_server.py --config ext/graspgenx_checkpoints/release --assets_dir assets --default_gripper unitree_g1 --port 5556'
 ```
 
 **Offline demo (no robot)** — capture one frame on the robot, then iterate segmentation + grasps
