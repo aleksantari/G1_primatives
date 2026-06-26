@@ -51,7 +51,7 @@ class GraspGenXGraspSource(GraspSource):
             return []                                  # operator aborted -> no grasps (loud)
 
         cloud = deproject_depth(depth, self.intrinsics, T_pc,
-                                voxel_m=self.gcfg.get("voxel_m"), mask=mask)
+                                voxel_m=self.gcfg.get("voxel_m"), mask=mask, rgb=rgb)
         if cloud.is_empty():
             return []
         assert cloud.frame == "pelvis", f"cloud must be pelvis-frame, got {cloud.frame!r}"
@@ -70,7 +70,7 @@ class GraspGenXGraspSource(GraspSource):
         grasps, conf = grasps[:k], conf[:k]
 
         if self.viz is not None:                        # cloud + all grasps (pelvis frame)
-            self.viz.show_candidates(cloud.points, grasps, conf)
+            self.viz.show_candidates(cloud.points, grasps, conf, colors=cloud.colors)
 
         T_wg = build_T_wristyaw_grasp(self.palm_offset_xyz, side, self.R_wristyaw_grasp)
         out: List[GraspCandidate] = []

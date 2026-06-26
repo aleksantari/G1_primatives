@@ -54,6 +54,7 @@ class GraspViz:
         points_xyz: np.ndarray,
         grasps_4x4: np.ndarray,
         conf: np.ndarray,
+        colors: Optional[np.ndarray] = None,
     ):
         """Draw the cloud + all (top-``max_markers``) grasps, best one highlighted.
 
@@ -61,6 +62,7 @@ class GraspViz:
             points_xyz: (N,3) pelvis-frame point cloud.
             grasps_4x4: (K,4,4) grasp poses in the pelvis frame.
             conf:       (K,) confidences in [0,1].
+            colors:     optional (N,3) uint8 RGB per point; None -> flat white.
         """
         points_xyz = np.asarray(points_xyz, dtype=np.float32)
         grasps = np.asarray(grasps_4x4, dtype=np.float64).reshape(-1, 4, 4)
@@ -74,7 +76,7 @@ class GraspViz:
 
         vp.make_frame(self.vis, "pelvis", h=0.1)
         if len(points_xyz):
-            vp.visualize_pointcloud(self.vis, "pc", points_xyz, size=0.003)
+            vp.visualize_pointcloud(self.vis, "pc", points_xyz, color=colors, size=0.003)
 
         if k == 0:
             print("[GraspViz] no grasps to display.")

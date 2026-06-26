@@ -8,8 +8,8 @@ report the masked single-object point cloud. For developing segmentation + cloud
   --image PATH        segment a static image -- SAM3 only, NO robot / depth / cloud
   --mode interactive  cv2 GUI: text/box/points, cycle candidates, accept (needs a display)
   --mode auto         one SAM3 call with --text / grasp.yaml default_prompt
-  --save              write <base>_cloud.npy (downsampled object cloud) + _mask.npy +
-                      _overlay.png next to the frame -> feed 10_graspgen_viz --pcd
+  --save              write <base>_cloud.ply (downsampled, COLORED object cloud) + _mask.npy
+                      + _overlay.png next to the frame -> feed 10_graspgen_viz --pcd
 
 Live mode needs the real ZED depth stream; all modes need a running SAM3 server
 (python -m sam3.serving --port 5557).
@@ -178,7 +178,7 @@ def main():
     obj = None
     if depth is not None and intr is not None and T_pc is not None:
         full = deproject_depth(depth, intr, T_pc)
-        obj = deproject_depth(depth, intr, T_pc, mask=mask)
+        obj = deproject_depth(depth, intr, T_pc, mask=mask, rgb=rgb)   # rgb -> per-point color
         print(f"full-scene cloud      : {full.n} points")
         print(f"segmented object cloud: {obj.n} points")
 
@@ -196,12 +196,15 @@ def main():
         if obj is not None and not obj.is_empty():
             voxel_m = (cfg["grasp"].get("graspgenx", {}) or {}).get("voxel_m")
             cloud = obj.voxel_downsampled(voxel_m) if voxel_m else obj   # match the live source
-            np.save(f"{base}_cloud.npy", cloud.points)
-            saved.append(f"{base}_cloud.npy ({cloud.n} pts)")
+            import trimesh                                               # colored .ply carrier
+            ply = f"{base}_cloud.ply"
+            trimesh.PointCloud(cloud.points.astype(np.float64), colors=cloud.colors).export(ply)
+            tag = " colored" if cloud.colors is not None else ""
+            saved.append(f"{ply} ({cloud.n} pts{tag})")
         if saved:
             print("saved: " + "  ".join(saved))
             if obj is not None and not obj.is_empty():
-                print(f"  next: python scripts/10_graspgen_viz.py --pcd {base}_cloud.npy")
+                print(f"  next: python scripts/10_graspgen_viz.py --pcd {base}_cloud.ply")
         else:
             print("--save: nothing to write (no mask, and no depth for a cloud).")
 

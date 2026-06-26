@@ -25,25 +25,34 @@ from g1_classical_manip.viz.grasp_viz import GraspViz
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def load_cloud(path: str) -> np.ndarray:
-    """Load an (N,3) cloud from .npy / .npz / .xyz / .ply / .obj."""
+def load_cloud(path: str):
+    """Load (xyz (N,3) float32, colors (N,3) uint8 | None) from .npy/.npz/.xyz/.ply/.obj.
+    A colored .ply (from 10_segment --save) carries per-vertex RGB; .npy is XYZ-only."""
     ext = path.rsplit(".", 1)[-1].lower()
+    colors = None
     if ext == "npy":
         xyz = np.load(path)
     elif ext == "npz":
         d = np.load(path)
-        xyz = d[d.files[0]]
+        xyz = d["points"] if "points" in d.files else d[d.files[0]]
+        if "colors" in d.files:
+            colors = d["colors"]
     elif ext in ("xyz", "txt"):
         xyz = np.loadtxt(path)
     elif ext in ("ply", "obj", "pcd"):
         loaded = trimesh.load(path)
         xyz = np.asarray(getattr(loaded, "vertices", loaded))
+        c = getattr(loaded, "colors", None)
+        if c is not None and len(c) == len(xyz) and np.ndim(c) == 2:
+            colors = np.asarray(c)
     else:
         raise ValueError(f"unsupported cloud format: .{ext}")
     xyz = np.asarray(xyz, dtype=np.float32)
     if xyz.ndim != 2 or xyz.shape[1] < 3:
         raise ValueError(f"expected (N, 3+); got {xyz.shape}")
-    return xyz[:, :3]
+    if colors is not None:
+        colors = np.asarray(colors).astype(np.uint8)[:, :3]
+    return xyz[:, :3], colors
 
 
 def main():
@@ -64,8 +73,9 @@ def main():
                     help="skip the gripper-mesh overlay (markers only)")
     args = ap.parse_args()
 
-    cloud = load_cloud(args.pcd)
-    print(f"loaded {len(cloud)} points from {args.pcd}")
+    cloud, colors = load_cloud(args.pcd)
+    print(f"loaded {len(cloud)} points from {args.pcd}"
+          f"{' (with color)' if colors is not None else ''}")
 
     with GraspGenXClient(host=args.host, port=args.port) as client:
         grasps, conf = client.infer(
@@ -79,7 +89,7 @@ def main():
     geom = load_gripper_geom(asset_dir, args.gripper_name)
     viz = GraspViz(geom, port=args.viser_port, show_mesh=not args.no_mesh,
                    threshold_tuner=True)
-    viz.show_candidates(cloud, grasps, conf)
+    viz.show_candidates(cloud, grasps, conf, colors=colors)
     viz.spin()
 
 

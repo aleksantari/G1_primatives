@@ -20,13 +20,16 @@ from g1_classical_manip.spatial.pointcloud import PointCloud
 def deproject_depth(depth_mm: np.ndarray, intrinsics: dict, T_pelvis_camera: Pose,
                     voxel_m: Optional[float] = None,
                     z_min_m: float = 0.05, z_max_m: float = 2.0,
-                    mask: Optional[np.ndarray] = None) -> PointCloud:
+                    mask: Optional[np.ndarray] = None,
+                    rgb: Optional[np.ndarray] = None) -> PointCloud:
     """``(H,W)`` float depth in MILLIMETERS (NaN/inf/0 = invalid) -> pelvis-frame
     ``PointCloud`` in meters. Drops invalid + out-of-[z_min,z_max] pixels, unprojects with
     the pinhole intrinsics ``{fx,fy,cx,cy}``, maps optical->pelvis via the passed-in
     ``T_pelvis_camera``, and (optionally) voxel-downsamples to ``voxel_m``. An optional
     ``mask`` ((H,W) bool, same shape as depth) ANDs into the validity gate so only masked-in
-    pixels become points (segmentation applied pre-deproject)."""
+    pixels become points (segmentation applied pre-deproject). An optional ``rgb`` ((H,W,3)
+    uint8, pixel-aligned with depth) attaches per-point colors for visualization — XYZ is
+    unaffected, so consumers reading ``.points`` (e.g. GraspGenX) never see color."""
     depth = np.asarray(depth_mm, dtype=np.float32)
     if depth.ndim != 2:
         raise ValueError(f"depth must be (H, W); got {depth.shape}")
@@ -46,6 +49,13 @@ def deproject_depth(depth_mm: np.ndarray, intrinsics: dict, T_pelvis_camera: Pos
     y = (vs.astype(np.float32) - cy) / fy * z
     pts_optical = np.stack([x, y, z], axis=1).astype(np.float32)   # (N,3), (0,3) if none
 
-    cloud = PointCloud(pts_optical, frame="camera_optical").transformed(
+    colors = None
+    if rgb is not None:
+        rgb = np.asarray(rgb)
+        if rgb.ndim != 3 or rgb.shape[:2] != depth.shape:
+            raise ValueError(f"rgb must be (H, W, 3) matching depth {depth.shape}; got {rgb.shape}")
+        colors = rgb[vs, us][:, :3].astype(np.uint8)   # per-point RGB (N,3)
+
+    cloud = PointCloud(pts_optical, frame="camera_optical", colors=colors).transformed(
         T_pelvis_camera, frame="pelvis")
     return cloud.voxel_downsampled(voxel_m) if voxel_m else cloud

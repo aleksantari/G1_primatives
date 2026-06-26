@@ -70,3 +70,22 @@ def test_mask_wrong_shape_raises():
     depth = np.full((H, W), 500.0, np.float32)
     with pytest.raises(ValueError):
         deproject_depth(depth, INTR, Pose.Identity(), mask=np.ones((H + 1, W), bool))
+
+
+def test_rgb_attaches_per_point_color():
+    depth = np.full((H, W), 500.0, np.float32)
+    rgb = np.zeros((H, W, 3), np.uint8)
+    rgb[..., 0] = np.arange(W)[None, :]              # R varies by column
+    rgb[..., 1] = np.arange(H)[:, None]              # G varies by row
+    cloud = deproject_depth(depth, INTR, Pose.Identity(), rgb=rgb)
+    assert cloud.colors is not None and cloud.colors.shape == (H * W, 3)
+    vv, uu = np.mgrid[0:H, 0:W]
+    np.testing.assert_array_equal(cloud.colors, rgb[vv.ravel(), uu.ravel()])   # row-major
+    # XYZ unaffected by the color path
+    np.testing.assert_allclose(cloud.points, _expected(depth), atol=1e-6)
+
+
+def test_rgb_shape_mismatch_raises():
+    depth = np.full((H, W), 500.0, np.float32)
+    with pytest.raises(ValueError):
+        deproject_depth(depth, INTR, Pose.Identity(), rgb=np.zeros((H + 1, W, 3), np.uint8))
