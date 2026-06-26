@@ -2,6 +2,7 @@
 # (both implement the same GraspSource interface -> ranked wrist-yaw goal Poses):
 #   apriltag  -- the known-good A-B reference: detected pose + URDF palm offset (one grasp).
 #   graspgenx -- learned 6-DoF grasps from the GraspGenX ZMQ service (segmented cloud in).
+#   sim_cloud -- SIM only: GT cube cloud from rt/sim_state -> GraspGenX (no camera/depth/SAM3).
 # 09_graspgen.py --source overrides this per run for A-B comparison.
 grasp_source: apriltag
 
@@ -54,3 +55,12 @@ segment:
     text: "red block"
     # box: [x0, y0, x1, y1]
     # points: [[x, y], ...]   # (+ optional point_labels: [1, 0, ...])
+
+# Sim-only GraspGenX path (grasp_source: sim_cloud): build a ground-truth object cloud from the
+# live rt/sim_state block pose (no camera/depth/SAM3) and feed the SAME GraspGenX + tool transform
+# as `graspgenx`. Reuses the graspgenx: block (host/port/gripper/voxel/wristyaw_grasp_rpy) +
+# apriltag.palm_offset_xyz. Needs `detector: sim_state` (perception.yaml) for the live block pose.
+sim_cloud:
+  object_size_m: 0.06       # red block edge (m); the sampled cube size
+  n_points: 2000            # ~points over the cube surface (the model resamples to 3500)
+  camera_facing_cull: true  # keep only faces visible to the head cam (partial-view realism)

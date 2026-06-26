@@ -144,8 +144,7 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
         from g1_classical_manip.grasp.apriltag_source import AprilTagGraspSource
         return AprilTagGraspSource(apr["palm_offset_xyz"], apr["grasp_offset"],
                                    apr.get("grasp_rpy"))
-    if kind == "graspgenx":
-        from g1_classical_manip.grasp.graspgenx_source import GraspGenXGraspSource
+    if kind in ("graspgenx", "sim_cloud"):
         from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
         gx = dict(g.get("graspgenx", {}) or {})
         gx.setdefault("palm_offset_xyz", apr.get("palm_offset_xyz"))   # shared URDF offset
@@ -155,8 +154,17 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
                                    port=int(gx.get("port", 5556)),
                                    timeout_ms=int(gx.get("timeout_ms", 60000)))
         viz = _build_grasp_viz(gx)                      # None unless visualize.enabled
-        seg = _build_segmenter(g.get("segment", {}) or {})
-        return GraspGenXGraspSource(frames, seg, _client, gx, cfg["camera"], viz=viz)
+        if kind == "graspgenx":
+            from g1_classical_manip.grasp.graspgenx_source import GraspGenXGraspSource
+            seg = _build_segmenter(g.get("segment", {}) or {})
+            return GraspGenXGraspSource(frames, seg, _client, gx, cfg["camera"], viz=viz)
+        # sim_cloud: GT cube cloud from rt/sim_state (no camera / depth / SAM3)
+        from g1_classical_manip.grasp.sim_cloud_source import SimCloudGraspSource
+        from g1_classical_manip.perception.sim_state import SimStateDetector
+        gx["sim_cloud"] = g.get("sim_cloud", {}) or {}
+        pose_source = SimStateDetector.from_config(
+            frames, (cfg.get("perception", {}) or {}).get("sim_state", {}))
+        return SimCloudGraspSource(frames, pose_source, _client, gx, viz=viz)
     raise ValueError(f"unknown grasp_source: {kind}")
 
 

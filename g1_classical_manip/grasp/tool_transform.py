@@ -13,10 +13,13 @@ grasp orientation, so there is nothing to copy from).
 """
 from __future__ import annotations
 
+from typing import List
+
 import numpy as np
 
 from g1_classical_manip.spatial.pose import Pose
 from g1_classical_manip.ee.hand_base import LEFT
+from g1_classical_manip.grasp.base import GraspCandidate
 
 
 def palm_offset(palm_offset_xyz, side: str) -> np.ndarray:
@@ -37,3 +40,24 @@ def build_T_wristyaw_grasp(palm_offset_xyz, side: str, R_wristyaw_grasp) -> Pose
 def wrist_goal_from_grasp(T_pelvis_grasp: Pose, T_wristyaw_grasp: Pose) -> Pose:
     """Wrist-yaw goal so the gripper grasp frame lands at ``T_pelvis_grasp``."""
     return T_pelvis_grasp * T_wristyaw_grasp.inverse()
+
+
+def candidates_from_grasps(grasps, conf, side: str, palm_offset_xyz,
+                           R_wristyaw_grasp) -> List[GraspCandidate]:
+    """``(K,4,4)`` pelvis-frame grasps + ``(K,)`` confidences -> ranked ``GraspCandidate``s
+    (confidence-descending), each mapped to a wrist-yaw goal via the fixed grasp->tool
+    transform. Shared by the GraspGenX and sim-cloud sources so the grasp->wrist mapping
+    lives in one place. Returns ``[]`` for an empty / length-0 input."""
+    grasps = np.asarray(grasps, dtype=np.float32)
+    conf = np.asarray(conf, dtype=np.float32).reshape(-1)
+    k = min(grasps.shape[0], conf.shape[0])            # guard a grasps/conf length mismatch
+    if k == 0:
+        return []
+    grasps, conf = grasps[:k], conf[:k]
+    T_wg = build_T_wristyaw_grasp(palm_offset_xyz, side, R_wristyaw_grasp)
+    out: List[GraspCandidate] = []
+    for i in np.argsort(-conf):                        # confidence descending
+        T_pelvis_grasp = Pose.from_homogeneous(grasps[i])
+        out.append(GraspCandidate(wrist_goal=wrist_goal_from_grasp(T_pelvis_grasp, T_wg),
+                                  confidence=float(conf[i]), grasp_pose=T_pelvis_grasp))
+    return out

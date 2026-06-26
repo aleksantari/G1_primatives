@@ -13,12 +13,11 @@ from typing import List
 
 import numpy as np
 
-from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
+from g1_classical_manip.spatial.pose import rpy_to_matrix
 from g1_classical_manip.perception.depth import deproject_depth
 from g1_classical_manip.perception.segment import SegmentationAborted
 from g1_classical_manip.grasp.base import GraspSource, GraspCandidate
-from g1_classical_manip.grasp.tool_transform import (
-    build_T_wristyaw_grasp, wrist_goal_from_grasp)
+from g1_classical_manip.grasp.tool_transform import candidates_from_grasps
 
 
 class GraspGenXGraspSource(GraspSource):
@@ -72,11 +71,5 @@ class GraspGenXGraspSource(GraspSource):
         if self.viz is not None:                        # cloud + all grasps (pelvis frame)
             self.viz.show_candidates(cloud.points, grasps, conf, colors=cloud.colors)
 
-        T_wg = build_T_wristyaw_grasp(self.palm_offset_xyz, side, self.R_wristyaw_grasp)
-        out: List[GraspCandidate] = []
-        for i in np.argsort(-conf):                    # confidence descending
-            T_pelvis_grasp = Pose.from_homogeneous(grasps[i])
-            wrist = wrist_goal_from_grasp(T_pelvis_grasp, T_wg)
-            out.append(GraspCandidate(wrist_goal=wrist, confidence=float(conf[i]),
-                                      grasp_pose=T_pelvis_grasp))
-        return out
+        return candidates_from_grasps(grasps, conf, side,
+                                      self.palm_offset_xyz, self.R_wristyaw_grasp)

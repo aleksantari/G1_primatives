@@ -68,8 +68,8 @@ def _select_candidate(robot, side, candidates, grasp_z):
 def main():
     ap = argparse.ArgumentParser()
     _rig.add_target_arg(ap)
-    ap.add_argument("--source", choices=["apriltag", "graspgenx"], default=None,
-                    help="grasp source (overrides grasp.yaml grasp_source for this run)")
+    ap.add_argument("--source", choices=["apriltag", "graspgenx", "sim_cloud"], default=None,
+                    help="grasp source (overrides grasp.yaml grasp_source; sim_cloud = sim GT cloud)")
     ap.add_argument("--segment", choices=["auto", "interactive", "none"], default=None,
                     help="SAM3 segmentation mode (overrides grasp.yaml segment.mode)")
     ap.add_argument("--visualize", action="store_true",
