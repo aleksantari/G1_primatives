@@ -114,6 +114,26 @@ def _build_segmenter(seg_cfg: Dict[str, Any]):
     raise ValueError(f"unknown segment mode: {mode}")
 
 
+def _build_grasp_viz(gx: Dict[str, Any]):
+    """Build an optional client-side GraspViz from the graspgenx `visualize` block.
+    Returns None unless `visualize.enabled`. Lazy imports (viser) live here so
+    non-viz runs never touch viser."""
+    vcfg = gx.get("visualize", {}) or {}
+    if not vcfg.get("enabled"):
+        return None
+    from g1_classical_manip.viz import load_gripper_geom
+    from g1_classical_manip.viz.grasp_viz import GraspViz
+    asset_dir = vcfg.get("gripper_asset_dir", "assets/grippers")
+    if not os.path.isabs(asset_dir):                # anchor on the repo root, not cwd
+        asset_dir = os.path.join(_REPO_ROOT, asset_dir)
+    geom = load_gripper_geom(asset_dir, gx.get("gripper_name", "unitree_g1"))
+    return GraspViz(geom,
+                    port=int(vcfg.get("port", 8080)),
+                    max_markers=int(vcfg.get("max_markers", 100)),
+                    show_mesh=bool(vcfg.get("show_mesh", True)),
+                    threshold_tuner=bool(vcfg.get("threshold_tuner", False)))
+
+
 def _build_grasp_source(frames, cfg: Dict[str, Any]):
     """Build the configured grasp source (no I/O; the GraspGenX/SAM3 ZMQ sockets open lazily
     per call). Selector: grasp.yaml `grasp_source` -- mirrors the `detector:` seam."""
@@ -134,8 +154,9 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
             return GraspGenXClient(host=gx.get("host", "127.0.0.1"),
                                    port=int(gx.get("port", 5556)),
                                    timeout_ms=int(gx.get("timeout_ms", 60000)))
+        viz = _build_grasp_viz(gx)                      # None unless visualize.enabled
         seg = _build_segmenter(g.get("segment", {}) or {})
-        return GraspGenXGraspSource(frames, seg, _client, gx, cfg["camera"])
+        return GraspGenXGraspSource(frames, seg, _client, gx, cfg["camera"], viz=viz)
     raise ValueError(f"unknown grasp_source: {kind}")
 
 

@@ -8,6 +8,8 @@ report the masked single-object point cloud. For developing segmentation + cloud
   --image PATH        segment a static image -- SAM3 only, NO robot / depth / cloud
   --mode interactive  cv2 GUI: text/box/points, cycle candidates, accept (needs a display)
   --mode auto         one SAM3 call with --text / grasp.yaml default_prompt
+  --save              write <base>_cloud.npy (downsampled object cloud) + _mask.npy +
+                      _overlay.png next to the frame -> feed 10_graspgen_viz --pcd
 
 Live mode needs the real ZED depth stream; all modes need a running SAM3 server
 (python -m sam3.serving --port 5557).
@@ -17,6 +19,7 @@ Live mode needs the real ZED depth stream; all modes need a running SAM3 server
   live : bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --target real --mode interactive'
 """
 import argparse
+import os
 import time
 
 import numpy as np
@@ -76,6 +79,20 @@ def _load_frame(path):
     return rgb, depth, intr, T_pc
 
 
+def _out_base(args) -> str:
+    """Output stem for --save artifacts: next to the source (frame/image), or --save-dir."""
+    if args.frame:
+        src = args.frame
+    elif args.image:
+        src = args.image
+    else:
+        src = os.path.join("captures", f"segment_{time.strftime('%Y%m%d_%H%M%S')}")
+    stem = os.path.splitext(src)[0]
+    if args.save_dir:
+        stem = os.path.join(args.save_dir, os.path.basename(stem))
+    return stem
+
+
 def main():
     ap = _rig.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--image", default=None,
@@ -85,6 +102,10 @@ def main():
     ap.add_argument("--mode", choices=["interactive", "auto"], default="interactive")
     ap.add_argument("--text", default=None, help="text prompt (auto, or seeds interactive)")
     ap.add_argument("--top-k", type=int, default=3)
+    ap.add_argument("--save", action="store_true",
+                    help="save the mask + segmented cloud + overlay (feeds 10_graspgen_viz)")
+    ap.add_argument("--save-dir", default=None,
+                    help="dir for --save artifacts (default: next to the source frame)")
     args = ap.parse_args()
 
     # SAM3 client config (no GPU/robot needed); grasp.yaml: segment.{host,port,...}.
@@ -146,18 +167,43 @@ def main():
     n_mask = "(none / whole frame)" if mask is None else f"{int(np.count_nonzero(mask))} px"
     print(f"mask: {n_mask}")
 
-    # mask overlay on the RGB (works for both modes; saves headless)
-    if cv2 is not None and mask is not None:
-        _show_or_save(_overlay(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), mask),
-                      "segmentation (any key to exit)", "/tmp/segmented_mask.png")
+    # mask overlay on the RGB (works for both modes; shows or saves headless)
+    overlay = (_overlay(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), mask)
+               if cv2 is not None and mask is not None else None)
+    if overlay is not None:
+        _show_or_save(overlay, "segmentation (any key to exit)", "/tmp/segmented_mask.png")
 
-    # cloud counts only when we have depth (live ZED or a captured --frame): the mask is
-    # applied pre-deproject, with the captured/live intrinsics + T_pelvis_camera.
+    # cloud only when we have depth (live ZED or a captured --frame): the mask is applied
+    # pre-deproject, with the captured/live intrinsics + T_pelvis_camera.
+    obj = None
     if depth is not None and intr is not None and T_pc is not None:
         full = deproject_depth(depth, intr, T_pc)
         obj = deproject_depth(depth, intr, T_pc, mask=mask)
         print(f"full-scene cloud      : {full.n} points")
         print(f"segmented object cloud: {obj.n} points")
+
+    # --- save artifacts for the offline GraspGenX demo (10_graspgen_viz --pcd) ---
+    if args.save:
+        base = _out_base(args)
+        os.makedirs(os.path.dirname(os.path.abspath(base)) or ".", exist_ok=True)
+        saved = []
+        if mask is not None:
+            np.save(f"{base}_mask.npy", np.asarray(mask, bool))
+            saved.append(f"{base}_mask.npy")
+        if overlay is not None:
+            cv2.imwrite(f"{base}_overlay.png", overlay)
+            saved.append(f"{base}_overlay.png")
+        if obj is not None and not obj.is_empty():
+            voxel_m = (cfg["grasp"].get("graspgenx", {}) or {}).get("voxel_m")
+            cloud = obj.voxel_downsampled(voxel_m) if voxel_m else obj   # match the live source
+            np.save(f"{base}_cloud.npy", cloud.points)
+            saved.append(f"{base}_cloud.npy ({cloud.n} pts)")
+        if saved:
+            print("saved: " + "  ".join(saved))
+            if obj is not None and not obj.is_empty():
+                print(f"  next: python scripts/10_graspgen_viz.py --pcd {base}_cloud.npy")
+        else:
+            print("--save: nothing to write (no mask, and no depth for a cloud).")
 
 
 if __name__ == "__main__":
