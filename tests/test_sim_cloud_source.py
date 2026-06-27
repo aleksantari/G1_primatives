@@ -83,3 +83,49 @@ def test_camera_facing_cull_drops_far_faces():
     src.grasps(robot=None, side=RIGHT, target="block")
     full = sample_cube(0.06, 600)[0].shape[0]
     assert 0 < client.sent.shape[0] < full          # some but not all points survive the cull
+
+
+# ----------------------------------------------------------------- color from the sim RGB
+class FakeCamRGB:
+    def __init__(self, rgb):
+        self._rgb = rgb
+
+    def get_rgb_frame(self):
+        return self._rgb
+
+
+class FakeRobotCam:
+    def __init__(self, camera):
+        self.camera = camera
+
+
+class FakeViz:
+    def __init__(self):
+        self.colors = "unset"
+
+    def show_candidates(self, points, grasps, conf, colors=None):
+        self.colors = colors
+
+
+def test_sim_cloud_source_colors_from_sim_rgb():
+    rgb = np.zeros((480, 640, 3), np.uint8)
+    rgb[:] = (200, 30, 30)                                  # all-red sim render
+    g0 = Pose(np.eye(3), [0.0, 0.0, 0.5]).homogeneous.astype(np.float32)
+    viz = FakeViz()
+    cam_cfg = {"intrinsics": {"fx": 243.2, "fy": 243.2, "cx": 320.0, "cy": 240.0}}
+    src = SimCloudGraspSource(FakeFrames(), FakePoseSource(Pose(np.eye(3), [0.0, 0.0, 0.5])),
+                              lambda: FakeClient(g0[None], np.array([1.0], np.float32)),
+                              {**GCFG, "voxel_m": None}, cam_cfg, viz=viz)
+    src.grasps(FakeRobotCam(FakeCamRGB(rgb)), RIGHT, "block")   # block in front of the head cam
+    assert viz.colors is not None and viz.colors.dtype == np.uint8 and viz.colors.shape[1] == 3
+    assert (viz.colors == (200, 30, 30)).all(axis=1).any()     # sampled the red sim render
+
+
+def test_sim_cloud_source_no_camera_no_color():
+    g0 = Pose(np.eye(3), [0.0, 0.0, 0.5]).homogeneous.astype(np.float32)
+    viz = FakeViz()
+    src = SimCloudGraspSource(FakeFrames(), FakePoseSource(Pose(np.eye(3), [0.0, 0.0, 0.5])),
+                              lambda: FakeClient(g0[None], np.array([1.0], np.float32)),
+                              {**GCFG, "voxel_m": None}, camera_cfg=None, viz=viz)
+    src.grasps(FakeRobotCam(camera=None), RIGHT, "block")       # no camera -> flat (colors None)
+    assert viz.colors is None

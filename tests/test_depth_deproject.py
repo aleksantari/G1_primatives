@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from g1_classical_manip.perception.depth import deproject_depth
+from g1_classical_manip.perception.depth import deproject_depth, colorize_from_image
 from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
 
 H, W = 3, 3
@@ -70,6 +70,29 @@ def test_mask_wrong_shape_raises():
     depth = np.full((H, W), 500.0, np.float32)
     with pytest.raises(ValueError):
         deproject_depth(depth, INTR, Pose.Identity(), mask=np.ones((H + 1, W), bool))
+
+
+def test_colorize_from_image():
+    rgb = np.zeros((H, W, 3), np.uint8)
+    rgb[1, 1] = [10, 20, 30]                              # principal-point pixel (cx=cy=1)
+    pts = np.array([[0.0, 0.0, 0.5],                      # on axis, z>0 -> pixel (1,1)
+                    [10.0, 0.0, 0.5],                     # way off-image -> fallback
+                    [0.0, 0.0, -0.5]],                    # behind the camera -> fallback
+                   np.float32)
+    cols = colorize_from_image(pts, rgb, INTR, Pose.Identity(), fallback=(7, 8, 9))
+    assert cols.shape == (3, 3) and cols.dtype == np.uint8
+    np.testing.assert_array_equal(cols[0], [10, 20, 30])
+    np.testing.assert_array_equal(cols[1], [7, 8, 9])
+    np.testing.assert_array_equal(cols[2], [7, 8, 9])
+
+
+def test_colorize_applies_extrinsic():
+    rgb = np.zeros((H, W, 3), np.uint8)
+    rgb[1, 1] = [200, 30, 30]
+    T = Pose(np.eye(3), [1.0, 0.0, 0.0])                  # camera at pelvis +x
+    pt = np.array([[1.0, 0.0, 0.5]], np.float32)          # in front of the camera -> pixel (1,1)
+    cols = colorize_from_image(pt, rgb, INTR, T)
+    np.testing.assert_array_equal(cols[0], [200, 30, 30])
 
 
 def test_rgb_attaches_per_point_color():

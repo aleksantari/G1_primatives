@@ -164,7 +164,7 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
         gx["sim_cloud"] = g.get("sim_cloud", {}) or {}
         pose_source = SimStateDetector.from_config(
             frames, (cfg.get("perception", {}) or {}).get("sim_state", {}))
-        return SimCloudGraspSource(frames, pose_source, _client, gx, viz=viz)
+        return SimCloudGraspSource(frames, pose_source, _client, gx, cfg["camera"], viz=viz)
     raise ValueError(f"unknown grasp_source: {kind}")
 
 

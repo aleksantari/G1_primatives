@@ -64,3 +64,7 @@ sim_cloud:
   object_size_m: 0.06       # red block edge (m); the sampled cube size
   n_points: 2000            # ~points over the cube surface (the model resamples to 3500)
   camera_facing_cull: true  # keep only faces visible to the head cam (partial-view realism)
+  # Per-point COLOR (viz only; XYZ unaffected): the cube points are projected into the live sim
+  # RGB (camera_sim.yaml) and sampled, like the real depth path -> viser shows the actual render
+  # (red block + AprilTag). Points off-image / no frame use color_fallback.
+  color_fallback: [128, 128, 128]

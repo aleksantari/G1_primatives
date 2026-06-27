@@ -59,3 +59,30 @@ def deproject_depth(depth_mm: np.ndarray, intrinsics: dict, T_pelvis_camera: Pos
     cloud = PointCloud(pts_optical, frame="camera_optical", colors=colors).transformed(
         T_pelvis_camera, frame="pelvis")
     return cloud.voxel_downsampled(voxel_m) if voxel_m else cloud
+
+
+def colorize_from_image(points_pelvis: np.ndarray, rgb: np.ndarray, intrinsics: dict,
+                        T_pelvis_camera: Pose, fallback=(128, 128, 128)) -> np.ndarray:
+    """Per-point RGB for a pelvis-frame cloud by FORWARD-projecting its points into an image
+    and sampling -- the inverse of ``deproject_depth``'s color step, for clouds built without
+    a depth image (e.g. the sim GT cube). Maps pelvis->camera optical via
+    ``T_pelvis_camera.inverse()``, pinhole-projects, and samples ``rgb[v,u]``; points behind
+    the camera or off-image get ``fallback``. Returns ``(N,3)`` uint8. Viz-only (XYZ untouched)."""
+    pts = np.asarray(points_pelvis, dtype=np.float32).reshape(-1, 3)
+    rgb = np.asarray(rgb)
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        raise ValueError(f"rgb must be (H, W, 3); got {rgb.shape}")
+    H, W = rgb.shape[:2]
+    fx, fy = float(intrinsics["fx"]), float(intrinsics["fy"])
+    cx, cy = float(intrinsics["cx"]), float(intrinsics["cy"])
+
+    inv = T_pelvis_camera.inverse()                  # pelvis -> camera optical
+    pc = pts @ inv.rotation.T + inv.translation
+    z = pc[:, 2]
+    safe = np.where(z != 0.0, z, 1.0)
+    u = np.round(pc[:, 0] / safe * fx + cx).astype(int)
+    v = np.round(pc[:, 1] / safe * fy + cy).astype(int)
+    inb = (z > 0) & (u >= 0) & (u < W) & (v >= 0) & (v < H)
+    colors = np.tile(np.asarray(fallback, np.uint8).reshape(3), (len(pts), 1))
+    colors[inb] = rgb[v[inb], u[inb]][:, :3].astype(np.uint8)
+    return colors
