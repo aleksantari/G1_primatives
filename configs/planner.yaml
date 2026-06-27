@@ -29,3 +29,26 @@ executor:
   # re-rate-limiting cuRobo's already-feasible trajectory during planned execution.
   # Override per-run via 04_move --speed. Dial toward 1.0 to find the fastest that tracks.
   time_dilation: 0.5
+
+# Native cuRobo plan_grasp (goalset selection + approach/grasp/lift). Feeds the K ranked grasp
+# candidates as ONE goalset; cuRobo returns the feasible one (goalset_index) and plans
+# approach->grasp->lift as native segments, sweeping the (approach, lift) offsets below until one
+# succeeds. Used by primitives.grasp_motion / 09_graspgen (the native path; --legacy keeps the old
+# sequential probe + manual offsets). See docs / the curobo_planner.plan_grasp_set* methods.
+grasp:
+  max_goalset: 128            # MotionPlannerCfg.create(max_goalset=…); must be >= graspgenx.topk (100).
+                              # cuRobo's default is 1 -> multi-candidate goalset solves would be forbidden.
+  # Axis strings are UNSIGNED ('x'|'y'|'z'); the SIGN is in the per-strategy offset.
+  approach_axis: x            # DERIVED: grasp +Z (approach) -> wrist +X (wristyaw_grasp_rpy [pi/2,0,pi/2]).
+  approach_in_tool_frame: true   # back off along the grasp approach line (tool/wrist frame)
+  lift_axis: z                # WORLD/pelvis +Z (up). NOT the tool frame -- tool +Z is the spread axis.
+  lift_in_tool_frame: false
+  disable_collision_links: null  # null -> [active wrist link] (config has grasp_contact_link_names: null)
+  # approach_offset NEGATIVE (back off -wrist-X, away from the object); lift_offset POSITIVE (world +Z up).
+  strategies:
+    - {approach_offset: -0.15, lift_offset: 0.20}
+    - {approach_offset: -0.10, lift_offset: 0.15}
+    - {approach_offset: -0.07, lift_offset: 0.10}
+    - {approach_offset: -0.10, plan_lift: false}      # approach + grasp only
+    - {approach_offset: -0.10, plan_approach: false}  # grasp-at-goal only (no free-space approach)
+    - {approach_offset: -0.05, plan_lift: false}      # short approach, last-ditch

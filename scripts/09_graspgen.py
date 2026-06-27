@@ -2,10 +2,11 @@
 """09 - Pick-and-lift driven by a GraspSource (AprilTag A-B reference OR GraspGenX), with
 optional SAM3 segmentation of the target object.
 
-Same shape as 07_pick_place, but the grasp comes from `robot.grasp_source`:
+Same shape as 07_pick_place, but the grasp comes from `robot.grasp_source`, planned with
+cuRobo's native plan_grasp (goalset selection + approach/grasp/lift segments):
 
-    home -> open -> grasp_source.grasps(object) -> [select 1 reachable candidate]
-         -> move(approach) -> move(grasp) -> close -> move(lift) -> home
+    home -> open -> grasp_source.grasps(object) -> plan_grasp(goalset of K candidates)
+         -> approach -> grasp -> close -> lift -> home   (cuRobo picks the feasible grasp)
 
   --source apriltag    one candidate = detected pose + URDF palm offset (the known-good ref)
   --source graspgenx   ranked 6-DoF grasps from the GraspGenX ZMQ service (needs the server
@@ -14,16 +15,16 @@ Same shape as 07_pick_place, but the grasp comes from `robot.grasp_source`:
             auto         one SAM3 call with grasp.yaml default_prompt
             none         no segmentation (whole frame)   [overrides grasp.yaml segment.mode]
 
-ONE candidate is selected up front and its approach/grasp/lift are executed consistently
-(avoids switching candidates mid-sequence). `--select` picks which:
-  reachable  highest-confidence candidate whose GRASP pose plans (skips unreachable tops)
-  top        THE top-confidence grasp -- the one viser draws the gripper mesh on -- with no
-             reachability fallback (it just warns if it won't plan; approach/descend then fail
-             loudly). Use this to execute exactly the grasp the GUI highlights.
-The pre-grasp backs off along the grasp's APPROACH axis (so a 6-DoF GraspGenX grasp is
-approached along its own line, not straight down). Operator-gated each step; on any failure it
-opens + homes. On real: gravity comp + time_dilation apply from config; operator sets debug
-mode via the remote first. Watch the e-stop.
+By default the K ranked candidates are fed to cuRobo's plan_grasp as ONE goalset; cuRobo returns
+the feasible grasp (goalset_index) and plans approach->grasp->lift as native segments, sweeping the
+configured (approach, lift) offsets (planner.yaml: grasp.strategies). `--select`:
+  reachable  feed ALL candidates -- cuRobo globally picks the feasible one
+  top        feed ONLY the top-confidence grasp (the one viser draws the mesh on) -- no selection
+`--legacy` restores the old path (sequential plan_to_pose probe + manual approach/descend/lift
+offsets) as an A-B baseline. The approach backs off along the grasp's own APPROACH axis (derived
+grasp +Z -> wrist +X), the lift goes world +Z up. Operator-gated each step; on any failure it opens
++ homes. On real: gravity comp + time_dilation apply from config; operator sets debug mode via the
+remote first. Watch the e-stop.
 
   real: bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --source graspgenx --segment interactive'
 """
@@ -101,8 +102,11 @@ def main():
     ap.add_argument("--visualize", action="store_true",
                     help="show cloud + ranked grasps in a viser GUI (graspgenx source)")
     ap.add_argument("--select", choices=["reachable", "top"], default="reachable",
-                    help="reachable = highest-confidence candidate that plans; "
-                         "top = THE top-confidence grasp (the viser mesh-overlay best), no fallback")
+                    help="reachable = feed ALL candidates to plan_grasp (cuRobo picks the feasible); "
+                         "top = feed ONLY the top-confidence grasp (the viser mesh-overlay best)")
+    ap.add_argument("--legacy", action="store_true",
+                    help="old path: sequential plan_to_pose probe + manual approach/descend/lift "
+                         "(A-B baseline vs the native plan_grasp goalset solve)")
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT)
     ap.add_argument("--object", default="block")
     ap.add_argument("--approach", type=float, default=0.10,
@@ -166,49 +170,68 @@ def main():
         if not cands:
             raise RuntimeError(f"grasp source '{src_kind}' produced no candidates "
                                f"(no detection / no depth / no mask / no grasps)")
-        if args.select == "top":
-            chosen = cands[0]                            # confidence-sorted -> [0] = the viser best
-            grasp = _shift_z(chosen.wrist_goal, args.grasp_z)
-            try:                                          # probe but DO NOT fall back -- just warn
-                robot.planner.plan_to_pose(robot.arm.get_current_dual_arm_q(), side, grasp)
-                reach = "plans OK"
-            except PlanningError:
-                reach = "WILL NOT PLAN -- approach/descend will fail"
-            print(f"select=top: top grasp confidence {chosen.confidence:.3f} -- {reach}")
-        else:
-            chosen, grasp = _select_candidate(robot, side, cands, args.grasp_z)
-            if chosen is None:
-                raise RuntimeError(f"none of the {len(cands)} candidates plan to a reachable grasp")
-        viz = getattr(robot.grasp_source, "viz", None)   # green = the grasp we chose
-        if viz is not None and chosen.grasp_pose is not None:
-            viz.mark_chosen(chosen.grasp_pose.homogeneous)
-        approach = _approach_pose(grasp, chosen.grasp_pose, args.approach)
-        lift = _shift_z(grasp, args.lift)
-        print(f"chosen: confidence {chosen.confidence:.3f} | grasp wrist "
-              f"{np.round(grasp.translation, 3)} m")
-        if src_kind == "sim_cloud":      # GT cube -> FK-verify our fingers land on the object
-            try:
-                ps = getattr(robot.grasp_source, "pose_source", None)
-                gt = ps.block_pose(args.object) if ps is not None else None
-                if gt is not None:
-                    _finger_contact_check(robot, side, grasp, gt.translation)
-            except Exception as e:       # noqa: BLE001 - diagnostic only, never blocks the grasp
-                print(f"FK check skipped: {e}")
+        def _report_choice(chosen, grasp_wrist, note=""):
+            """Mark the chosen grasp in viser, print it, and (sim_cloud) FK-check our fingertips
+            against the GT cube. Shared by the native + legacy paths."""
+            viz = getattr(robot.grasp_source, "viz", None)   # green = the grasp we chose
+            if viz is not None and chosen.grasp_pose is not None:
+                viz.mark_chosen(chosen.grasp_pose.homogeneous)
+            print(f"chosen: confidence {chosen.confidence:.3f}{note} | grasp wrist "
+                  f"{np.round(grasp_wrist.translation, 3)} m")
+            if src_kind == "sim_cloud":  # GT cube -> FK-verify our fingers land on the object
+                try:
+                    ps = getattr(robot.grasp_source, "pose_source", None)
+                    gt = ps.block_pose(args.object) if ps is not None else None
+                    if gt is not None:
+                        _finger_contact_check(robot, side, grasp_wrist, gt.translation)
+                except Exception as e:   # noqa: BLE001 - diagnostic only, never blocks the grasp
+                    print(f"FK check skipped: {e}")
 
-        _rig.confirm("move to APPROACH", auto)
-        if not _rig.do_move(robot, side, approach, "approach").ok:
-            raise RuntimeError("approach move failed")
+        def _do_close():
+            _rig.confirm(f"CLOSE hand to {args.close_frac:.2f}", auto)
+            print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
 
-        _rig.confirm("move to GRASP (descend)", auto)
-        if not _rig.do_move(robot, side, grasp, "descend").ok:
-            raise RuntimeError("descend move failed")
+        if args.legacy:                  # --- old sequential probe + manual offsets (A-B baseline) ---
+            if args.select == "top":
+                chosen = cands[0]                        # confidence-sorted -> [0] = the viser best
+                grasp = _shift_z(chosen.wrist_goal, args.grasp_z)
+                try:                                      # probe but DO NOT fall back -- just warn
+                    robot.planner.plan_to_pose(robot.arm.get_current_dual_arm_q(), side, grasp)
+                    reach = "plans OK"
+                except PlanningError:
+                    reach = "WILL NOT PLAN -- approach/descend will fail"
+                print(f"select=top: top grasp confidence {chosen.confidence:.3f} -- {reach}")
+            else:
+                chosen, grasp = _select_candidate(robot, side, cands, args.grasp_z)
+                if chosen is None:
+                    raise RuntimeError(f"none of the {len(cands)} candidates plan to a reachable grasp")
+            _report_choice(chosen, grasp)
+            approach = _approach_pose(grasp, chosen.grasp_pose, args.approach)
+            lift = _shift_z(grasp, args.lift)
 
-        _rig.confirm(f"CLOSE hand to {args.close_frac:.2f}", auto)
-        print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
-
-        _rig.confirm("move to LIFT", auto)
-        if not _rig.do_move(robot, side, lift, "lift").ok:
-            raise RuntimeError("lift move failed")
+            _rig.confirm("move to APPROACH", auto)
+            if not _rig.do_move(robot, side, approach, "approach").ok:
+                raise RuntimeError("approach move failed")
+            _rig.confirm("move to GRASP (descend)", auto)
+            if not _rig.do_move(robot, side, grasp, "descend").ok:
+                raise RuntimeError("descend move failed")
+            _do_close()
+            _rig.confirm("move to LIFT", auto)
+            if not _rig.do_move(robot, side, lift, "lift").ok:
+                raise RuntimeError("lift move failed")
+        else:                            # --- native cuRobo plan_grasp goalset path ---
+            from dataclasses import replace
+            feed = cands[:1] if args.select == "top" else cands
+            if args.grasp_z:             # optional vertical pre-shift of the grasp goals
+                feed = [replace(c, wrist_goal=_shift_z(c.wrist_goal, args.grasp_z)) for c in feed]
+            res = P.grasp_motion(
+                robot, side, feed, close_cb=_do_close,
+                confirm_cb=lambda lbl: _rig.confirm(f"move to {lbl.upper()}", auto),
+                on_selected=lambda chosen, out: _report_choice(
+                    chosen, chosen.wrist_goal, note=f" (goalset idx {out.chosen_index})"))
+            print(f"grasp_motion: {res.info}")
+            if not res.ok:
+                raise RuntimeError(res.info)
 
         _rig.confirm("home (return)", auto)
         print("home  :", P.home(robot))

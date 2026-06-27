@@ -58,6 +58,68 @@ def move_to_candidates(robot, side: str, goal_poses) -> Result:
     return Result(bool(res.success), res.reason)
 
 
+@dataclass
+class GraspResult:
+    ok: bool
+    info: str = ""
+    chosen_index: int = -1
+    outcome: object = None        # the planner GraspPlanOutcome (segments, per-phase flags)
+
+
+def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
+                 on_selected=None) -> GraspResult:
+    """Native cuRobo plan_grasp over ranked grasp candidates: solve a K-goalset (cuRobo picks
+    the feasible grasp) sweeping the configured approach/lift offsets, then execute
+    approach -> grasp -> [close_cb] -> lift. `on_selected(chosen_candidate, outcome)` fires AFTER
+    cuRobo picks but BEFORE any motion (so callers mark viz / FK-check / print the chosen grasp);
+    `close_cb()` is the operator-gated hand close, run after settling at the grasp pose; `confirm_cb
+    (label)` gates each segment. Reads the `planner.grasp` config block. Returns GraspResult."""
+    cands = list(candidates)
+    if not cands:
+        return GraspResult(False, "no candidates")
+    gp = (robot.cfg["planner"].get("grasp") or {})
+    q0 = robot.arm.get_current_dual_arm_q()
+    out = robot.planner.plan_grasp_set_sweep(
+        q0, side, [c.wrist_goal for c in cands],
+        strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),
+        approach_axis=gp.get("approach_axis", "x"), lift_axis=gp.get("lift_axis", "z"),
+        approach_in_tool_frame=gp.get("approach_in_tool_frame", True),
+        lift_in_tool_frame=gp.get("lift_in_tool_frame", False),
+        disable_collision_links=gp.get("disable_collision_links"))
+    if not out.success:
+        return GraspResult(False, f"plan_grasp failed: {out.status}", out.chosen_index, out)
+
+    chosen = cands[out.chosen_index] if 0 <= out.chosen_index < len(cands) else None
+    if on_selected is not None and chosen is not None:
+        on_selected(chosen, out)
+
+    for label, traj in (("approach", out.approach), ("grasp", out.grasp)):
+        if traj is None:
+            continue
+        if confirm_cb is not None:
+            confirm_cb(label)
+        r = robot.executor.run(traj)
+        if not r.success:
+            return GraspResult(False, f"{label}: {r.reason}", out.chosen_index, out)
+
+    if close_cb is not None:
+        # Settle at the grasp pose first: the fingers close on a converged pose, and the droop
+        # accumulated during the (multi-second) close won't trip the lift prime's abort.
+        grasp_traj = out.grasp if out.grasp is not None else out.approach
+        if grasp_traj is not None:
+            robot.executor.settle(grasp_traj.q[-1])
+        close_cb()
+
+    if out.lift is not None:
+        if confirm_cb is not None:
+            confirm_cb("lift")
+        r = robot.executor.run(out.lift)
+        if not r.success:
+            return GraspResult(False, f"lift: {r.reason}", out.chosen_index, out)
+
+    return GraspResult(True, "ok", out.chosen_index, out)
+
+
 def detect(robot, target: str = "block", frames: int = 5) -> Optional[Detection]:
     """Detect `target` from the head camera; return a Detection whose `.pose` is the
     object pose in the pelvis frame (or None if not found). Pulls up to `frames` head
