@@ -3,7 +3,7 @@
 #   sim_state    -- LIVE sim ground truth from rt/sim_state (marker-free; tracks the
 #                   block as it moves). Needs DDS (make_robot connect_dds=True).
 #   ground_truth -- CONSTANT configured block pose (offline fallback; no DDS/camera).
-detector: apriltag
+detector: sim_state
 
 # AprilTag block detection (params for the `apriltag` detector).
 tag:

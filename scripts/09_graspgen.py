@@ -14,8 +14,12 @@ Same shape as 07_pick_place, but the grasp comes from `robot.grasp_source`:
             auto         one SAM3 call with grasp.yaml default_prompt
             none         no segmentation (whole frame)   [overrides grasp.yaml segment.mode]
 
-ONE candidate is selected up front -- the highest-confidence one whose GRASP pose plans -- and
-its approach/grasp/lift are executed consistently (avoids switching candidates mid-sequence).
+ONE candidate is selected up front and its approach/grasp/lift are executed consistently
+(avoids switching candidates mid-sequence). `--select` picks which:
+  reachable  highest-confidence candidate whose GRASP pose plans (skips unreachable tops)
+  top        THE top-confidence grasp -- the one viser draws the gripper mesh on -- with no
+             reachability fallback (it just warns if it won't plan; approach/descend then fail
+             loudly). Use this to execute exactly the grasp the GUI highlights.
 The pre-grasp backs off along the grasp's APPROACH axis (so a 6-DoF GraspGenX grasp is
 approached along its own line, not straight down). Operator-gated each step; on any failure it
 opens + homes. On real: gravity comp + time_dilation apply from config; operator sets debug
@@ -51,6 +55,28 @@ def _approach_pose(grasp_wrist, grasp_pose, dist: float):
     return p
 
 
+def _finger_contact_check(robot, side, wrist_goal, object_center):
+    """SIM verification the viser mesh overlay can't do: FK OUR Dex3 fingertips at `wrist_goal`
+    + the power_close preset and report how close our grasp contact lands to the TRUE object
+    center (the sim GT cube). Compared against GT -- NOT the grasp pose, which our contact hits
+    by construction of the grasp->wrist transform. `object_center` is the pelvis-frame cube
+    center. Validates GraspGenX's pick + our derived transform + our real finger geometry."""
+    from g1_classical_manip.ee.hand_kinematics import Dex3Kinematics
+    from g1_classical_manip.spatial.pose import Pose
+    q7 = robot.cfg["hands"]["dex3"]["presets"]["power_close"][side]
+    kin = Dex3Kinematics()
+    tips = kin.fingertips(side, q7)
+    to_pelvis = lambda p: (wrist_goal * Pose(np.eye(3), p)).translation
+    c = to_pelvis(kin.contact_point(side, q7))
+    fm = 0.5 * (to_pelvis(tips["index"]) + to_pelvis(tips["middle"]))
+    d = float(np.linalg.norm(c - object_center))
+    th = float(np.linalg.norm(to_pelvis(tips["thumb"]) - object_center))
+    fd = float(np.linalg.norm(fm - object_center))
+    tag = "OK" if d < 0.03 else "WARN"
+    print(f"FK check [{tag}]: contact {np.round(c, 3)} vs cube {np.round(object_center, 3)} "
+          f"-> {d * 1000:.0f} mm | thumb {th * 1000:.0f} mm, fingers {fd * 1000:.0f} mm from center")
+
+
 def _select_candidate(robot, side, candidates, grasp_z):
     """Highest-confidence candidate whose GRASP pose plans from the current config (plan-
     only -- no motion). Returns (candidate, grasp_pose) or (None, None)."""
@@ -74,6 +100,9 @@ def main():
                     help="SAM3 segmentation mode (overrides grasp.yaml segment.mode)")
     ap.add_argument("--visualize", action="store_true",
                     help="show cloud + ranked grasps in a viser GUI (graspgenx source)")
+    ap.add_argument("--select", choices=["reachable", "top"], default="reachable",
+                    help="reachable = highest-confidence candidate that plans; "
+                         "top = THE top-confidence grasp (the viser mesh-overlay best), no fallback")
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT)
     ap.add_argument("--object", default="block")
     ap.add_argument("--approach", type=float, default=0.10,
@@ -137,16 +166,34 @@ def main():
         if not cands:
             raise RuntimeError(f"grasp source '{src_kind}' produced no candidates "
                                f"(no detection / no depth / no mask / no grasps)")
-        chosen, grasp = _select_candidate(robot, side, cands, args.grasp_z)
-        if chosen is None:
-            raise RuntimeError(f"none of the {len(cands)} candidates plan to a reachable grasp")
-        viz = getattr(robot.grasp_source, "viz", None)   # green = the reachable grasp we chose
+        if args.select == "top":
+            chosen = cands[0]                            # confidence-sorted -> [0] = the viser best
+            grasp = _shift_z(chosen.wrist_goal, args.grasp_z)
+            try:                                          # probe but DO NOT fall back -- just warn
+                robot.planner.plan_to_pose(robot.arm.get_current_dual_arm_q(), side, grasp)
+                reach = "plans OK"
+            except PlanningError:
+                reach = "WILL NOT PLAN -- approach/descend will fail"
+            print(f"select=top: top grasp confidence {chosen.confidence:.3f} -- {reach}")
+        else:
+            chosen, grasp = _select_candidate(robot, side, cands, args.grasp_z)
+            if chosen is None:
+                raise RuntimeError(f"none of the {len(cands)} candidates plan to a reachable grasp")
+        viz = getattr(robot.grasp_source, "viz", None)   # green = the grasp we chose
         if viz is not None and chosen.grasp_pose is not None:
             viz.mark_chosen(chosen.grasp_pose.homogeneous)
         approach = _approach_pose(grasp, chosen.grasp_pose, args.approach)
         lift = _shift_z(grasp, args.lift)
         print(f"chosen: confidence {chosen.confidence:.3f} | grasp wrist "
               f"{np.round(grasp.translation, 3)} m")
+        if src_kind == "sim_cloud":      # GT cube -> FK-verify our fingers land on the object
+            try:
+                ps = getattr(robot.grasp_source, "pose_source", None)
+                gt = ps.block_pose(args.object) if ps is not None else None
+                if gt is not None:
+                    _finger_contact_check(robot, side, grasp, gt.translation)
+            except Exception as e:       # noqa: BLE001 - diagnostic only, never blocks the grasp
+                print(f"FK check skipped: {e}")
 
         _rig.confirm("move to APPROACH", auto)
         if not _rig.do_move(robot, side, approach, "approach").ok:

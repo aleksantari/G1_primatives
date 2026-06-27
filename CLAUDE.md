@@ -69,12 +69,21 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   speed with no gravity comp. The root fix (deferred) is to not re-rate-limit cuRobo's already-
   feasible trajectory during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
 - Goal frame is the **wrist-yaw link** directly in the primitives (keeps them composable).
-  The palm/grasp-frame offset (wrist-yaw → index/middle finger midpoint, URDF-measured at q=0,
-  side-aware) is applied by the **grasp sources** (`grasp/`): `07_pick_place` still inlines it,
-  but the offset now lives in `grasp/tool_transform.py` (`build_T_wristyaw_grasp`, shared by both
-  sources). The GraspGenX source maps a learned 6-DoF grasp to a wrist goal via that transform;
-  its rotation seed `wristyaw_grasp_rpy` (`configs/grasp.yaml`) is **EMPIRICAL** — verify on
-  hardware. Not "later" anymore; the grasp-source seam is shipped (offline-tested).
+  The grasp→wrist transform (`grasp/tool_transform.py: build_T_wristyaw_grasp`) is applied by the
+  **grasp sources** (`grasp/`). **GraspGenX's transform is DERIVED from kinematics, NOT the
+  AprilTag offset reused** (that `[0.1192,−0.0346,0]` was reverse-engineered for a top-down grasp
+  and is meaningless for GraspGenX's base-anchored frame; the two paths are now decoupled).
+  `scripts/derive_graspgenx_tool_transform.py` (provenance) registers GraspGenX's grasp convention
+  (origin=gripper base, +Z approach, +X=thumb-vs-fingers closing, fingertips at +Z=0.07) against
+  the Dex3 URDF via `ee/hand_kinematics.py` (hand FK): **rotation** = the fixed axis map (approach
+  +Z→wrist +X, closing +X→wrist +Y, spread +Y→wrist +Z) = `wristyaw_grasp_rpy: [π/2,0,π/2]` — the
+  old `[0,π/2,0]` gripped along index↔middle, a 90° roll error; **translation** = our power_close
+  contact midpoint (FK) minus the 0.07 depth along approach = `graspgenx.palm_offset_xyz:
+  [0.0442,0.0414,0]` (so fingers land ON the object, not 7 cm short). Config stores the RIGHT
+  hand; LEFT is mirrored across the wrist Y-plane in code. `09 --source sim_cloud` FK-verifies our
+  fingers straddle the GT cube (the check the viser gripper-mesh overlay can't do). Still verify
+  the closing-roll sign on one gated hardware grasp. (`07_pick_place`/`apriltag` keep their own
+  `palm_offset` — the A-B reference — untouched.)
 - **Grasp pipeline** (`grasp/` + `perception/{depth,segment,sam3_client,segment_gui}.py`,
   `spatial/pointcloud.py`): `robot.grasp_source` is a `GraspSource` (`grasp.yaml: grasp_source` =
   `apriltag` A-B ref | `graspgenx` | `sim_cloud`) returning ranked wrist-yaw `GraspCandidate`s;

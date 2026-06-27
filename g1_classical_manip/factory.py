@@ -147,7 +147,9 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
     if kind in ("graspgenx", "sim_cloud"):
         from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
         gx = dict(g.get("graspgenx", {}) or {})
-        gx.setdefault("palm_offset_xyz", apr.get("palm_offset_xyz"))   # shared URDF offset
+        # GraspGenX carries its OWN derived grasp->wrist transform (palm_offset_xyz +
+        # wristyaw_grasp_rpy, see grasp.yaml); fall back to the AprilTag offset only if absent.
+        gx.setdefault("palm_offset_xyz", apr.get("palm_offset_xyz"))
 
         def _client():
             return GraspGenXClient(host=gx.get("host", "127.0.0.1"),

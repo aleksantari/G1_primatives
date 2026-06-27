@@ -23,13 +23,21 @@ graspgenx:
   grasp_threshold: -1.0   # -1 = take the top-K ranked (no hard confidence threshold)
   timeout_ms: 60000
   voxel_m: 0.003          # ~3 mm voxel downsample of the cloud before infer
-  # grasp(+Z approach, +X closing) -> wrist_yaw axis map. *** EMPIRICAL -- verify on hardware. ***
-  # pitch +90deg maps the grasp APPROACH axis (+Z) onto wrist_yaw +X (the palm-forward
-  # direction the AprilTag palm offset confirms). The ROLL (first value) sets the CLOSING-axis
-  # alignment and is the part to tune; check in sim + one gated hardware grasp before trusting
-  # (the AprilTag path never committed a grasp orientation, so there's nothing to copy from).
-  # [roll, pitch, yaw] radians.
-  wristyaw_grasp_rpy: [0.0, 1.5707963, 0.0]
+  # grasp-frame -> wrist_yaw transform. DERIVED from kinematics (NOT the AprilTag palm offset
+  # reused -- that was reverse-engineered for a top-down grasp and is meaningless for GraspGenX).
+  # Recipe + provenance: scripts/derive_graspgenx_tool_transform.py. RIGHT-hand reference; the
+  # LEFT hand is mirrored across the wrist Y-plane in tool_transform.build_T_wristyaw_grasp.
+  #
+  # rotation: the fixed grasp(+Z approach, +X closing) -> wrist_yaw axis map. From the Dex3
+  #   URDF + the GraspGenX unitree_g1 mesh: approach +Z -> wrist +X (fingers reach forward),
+  #   closing +X -> wrist +Y (thumb opposes the index+middle), spread +Y -> wrist +Z.
+  #   rpy = [pi/2, 0, pi/2]. (The old [0, pi/2, 0] gripped along index<->middle, a 90deg roll
+  #   error inherited from the AprilTag path.) [roll, pitch, yaw] radians.
+  wristyaw_grasp_rpy: [1.5707963, 0.0, 1.5707963]
+  # translation: the grasp-frame origin (GraspGenX gripper base) in the wrist_yaw frame =
+  #   our power_close contact midpoint (hand FK) minus the GraspGenX fingertip depth (0.07 m)
+  #   along the approach axis. So our fingers land ON the object, not 7 cm short of it.
+  palm_offset_xyz: [0.0442, 0.0414, 0.0]
   # Optional client-side viser GUI (point cloud + ranked grasps + gripper mesh,
   # like the GraspGenX demos). Opt-in; 09_graspgen.py --visualize flips `enabled`.
   # Renders in the pelvis frame, so grasps sit on the cloud. Server stays headless.

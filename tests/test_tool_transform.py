@@ -17,6 +17,19 @@ def test_palm_offset_side_mirror():
     np.testing.assert_allclose([l[0], l[2]], [0.1192, 0.0])
 
 
+def test_build_T_wristyaw_grasp_side_mirror():
+    # the stored rotation + offset describe the RIGHT hand; LEFT is the mirror across wrist y
+    # (negate t.y; rotation -> S R S, still a proper rotation). GraspGenX derived constants.
+    R = rpy_to_matrix(np.pi / 2, 0.0, np.pi / 2)
+    off = [0.0442, 0.0414, 0.0]
+    Tr, Tl = build_T_wristyaw_grasp(off, RIGHT, R), build_T_wristyaw_grasp(off, LEFT, R)
+    np.testing.assert_allclose(Tr.translation, [0.0442, 0.0414, 0.0])
+    np.testing.assert_allclose(Tl.translation, [0.0442, -0.0414, 0.0])    # y mirrored
+    S = np.diag([1.0, -1.0, 1.0])
+    np.testing.assert_allclose(Tl.rotation, S @ Tr.rotation @ S, atol=1e-12)
+    assert np.isclose(np.linalg.det(Tl.rotation), 1.0)                    # proper rotation
+
+
 def test_round_trip_recovers_commanded_wrist():
     # a known commanded wrist pose and a known fixed grasp->tool transform
     wrist = Pose(rpy_to_matrix(0.3, -0.5, 1.1), [0.4, -0.1, 0.9])
