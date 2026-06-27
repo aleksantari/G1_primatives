@@ -77,14 +77,20 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   hardware. Not "later" anymore; the grasp-source seam is shipped (offline-tested).
 - **Grasp pipeline** (`grasp/` + `perception/{depth,segment,sam3_client,segment_gui}.py`,
   `spatial/pointcloud.py`): `robot.grasp_source` is a `GraspSource` (`grasp.yaml: grasp_source` =
-  `apriltag` A-B ref | `graspgenx`) returning ranked wrist-yaw `GraspCandidate`s; `move_to_candidates`
-  / `plan_to_pose_set` plan the first reachable (native cuRobo goalset deferred). GraspGenX path:
-  head depth → `deproject_depth` (mask-gated) → pelvis `PointCloud` → **SAM3** mask (ZMQ `:5557`,
-  2D mask applied PRE-deproject; `Segmenter.mask(rgb)` seam, interactive cv2 GUI) → **GraspGenX**
-  ZMQ (`:5556`) → 6-DoF grasps → tool transform. Both ZMQ clients are thin standalone shims that
-  do NOT import their service package (the multi-GB import trap); deps `msgpack`/`msgpack-numpy`.
-  Scripts: `09_graspgen` (`--source`/`--segment`), `10_segment` (SAM3 dev tool, `--image` for a
-  no-robot static test). All offline-tested; the real grasp run is pending hardware.
+  `apriltag` A-B ref | `graspgenx` | `sim_cloud`) returning ranked wrist-yaw `GraspCandidate`s;
+  `move_to_candidates` / `plan_to_pose_set` plan the first reachable (native cuRobo goalset
+  deferred). GraspGenX path: head depth → `deproject_depth` (mask-gated, optional `rgb=` →
+  per-point color, viz-only) → pelvis `PointCloud` → **SAM3** mask (ZMQ `:5557`, 2D mask applied
+  PRE-deproject; `Segmenter.mask(rgb)` seam, interactive cv2 GUI) → **GraspGenX** ZMQ (`:5556`) →
+  6-DoF grasps → tool transform. `PointCloud` carries optional `colors` (N,3) parallel to `points`
+  (transform-carried, voxel-averaged) — purely for viz; consumers send `.points` (N,3), so color
+  never reaches GraspGenX. `sim_cloud` (`sim_cloud_source.py`): a SIM-ONLY GT cube cloud from the
+  `rt/sim_state` block pose (no camera/depth/SAM3) → same GraspGenX + tool transform; the in-sim
+  de-risk path for `wristyaw_grasp_rpy` + 6-DoF execution. Both ZMQ clients are thin standalone
+  shims that do NOT import their service package (the multi-GB import trap); deps
+  `msgpack`/`msgpack-numpy`. Scripts: `09_graspgen` (`--source`/`--segment`/`--visualize`),
+  `10_segment` (SAM3 dev tool; `--image` static, `--save` writes a COLORED `.ply`), `10_graspgen_viz`
+  (offline cloud → GraspGenX → viser `:8080`). All offline-tested; the real grasp run is pending hardware.
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp
   signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. Presets are being

@@ -4,8 +4,9 @@ A **cuRobo-native motion library** for the Unitree G1 (29-DoF, Dex3-1 hands), ex
 small, growing set of **configurable action + perception primitives** an **LLM agent composes**
 into pick-and-place tasks. This repo is the **beta baseline** of that primitive surface, to be
 expanded. Composite tasks so far: `scripts/07_pick_place.py` (AprilTag pick+lift) and
-`scripts/09_graspgen.py` (pick+lift via a pluggable `GraspSource` — AprilTag A-B reference or
-learned GraspGenX 6-DoF grasps over a SAM3-segmented point cloud).
+`scripts/09_graspgen.py` (pick+lift via a pluggable `GraspSource` — AprilTag A-B reference,
+learned GraspGenX 6-DoF grasps over a SAM3-segmented point cloud, or `sim_cloud` a ground-truth
+cube cloud for in-sim de-risking).
 It runs **off-board** on an RTX 5090 workstation talking to the
 robot's PC2 (or the Isaac sim) over CycloneDDS. The robot is **suspended on a back-plate
 mount**: only the 14 arm joints + 2×7 hand joints are ever commanded.
@@ -76,8 +77,9 @@ g1_classical_manip/
 │   ├── robot_arm.py           # G1_29_ArmController (vendored: 250 Hz dual-arm streaming)
 │   ├── robot_hand_unitree.py  # threaded Dex3/Dex1 controllers (vendored DDS plumbing)
 │   └── motion_switcher.py     # Enter/Exit debug mode (hardware)
-├── grasp/                     # GraspSource: base · apriltag_source (A-B ref) · graspgenx_source
-│                              #   · graspgenx_client (ZMQ :5556) · tool_transform (grasp→wrist)
+├── grasp/                     # GraspSource: base · apriltag_source (A-B ref) · graspgenx_source ·
+│                              #   sim_cloud_source (sim GT cube) · graspgenx_client (ZMQ :5556) ·
+│                              #   tool_transform (grasp→wrist)
 ├── primitives.py              # home / move / move_to_candidates / open_hand / close_hand / detect
 ├── factory.py                 # make_robot(): planner + DDS controllers + executor + perception + grasp
 ├── perception/                # LIVE: transforms · base · apriltag_block · ground_truth · sim_state

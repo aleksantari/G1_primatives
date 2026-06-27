@@ -139,18 +139,25 @@ moves track at full speed (time-dilation is the current workaround). Not motion-
 - [x] **Grasp pipeline (GraspGenX + SAM3) — BUILT, offline-tested** (`grasp/`,
       `perception/{depth,segment,sam3_client,segment_gui}.py`, `spatial/pointcloud.py`,
       `scripts/09_graspgen.py` + `scripts/10_segment.py`): `GraspSource` seam (`grasp.yaml:
-      grasp_source` = `apriltag` | `graspgenx`); GraspGenX path = head depth → masked deproject →
-      pelvis `PointCloud` → **SAM3** segmentation (`:5557`, 2D mask PRE-deproject, interactive cv2
-      GUI) → **GraspGenX** (`:5556`) 6-DoF grasps → `tool_transform` → `plan_to_pose_set` picks a
-      reachable one. Standalone ZMQ clients (no service import). **SAM3 segmentation validated on
-      static images** (`10_segment --image`).
+      grasp_source` = `apriltag` | `graspgenx` | `sim_cloud`); GraspGenX path = head depth → masked
+      deproject → pelvis `PointCloud` → **SAM3** segmentation (`:5557`, 2D mask PRE-deproject,
+      interactive cv2 GUI) → **GraspGenX** (`:5556`) 6-DoF grasps → `tool_transform` →
+      `plan_to_pose_set` picks a reachable one. Standalone ZMQ clients (no service import). **SAM3
+      segmentation validated on static images** (`10_segment --image`); the offline demo
+      (`10_segment --save` → COLORED `.ply` → `10_graspgen_viz`) renders cloud + grasps in viser.
+  - [ ] **Sim de-risk first (`--source sim_cloud`)** — in Isaac, a GT cube cloud from `rt/sim_state`
+        → GraspGenX → the same tool transform + gated motion + cuRobo + physics, with NO ZED/SAM3
+        (only the GraspGenX server + the sim). Run `09_graspgen --target sim --source sim_cloud
+        --visualize` to tune `wristyaw_grasp_rpy` (roll) and watch a 6-DoF grasp execute safely
+        BEFORE the robot. Needs `perception.yaml: detector: sim_state`.
   - [ ] **Real grasp run** — start the GraspGenX (`:5556`) + SAM3 (`:5557`) servers + robot, then
         `09_graspgen --target real --source graspgenx --segment interactive` vs `--source apriltag`
         (A-B on the same object). `10_segment --target real` first to confirm the live mask + masked
         point count.
   - [ ] **`wristyaw_grasp_rpy` calibration (EMPIRICAL)** — the grasp(+Z approach,+X closing) →
         wrist_yaw axis map in `configs/grasp.yaml` is a best-guess seed (pitch +90°). Tune the roll
-        (closing-axis alignment) in sim, then confirm with one gated hardware grasp before trusting.
+        (closing-axis alignment) in **sim (`--source sim_cloud`)**, then confirm with one gated
+        hardware grasp before trusting.
   - **Open:** place / handover, dual-arm, multi-object; native cuRobo goalset (vs the sequential
         `plan_to_pose_set`); SAM3 `image_jpeg` bandwidth path.
 - [ ] **Rerun logging** — wire current q / target pose / state into the primitives for debugging.

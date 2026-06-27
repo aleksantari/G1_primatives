@@ -36,8 +36,9 @@ detect(robot, target="block")     # head-cam AprilTag → object pose (pelvis fr
 ```
 Action verbs return `Result(ok, info)`; `detect` returns a `Detection` whose `.pose` feeds
 straight into `move`. Tasks are composed from these. **Grasp poses** come from a
-`robot.grasp_source` (a `GraspSource`: `apriltag` A-B reference, or `graspgenx` learned 6-DoF
-grasps) returning ranked wrist-yaw goal `Pose`s that `move_to_candidates` consumes.
+`robot.grasp_source` (a `GraspSource`: `apriltag` A-B reference · `graspgenx` learned 6-DoF
+grasps from a segmented depth cloud · `sim_cloud` sim-only GT cube cloud) returning ranked
+wrist-yaw goal `Pose`s that `move_to_candidates` consumes.
 
 ## Layout
 ```
@@ -104,8 +105,8 @@ python scripts/06_detect.py      --target sim    # AprilTag feed: 3D pose axes +
 python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
 python scripts/08_check_depth.py  --target real   # head-cam DEPTH feed (real only): mm stats + colorized view
 python scripts/09_graspgen.py    --target real --source graspgenx --segment interactive  # GraspGenX pick+lift
-python scripts/10_segment.py     --frame captures/scene1.npz --mode interactive --save   # SAM3 segment + save cloud
-python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.npy                         # GraspGenX grasps in viser
+python scripts/10_segment.py     --frame captures/scene1.npz --mode interactive --save   # SAM3 segment + save colored .ply
+python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.ply                         # GraspGenX grasps in viser
 python scripts/11_capture_frame.py --target real --out captures/scene1.npz               # save a frame (offline demo)
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05`/`07`/`09`
@@ -150,14 +151,16 @@ on the saved frame, visualized in viser. Needs the SAM3 + GraspGenX servers abov
 ```bash
 # 1. capture a frame on the robot (camera-only, no motion) -> captures/scene1.npz (+ preview PNGs)
 bash -ic 'use_conda g1_curobo && python scripts/11_capture_frame.py --target real --out captures/scene1.npz'
-# 2. segment it + save the single-object cloud -> captures/scene1_cloud.npy   (SAM3 :5557)
+# 2. segment it + save the single-object COLORED cloud -> captures/scene1_cloud.ply  (SAM3 :5557)
 bash -ic 'use_conda g1_curobo && python scripts/10_segment.py --frame captures/scene1.npz --mode interactive --save'
 # 3. run GraspGenX on the cloud + visualize ranked grasps    (GraspGenX :5556 -> viser :8080)
-bash -ic 'use_conda g1_curobo && python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.npy'
+bash -ic 'use_conda g1_curobo && python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.ply'
 ```
-Open `http://localhost:8080` for the viser viewer (cloud + ranked grasps + gripper mesh + a
-confidence slider). `10_segment` also segments a static image (`--image foo.jpg`, SAM3 only) or
-the live ZED (`--target real`); `11_capture_frame` saves a reusable offline fixture each run.
+Open `http://localhost:8080` for the viser viewer (the **colored** cloud + ranked grasps + gripper
+mesh + a confidence slider). `--save` writes a colored `.ply` (per-point RGB sampled from the
+aligned image; XYZ-only is still what GraspGenX receives) plus `_mask.npy` / `_overlay.png`.
+`10_segment` also segments a static image (`--image foo.jpg`, SAM3 only) or the live ZED
+(`--target real`); `11_capture_frame` saves a reusable offline fixture each run.
 
 **On the robot** — the full pick+lift via the learned grasp (operator-gated each step; watch the
 e-stop; needs both servers + the ZED + debug mode set on the remote):
@@ -167,6 +170,15 @@ bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --s
 A-B against the known-good path with `--source apriltag`. `--visualize` opens the same viser view
 (the chosen reachable grasp in green). The grasp→wrist orientation seed
 (`grasp.yaml: wristyaw_grasp_rpy`) is **EMPIRICAL** — verify it before trusting (`HARDWARE_TODO.md`).
+
+**In the Isaac sim (de-risk before the robot)** — `--source sim_cloud` builds a ground-truth cube
+cloud from the live `rt/sim_state` block pose → GraspGenX → the same tool transform + gated motion,
+so you can tune `wristyaw_grasp_rpy` and watch a 6-DoF grasp execute in physics with **no ZED, no
+SAM3** (only the GraspGenX server + the sim). Needs `perception.yaml: detector: sim_state`:
+```bash
+CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
+  bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target sim --source sim_cloud --visualize'
+```
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs
@@ -192,10 +204,13 @@ dedicated raw-float32 720×1280 mm stream; validated on the G1 at ~89% finite / 
 `scripts/08_check_depth.py`), feeding a **grasp pipeline**: `perception/depth.deproject_depth`
 turns masked depth into a pelvis-frame `PointCloud`, segmented by **SAM3** over ZMQ
 (`perception/{segment,sam3_client,segment_gui}`, `:5557`) — a 2D mask applied before deproject,
-with an interactive cv2 GUI (`scripts/10_segment.py`, validated on static images). The single-object
-cloud feeds the **GraspGenX** service (`grasp/graspgenx_client`, `:5556`) which returns ranked 6-DoF
-grasps; a fixed grasp→tool transform (`grasp/tool_transform`) maps them to wrist-yaw goals that
-`plan_to_pose_set` picks a reachable one from. `scripts/09_graspgen.py --source apriltag|graspgenx`
-runs the A-B pick+lift. **Offline-tested only** (mock ZMQ servers, synthetic depth); the real
-GraspGenX/SAM3 grasp run + the **EMPIRICAL `wristyaw_grasp_rpy`** calibration are pending hardware —
-see `HARDWARE_TODO.md`. Depth wire spec: `docs/depth_integration_handoff.md`.
+with an interactive cv2 GUI (`scripts/10_segment.py`, validated on static images; `--save` writes a
+**colored** `.ply` for the offline viz). The single-object cloud feeds the **GraspGenX** service
+(`grasp/graspgenx_client`, `:5556`) which returns ranked 6-DoF grasps; a fixed grasp→tool transform
+(`grasp/tool_transform`) maps them to wrist-yaw goals that `plan_to_pose_set` picks a reachable one
+from. `scripts/09_graspgen.py --source apriltag|graspgenx|sim_cloud` runs the A-B pick+lift
+(`sim_cloud` = a ground-truth cube cloud from `rt/sim_state` → GraspGenX, **sim-only**, no ZED/SAM3
+— the de-risk path for `wristyaw_grasp_rpy` + 6-DoF execution before the robot). **Offline-tested**
+(mock ZMQ servers, synthetic depth); the real GraspGenX/SAM3 grasp run + the **EMPIRICAL
+`wristyaw_grasp_rpy`** calibration are pending hardware — see `HARDWARE_TODO.md`. Depth wire spec:
+`docs/depth_integration_handoff.md`.
