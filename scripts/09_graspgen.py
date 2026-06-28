@@ -117,6 +117,17 @@ def main():
                     help="pre-grasp back-off along the grasp approach axis (m)")
     ap.add_argument("--grasp-z", type=float, default=0.0,
                     help="vertical offset added to the grasp pose (m, +z)")
+    # Tool-frame calibration: post-rotate each grasp wrist goal in the WRIST (tool) frame.
+    # roll = about wrist +X (the approach axis); pitch = about wrist +Y (swaps approach <->
+    # palm-normal, the "palm faces down" fix); yaw = about wrist +Z. Sweep to overlay the Dex3
+    # on the GraspGenX gripper mesh, then bake the winner into grasp.yaml: wristyaw_grasp_rpy.
+    ap.add_argument("--grasp-roll-deg", type=float, default=0.0,
+                    help="rotate each grasp wrist goal about wrist +X (approach axis) by N deg")
+    ap.add_argument("--grasp-pitch-deg", type=float, default=0.0,
+                    help="rotate each grasp wrist goal about wrist +Y by N deg "
+                         "(swaps approach<->palm-normal; the likely 'palm faces down' fix)")
+    ap.add_argument("--grasp-yaw-deg", type=float, default=0.0,
+                    help="rotate each grasp wrist goal about wrist +Z by N deg")
     ap.add_argument("--lift", type=float, default=0.10, help="lift height after grasp (m, +z)")
     ap.add_argument("--verify", action="store_true", help="verify the grasp on close")
     ap.add_argument("--abort", type=float, default=None,
@@ -184,6 +195,16 @@ def main():
         if not cands:
             raise RuntimeError(f"grasp source '{src_kind}' produced no candidates "
                                f"(no detection / no depth / no mask / no grasps)")
+        if args.grasp_roll_deg or args.grasp_pitch_deg or args.grasp_yaw_deg:
+            from dataclasses import replace                    # post-rotate each wrist goal in
+            from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix   # the WRIST frame:
+            rot = Pose(rpy_to_matrix(np.deg2rad(args.grasp_roll_deg),         # roll/pitch/yaw =
+                                     np.deg2rad(args.grasp_pitch_deg),        # about wrist X/Y/Z
+                                     np.deg2rad(args.grasp_yaw_deg)), [0, 0, 0])
+            cands = [replace(c, wrist_goal=c.wrist_goal * rot) for c in cands]
+            print(f"applied grasp rotation rpy(deg)=[{args.grasp_roll_deg:+.0f}, "
+                  f"{args.grasp_pitch_deg:+.0f}, {args.grasp_yaw_deg:+.0f}] in the wrist frame "
+                  f"(sweep to match the Dex3 to the GraspGenX gripper mesh)")
         def _report_choice(chosen, grasp_wrist, note=""):
             """Mark the chosen grasp in viser, print it, and (sim_cloud) FK-check our fingertips
             against the GT cube. Shared by the native + legacy paths."""

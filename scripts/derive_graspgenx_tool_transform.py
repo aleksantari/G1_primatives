@@ -13,15 +13,20 @@ What GraspGenX returns (verified from ~/repos/GraspGenX + the unitree_g1 mesh):
     +X = the jaw-closing/opposition axis (thumb vs the two fingers), fingertips at +Z=`depth`
     (config.json `fingertip=[0,0,depth]`), object at the sweep-volume centre [0,0,depth].
 
-Our hand (Dex3, from the URDF): fingers reach along wrist_yaw +X (approach), the thumb opposes
-the index+middle across wrist_yaw +Y (closing), index/middle are split along wrist_yaw ±Z. So
-the grasp->wrist axis map is fixed:
-    grasp +Z(approach) -> wrist +X     grasp +X(closing) -> wrist +Y     grasp +Y -> wrist +Z
-which is exactly rpy = [pi/2, 0, pi/2]  (Rz(pi/2)Ry(0)Rx(pi/2), the repo's rpy convention).
+Grasp->wrist axis map (SIM-VALIDATED 2026-06-28): the original guess [pi/2,0,pi/2] (approach->
+wrist +X) put the palm 90deg off in sim -- the Dex3 came down thumb-along-the-top instead of
+palm-down over the cube. A +90deg yaw about wrist +Z fixes the orientation, giving:
+    grasp +Z(approach) -> wrist +Y   grasp +X(closing) -> wrist -X   grasp +Y(spread) -> wrist +Z
+which is rpy = [pi/2, 0, pi]  (Rz(pi)Ry(0)Rx(pi/2), the repo's rpy convention).
+NOTE: the Dex3's REAL thumb-vs-fingers opposition is DIAGONAL in the wrist XY-plane (FK:
+~[0.66,-0.75,0]), not a clean axis. This clean-axis map is the sim-matched approximation that
+makes the palm face down; the translation below (the contact midpoint) is exact from FK either
+way, so our fingers still land on the object center -- the only approximation is the closing
+spin, which is a no-op for a symmetric cube (revisit per-object if it matters).
 
 The translation is the grasp-frame origin in wrist_yaw coords. We anchor it FUNCTIONALLY:
 our power_close contact midpoint `c` (FK) must sit at the object = grasp origin + depth*approach,
-so  t = c - R @ [0,0,depth]  (= c - depth*x_hat, since approach maps to wrist +X).
+so  t = c - R @ [0,0,depth]  (= c - depth*y_hat now, since approach maps to wrist +Y).
 
   bash -ic 'use_conda g1_curobo && python scripts/derive_graspgenx_tool_transform.py'
 """
@@ -36,7 +41,7 @@ from g1_classical_manip.ee.hand_base import LEFT, RIGHT
 from g1_classical_manip.ee.hand_kinematics import Dex3Kinematics
 
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-RPY = [np.pi / 2, 0.0, np.pi / 2]          # grasp(+Z approach,+X closing) -> wrist_yaw axes
+RPY = [np.pi / 2, 0.0, np.pi]              # SIM-VALIDATED: approach +Z -> wrist +Y (see header)
 
 
 def main():
@@ -47,7 +52,7 @@ def main():
 
     kin = Dex3Kinematics()
     R = rpy_to_matrix(*RPY)
-    approach_offset = R @ np.array([0.0, 0.0, depth])     # = depth * (R col2) = [depth,0,0]
+    S = np.diag([1.0, -1.0, 1.0])                         # mirror across the wrist Y-plane
     np.set_printoptions(precision=4, suppress=True, sign=" ")
 
     print(f"GraspGenX fingertip depth (base->object, +Z) : {depth:.4f} m")
@@ -58,6 +63,8 @@ def main():
         q7 = np.asarray(close[side], float)
         tips = kin.fingertips(side, q7)
         c = kin.contact_point(side, q7)                   # object centre in wrist_yaw frame
+        R_side = R if side == RIGHT else S @ R @ S         # LEFT mirrors (build_T_wristyaw_grasp)
+        approach_offset = depth * R_side[:, 2]             # base->object along this side's approach
         t = c - approach_offset                           # grasp-frame origin in wrist_yaw frame
         fingers_mid = 0.5 * (tips["index"] + tips["middle"])
         span = np.linalg.norm(tips["thumb"] - fingers_mid)

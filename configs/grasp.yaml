@@ -37,16 +37,17 @@ graspgenx:
   # Recipe + provenance: scripts/derive_graspgenx_tool_transform.py. RIGHT-hand reference; the
   # LEFT hand is mirrored across the wrist Y-plane in tool_transform.build_T_wristyaw_grasp.
   #
-  # rotation: the fixed grasp(+Z approach, +X closing) -> wrist_yaw axis map. From the Dex3
-  #   URDF + the GraspGenX unitree_g1 mesh: approach +Z -> wrist +X (fingers reach forward),
-  #   closing +X -> wrist +Y (thumb opposes the index+middle), spread +Y -> wrist +Z.
-  #   rpy = [pi/2, 0, pi/2]. (The old [0, pi/2, 0] gripped along index<->middle, a 90deg roll
-  #   error inherited from the AprilTag path.) [roll, pitch, yaw] radians.
-  wristyaw_grasp_rpy: [1.5707963, 0.0, 1.5707963]
+  # rotation: the fixed grasp(+Z approach, +X closing) -> wrist_yaw axis map. SIM-VALIDATED
+  #   2026-06-28: approach +Z -> wrist +Y, closing +X -> wrist -X, spread +Y -> wrist +Z, i.e.
+  #   rpy = [pi/2, 0, pi]. (The earlier derived [pi/2, 0, pi/2] put the palm 90deg off -- the
+  #   Dex3 came down thumb-along-the-top instead of palm-down; a +90deg yaw about wrist +Z fixes
+  #   it. The Dex3's real opposition is diagonal in the wrist XY-plane, so this clean-axis map
+  #   is the sim-matched approximation; the translation below is exact from FK.) [r,p,y] radians.
+  wristyaw_grasp_rpy: [1.5707963, 0.0, 3.1415927]
   # translation: the grasp-frame origin (GraspGenX gripper base) in the wrist_yaw frame =
   #   our power_close contact midpoint (hand FK) minus the GraspGenX fingertip depth (0.07 m)
-  #   along the approach axis. So our fingers land ON the object, not 7 cm short of it.
-  palm_offset_xyz: [0.0442, 0.0414, 0.0]
+  #   along the approach axis (now wrist +Y). So our fingers land ON the object center.
+  palm_offset_xyz: [0.1142, -0.0286, 0.0]
   # Optional client-side viser GUI (point cloud + ranked grasps + gripper mesh,
   # like the GraspGenX demos). Opt-in; 09_graspgen.py --visualize flips `enabled`.
   # Renders in the pelvis frame, so grasps sit on the cloud. Server stays headless.
