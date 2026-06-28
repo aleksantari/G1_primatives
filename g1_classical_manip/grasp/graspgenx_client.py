@@ -21,6 +21,8 @@ msgpack_numpy.patch()                      # numpy arrays serialize natively
 
 logger = logging.getLogger(__name__)
 
+EXPECTED_PROTOCOL_VERSION = 2              # bump in lockstep with the server's wire schema
+
 
 class GraspGenXClient:
     """ZMQ REQ client round-tripping msgpack payloads to a GraspGenX server.
@@ -85,13 +87,27 @@ class GraspGenXClient:
         return self._request({"action": "health"})
 
     def metadata(self) -> dict:
-        return self._request({"action": "metadata"})
+        meta = self._request({"action": "metadata"})
+        pv = meta.get("protocol_version")
+        if pv is not None and pv != EXPECTED_PROTOCOL_VERSION:
+            logger.warning("GraspGenX server protocol_version=%s; client expects %s "
+                           "(upgrade one side)", pv, EXPECTED_PROTOCOL_VERSION)
+        return meta
 
     def infer(self, point_cloud: np.ndarray, gripper_name: Optional[str] = None,
               num_grasps: int = 200, grasp_threshold: float = -1.0,
-              topk_num_grasps: int = 100) -> Tuple[np.ndarray, np.ndarray]:
-        """Send an ``(N,3)`` float32 cloud, return ``(grasps (K,4,4) f32, conf (K,) f32)``
-        ranked best-first (may be empty if the model produced nothing)."""
+              topk_num_grasps: int = 100, planner: Optional[str] = None,
+              obb_density: Optional[str] = None, skip_obb_rule: Optional[str] = None
+              ) -> Tuple[np.ndarray, np.ndarray, list]:
+        """Send an ``(N,3)`` float32 cloud, return
+        ``(grasps (K,4,4) f32, conf (K,) f32, branch_tags ["diff"|"obb", ...])``
+        ranked best-first (may be empty if the model produced nothing).
+
+        ``planner`` selects ``diffusion`` | ``graspmoe`` | ``topdown`` (OBB-only,
+        top-down/side grasps); ``obb_density`` (sparse|dense|dense-topandside) and
+        ``skip_obb_rule`` (auto|never) tune the GraspMoE OBB branch. Leave any as
+        None to use the server default. ``branch_tags[i]`` is "obb" for an OBB
+        (top-down/side) grasp, "diff" for a diffusion grasp."""
         pc = np.asarray(point_cloud, dtype=np.float32)
         if pc.ndim != 2 or pc.shape[1] != 3:
             raise ValueError(f"point_cloud must be (N, 3); got {pc.shape}")
@@ -104,7 +120,14 @@ class GraspGenXClient:
         }
         if gripper_name is not None:
             payload["gripper_name"] = gripper_name
+        if planner is not None:
+            payload["planner"] = str(planner)
+        if obb_density is not None:
+            payload["obb_density"] = str(obb_density)
+        if skip_obb_rule is not None:
+            payload["skip_obb_rule"] = str(skip_obb_rule)
         response = self._request(payload)
         grasps = np.asarray(response["grasps"], dtype=np.float32)
         confidences = np.asarray(response["confidences"], dtype=np.float32)
-        return grasps, confidences
+        tags = list(response.get("branch_tags", []))
+        return grasps, confidences, tags

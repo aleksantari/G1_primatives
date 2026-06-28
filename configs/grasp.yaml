@@ -23,6 +23,15 @@ graspgenx:
   grasp_threshold: -1.0   # -1 = take the top-K ranked (no hard confidence threshold)
   timeout_ms: 60000
   voxel_m: 0.003          # ~3 mm voxel downsample of the cloud before infer
+  # Planner / top-down selection (server-side GraspMoE). For "grab from above":
+  #   topdown   -> OBB-only top-down/side grasps (no diffusion). Strong top-down preference,
+  #                but NO fallback if none is reachable.
+  #   graspmoe  -> diffusion UNION OBB top-down, all discriminator-scored (fallback exists,
+  #                but no top-down *preference* -- picks highest score).
+  #   diffusion -> diffusion only (the original beta behavior; A/B baseline).
+  planner: topdown
+  obb_density: dense      # dense/sparse = top-down only; dense-topandside also adds side grasps
+  skip_obb_rule: auto     # never = force the OBB branch even for objects wider than the gripper
   # grasp-frame -> wrist_yaw transform. DERIVED from kinematics (NOT the AprilTag palm offset
   # reused -- that was reverse-engineered for a top-down grasp and is meaningless for GraspGenX).
   # Recipe + provenance: scripts/derive_graspgenx_tool_transform.py. RIGHT-hand reference; the

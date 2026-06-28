@@ -96,16 +96,20 @@ class SimCloudGraspSource(GraspSource):
             return []
 
         with self.client_factory() as client:
-            grasps, conf = client.infer(
+            grasps, conf, tags = client.infer(
                 cloud.points, gripper_name=self.gcfg.get("gripper_name", "unitree_g1"),
                 num_grasps=int(self.gcfg.get("num_grasps", 200)),
                 grasp_threshold=float(self.gcfg.get("grasp_threshold", -1.0)),
-                topk_num_grasps=int(self.gcfg.get("topk", 100)))
+                topk_num_grasps=int(self.gcfg.get("topk", 100)),
+                planner=self.gcfg.get("planner"),               # diffusion|graspmoe|topdown
+                obb_density=self.gcfg.get("obb_density"),
+                skip_obb_rule=self.gcfg.get("skip_obb_rule"))
         grasps = np.asarray(grasps, dtype=np.float32)
         conf = np.asarray(conf, dtype=np.float32).reshape(-1)
         if min(grasps.shape[0], conf.shape[0]) == 0:
             return []
         if self.viz is not None:                         # cloud + all grasps (pelvis frame)
-            self.viz.show_candidates(cloud.points, grasps, conf, colors=cloud.colors)
-        return candidates_from_grasps(grasps, conf, side,
-                                      self.palm_offset_xyz, self.R_wristyaw_grasp)
+            self.viz.show_candidates(cloud.points, grasps, conf, colors=cloud.colors,
+                                     branch_tags=tags)
+        return candidates_from_grasps(grasps, conf, side, self.palm_offset_xyz,
+                                      self.R_wristyaw_grasp, branch_tags=tags)

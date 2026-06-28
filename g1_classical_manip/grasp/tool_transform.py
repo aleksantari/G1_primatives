@@ -56,21 +56,29 @@ def wrist_goal_from_grasp(T_pelvis_grasp: Pose, T_wristyaw_grasp: Pose) -> Pose:
 
 
 def candidates_from_grasps(grasps, conf, side: str, palm_offset_xyz,
-                           R_wristyaw_grasp) -> List[GraspCandidate]:
+                           R_wristyaw_grasp, branch_tags=None) -> List[GraspCandidate]:
     """``(K,4,4)`` pelvis-frame grasps + ``(K,)`` confidences -> ranked ``GraspCandidate``s
     (confidence-descending), each mapped to a wrist-yaw goal via the fixed grasp->tool
     transform. Shared by the GraspGenX and sim-cloud sources so the grasp->wrist mapping
-    lives in one place. Returns ``[]`` for an empty / length-0 input."""
+    lives in one place. Returns ``[]`` for an empty / length-0 input.
+
+    ``branch_tags`` (optional, GraspGenX protocol v2) is the per-grasp ``"obb"``/``"diff"``
+    list aligned to ``grasps``; each tag is stashed on ``cand.extra["branch_tag"]`` indexed by
+    the SAME sort, so the tag stays attached to its grasp regardless of confidence order."""
     grasps = np.asarray(grasps, dtype=np.float32)
     conf = np.asarray(conf, dtype=np.float32).reshape(-1)
     k = min(grasps.shape[0], conf.shape[0])            # guard a grasps/conf length mismatch
     if k == 0:
         return []
     grasps, conf = grasps[:k], conf[:k]
+    tags = list(branch_tags) if branch_tags is not None else None
     T_wg = build_T_wristyaw_grasp(palm_offset_xyz, side, R_wristyaw_grasp)
     out: List[GraspCandidate] = []
     for i in np.argsort(-conf):                        # confidence descending
         T_pelvis_grasp = Pose.from_homogeneous(grasps[i])
-        out.append(GraspCandidate(wrist_goal=wrist_goal_from_grasp(T_pelvis_grasp, T_wg),
-                                  confidence=float(conf[i]), grasp_pose=T_pelvis_grasp))
+        cand = GraspCandidate(wrist_goal=wrist_goal_from_grasp(T_pelvis_grasp, T_wg),
+                              confidence=float(conf[i]), grasp_pose=T_pelvis_grasp)
+        if tags is not None and i < len(tags):
+            cand.extra["branch_tag"] = tags[i]
+        out.append(cand)
     return out

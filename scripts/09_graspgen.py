@@ -107,6 +107,10 @@ def main():
     ap.add_argument("--legacy", action="store_true",
                     help="old path: sequential plan_to_pose probe + manual approach/descend/lift "
                          "(A-B baseline vs the native plan_grasp goalset solve)")
+    ap.add_argument("--grasp-only", action="store_true",
+                    help="skip the approach back-off AND the lift: plan ONE free-space move "
+                         "straight to the grasp pose, then close. Isolates the grasp frame "
+                         "(chosen.wrist_goal) for a sanity check (native path)")
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT)
     ap.add_argument("--object", default="block")
     ap.add_argument("--approach", type=float, default=0.10,
@@ -144,6 +148,9 @@ def main():
         robot.executor.abort_thresh = 0.40
     if args.speed is not None:
         robot.executor.time_dilation = args.speed
+    if args.grasp_only:        # frame sanity check: ONE move straight to the grasp pose, no
+        robot.cfg["planner"].setdefault("grasp", {})["strategies"] = [   # back-off, no lift
+            {"approach_offset": 0.0, "plan_approach": False, "plan_lift": False}]
 
     side, auto, rc = args.side, args.no_confirm, 0
     try:
@@ -166,7 +173,14 @@ def main():
                     break
                 time.sleep(0.05)
         cands = robot.grasp_source.grasps(robot, side, args.object)
-        print(f"grasps: {src_kind} -> {len(cands)} candidate(s) for '{args.object}'")
+        # Top-down verification (GraspGenX protocol v2): obb/diff branch split + how many grasps
+        # actually approach from above (approach axis = grasp +Z = grasp_pose.rotation[:,2];
+        # down = pelvis -Z, so rotation[2,2] < -0.7 is within ~45deg of straight down).
+        n_obb = sum(1 for c in cands if c.extra.get("branch_tag") == "obb")
+        n_down = sum(1 for c in cands if c.grasp_pose is not None
+                     and c.grasp_pose.rotation[2, 2] < -0.7)
+        print(f"grasps: {src_kind} -> {len(cands)} candidate(s) for '{args.object}' | "
+              f"obb={n_obb} diff={len(cands) - n_obb} | top-down(approach≈-Z)={n_down}")
         if not cands:
             raise RuntimeError(f"grasp source '{src_kind}' produced no candidates "
                                f"(no detection / no depth / no mask / no grasps)")

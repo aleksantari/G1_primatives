@@ -21,6 +21,8 @@ from g1_classical_manip.viz import viser_primitives as vp
 
 _BEST_COLOR = [0, 100, 255]      # blue   -- model's top-confidence grasp
 _CHOSEN_COLOR = [0, 255, 0]      # green  -- the grasp cuRobo actually selected
+_OBB_COLOR = [255, 150, 0]       # amber  -- OBB / top-down grasp (protocol-v2 branch_tag)
+_DIFF_COLOR = [180, 80, 220]     # purple -- diffusion grasp
 
 
 class GraspViz:
@@ -55,6 +57,7 @@ class GraspViz:
         grasps_4x4: np.ndarray,
         conf: np.ndarray,
         colors: Optional[np.ndarray] = None,
+        branch_tags: Optional[list] = None,
     ):
         """Draw the cloud + all (top-``max_markers``) grasps, best one highlighted.
 
@@ -63,6 +66,9 @@ class GraspViz:
             grasps_4x4: (K,4,4) grasp poses in the pelvis frame.
             conf:       (K,) confidences in [0,1].
             colors:     optional (N,3) uint8 RGB per point; None -> flat white.
+            branch_tags: optional (K,) "obb"/"diff" per grasp (GraspGenX protocol v2). When
+                given, grasps are colored by branch -- amber (OBB/top-down) vs purple
+                (diffusion) -- instead of the confidence gradient; the best is still blue.
         """
         points_xyz = np.asarray(points_xyz, dtype=np.float32)
         grasps = np.asarray(grasps_4x4, dtype=np.float64).reshape(-1, 4, 4)
@@ -88,10 +94,16 @@ class GraspViz:
             order = order[: self.max_markers]
         best_idx = int(np.argmax(conf))
         colors = vp.get_color_from_score(conf, use_255_scale=True)
+        tags = list(branch_tags) if branch_tags is not None else None
 
         for rank, j in enumerate(order):
             is_best = j == best_idx
-            color = _BEST_COLOR if is_best else colors[j]
+            if is_best:
+                color = _BEST_COLOR
+            elif tags is not None and j < len(tags):       # color by branch (OBB vs diffusion)
+                color = _OBB_COLOR if tags[j] == "obb" else _DIFF_COLOR
+            else:                                          # default: confidence gradient
+                color = colors[j]
             lw = 5.0 if is_best else 3.0
             handles = vp.visualize_x_grasp(
                 self.vis, f"grasps/grasp_{rank:03d}", grasps[j],
@@ -106,9 +118,13 @@ class GraspViz:
                 color=_BEST_COLOR, transform=grasps[best_idx],
             )
 
+        branch = ""
+        if tags is not None:                               # obb (amber) vs diff (purple) split
+            n_obb = sum(1 for t in tags[:k] if t == "obb")
+            branch = f"obb={n_obb} diff={k - n_obb} | "
         print(
             f"[GraspViz] {len(order)}/{k} grasps shown | "
-            f"conf [{conf.min():.3f}, {conf.max():.3f}] | "
+            f"conf [{conf.min():.3f}, {conf.max():.3f}] | {branch}"
             f"best idx {best_idx} ({conf[best_idx]:.3f}) | "
             f"mesh overlay: {self.show_mesh and self.geom.has_mesh}"
         )

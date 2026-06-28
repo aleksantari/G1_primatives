@@ -68,6 +68,12 @@ def main():
     ap.add_argument("--num_grasps", type=int, default=200)
     ap.add_argument("--topk", type=int, default=100)
     ap.add_argument("--grasp_threshold", type=float, default=-1.0)
+    ap.add_argument("--planner", default=None,
+                    choices=["diffusion", "graspmoe", "topdown"],
+                    help="grasp planner (omit = server default; topdown = OBB-only top-down)")
+    ap.add_argument("--obb-density", dest="obb_density", default=None,
+                    choices=["sparse", "dense", "dense-topandside"],
+                    help="GraspMoE OBB density (omit = server default)")
     ap.add_argument("--viser_port", type=int, default=8080)
     ap.add_argument("--no-mesh", action="store_true",
                     help="skip the gripper-mesh overlay (markers only)")
@@ -78,10 +84,13 @@ def main():
           f"{' (with color)' if colors is not None else ''}")
 
     with GraspGenXClient(host=args.host, port=args.port) as client:
-        grasps, conf = client.infer(
+        grasps, conf, tags = client.infer(
             cloud, gripper_name=args.gripper_name, num_grasps=args.num_grasps,
-            grasp_threshold=args.grasp_threshold, topk_num_grasps=args.topk)
-    print(f"server returned {len(grasps)} grasps")
+            grasp_threshold=args.grasp_threshold, topk_num_grasps=args.topk,
+            planner=args.planner, obb_density=args.obb_density)
+    n_obb = sum(1 for t in tags if t == "obb")
+    print(f"server returned {len(grasps)} grasps "
+          f"(obb/top-down={n_obb}, diff={len(tags) - n_obb})")
 
     asset_dir = args.gripper_asset_dir
     if not os.path.isabs(asset_dir):                # anchor a relative override on the repo root

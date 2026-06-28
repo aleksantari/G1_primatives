@@ -60,8 +60,9 @@ class FakeSeg(Segmenter):
 
 
 class FakeClient:
-    def __init__(self, grasps, conf):
-        self.grasps, self.conf, self.sent = grasps, conf, None
+    def __init__(self, grasps, conf, tags=None):
+        self.grasps, self.conf, self.tags = grasps, conf, (tags or [])
+        self.sent, self.kw = None, None
 
     def __enter__(self):
         return self
@@ -69,9 +70,10 @@ class FakeClient:
     def __exit__(self, *a):
         return False
 
-    def infer(self, points, **kw):
+    def infer(self, points, **kw):                  # v2: returns a 3-tuple (+ branch_tags)
         self.sent = np.asarray(points)
-        return self.grasps, self.conf
+        self.kw = kw
+        return self.grasps, self.conf, self.tags
 
 
 class FakeRobot:
@@ -122,6 +124,23 @@ def test_graspgenx_source_ranks_and_transforms():
     for cand in cands:
         expected = (cand.grasp_pose * T_wg.inverse()).homogeneous
         np.testing.assert_allclose(cand.wrist_goal.homogeneous, expected, atol=1e-6)
+
+
+def test_graspgenx_source_passes_planner_and_stashes_branch_tags():
+    # Protocol v2: the planner kwargs from cfg reach infer, and each grasp's branch_tag
+    # follows it through the confidence sort (g1 conf 0.9 ranks first, carrying "diff").
+    g0 = Pose(np.eye(3), [0.41, -0.21, 0.81]).homogeneous.astype(np.float32)
+    g1 = Pose(np.eye(3), [0.39, -0.19, 0.79]).homogeneous.astype(np.float32)
+    client = FakeClient(np.stack([g0, g1]), np.array([0.3, 0.9], np.float32),
+                        tags=["obb", "diff"])
+    gcfg = {**GCFG, "planner": "topdown", "obb_density": "dense", "skip_obb_rule": "never"}
+    src = GraspGenXGraspSource(FakeFrames(), FakeSeg(np.ones((3, 3), bool)),
+                               lambda: client, gcfg, CAM_CFG)
+    cands = src.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block")
+    assert client.kw["planner"] == "topdown"
+    assert client.kw["obb_density"] == "dense" and client.kw["skip_obb_rule"] == "never"
+    assert cands[0].confidence == pytest.approx(0.9) and cands[0].extra["branch_tag"] == "diff"
+    assert cands[1].confidence == pytest.approx(0.3) and cands[1].extra["branch_tag"] == "obb"
 
 
 def test_graspgenx_source_masks_depth_before_deproject():

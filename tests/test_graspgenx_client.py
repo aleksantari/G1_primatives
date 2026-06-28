@@ -14,6 +14,7 @@ msgpack_numpy.patch()
 
 CANNED_GRASPS = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))   # (2,4,4)
 CANNED_CONF = np.array([0.9, 0.5], np.float32)
+CANNED_TAGS = ["obb", "diff"]                                     # protocol v2 branch_tags
 
 
 class MockServer:
@@ -47,7 +48,9 @@ class MockServer:
             pc = np.asarray(req["point_cloud"])
             assert pc.ndim == 2 and pc.shape[1] == 3 and pc.dtype == np.float32
             return {"grasps": CANNED_GRASPS, "confidences": CANNED_CONF,
+                    "branch_tags": CANNED_TAGS,
                     "gripper_name": req.get("gripper_name", "unitree_g1"),
+                    "planner": req.get("planner", "graspmoe"),
                     "timing": {"infer_ms": 1.0}}
         return {"error": f"unknown action {action}"}
 
@@ -70,13 +73,16 @@ def test_health_and_infer_round_trip():
         with GraspGenXClient(host="127.0.0.1", port=srv.port, timeout_ms=2000) as c:
             assert c.health() == {"status": "ok"}
             pts = np.random.rand(50, 3).astype(np.float32)
-            grasps, conf = c.infer(pts, gripper_name="unitree_g1",
-                                   num_grasps=10, topk_num_grasps=5)
+            grasps, conf, tags = c.infer(pts, gripper_name="unitree_g1",
+                                         num_grasps=10, topk_num_grasps=5,
+                                         planner="topdown", obb_density="dense")
             assert grasps.shape == (2, 4, 4) and grasps.dtype == np.float32
             assert conf.shape == (2,) and conf.dtype == np.float32
+            assert tags == ["obb", "diff"]                # branch_tags round-trip
             req = srv.last_request
             assert req["action"] == "infer" and req["gripper_name"] == "unitree_g1"
             assert req["num_grasps"] == 10 and req["topk_num_grasps"] == 5
+            assert req["planner"] == "topdown" and req["obb_density"] == "dense"
             assert np.asarray(req["point_cloud"]).shape == (50, 3)
     finally:
         srv.stop()

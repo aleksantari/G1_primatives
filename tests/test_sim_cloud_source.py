@@ -28,8 +28,9 @@ class FakeFrames:
 
 
 class FakeClient:
-    def __init__(self, grasps, conf):
-        self.grasps, self.conf, self.sent = grasps, conf, None
+    def __init__(self, grasps, conf, tags=None):
+        self.grasps, self.conf, self.tags = grasps, conf, (tags or [])
+        self.sent, self.kw = None, None
 
     def __enter__(self):
         return self
@@ -37,9 +38,10 @@ class FakeClient:
     def __exit__(self, *a):
         return False
 
-    def infer(self, points, **kw):
+    def infer(self, points, **kw):                  # v2: returns a 3-tuple (+ branch_tags)
         self.sent = np.asarray(points)
-        return self.grasps, self.conf
+        self.kw = kw
+        return self.grasps, self.conf, self.tags
 
 
 def test_sample_cube_lies_on_surface():
@@ -66,6 +68,23 @@ def test_sim_cloud_source_ranks_and_transforms():
     for c in cands:
         np.testing.assert_allclose(c.wrist_goal.homogeneous,
                                    (c.grasp_pose * T_wg.inverse()).homogeneous, atol=1e-6)
+
+
+def test_sim_cloud_source_passes_planner_and_stashes_branch_tags():
+    # The sim de-risk path must request top-down too: planner kwargs (from the shared graspgenx
+    # cfg) reach infer, and each branch_tag follows its grasp through the confidence sort.
+    g0 = Pose(np.eye(3), [0.41, -0.21, 0.81]).homogeneous.astype(np.float32)
+    g1 = Pose(np.eye(3), [0.39, -0.19, 0.79]).homogeneous.astype(np.float32)
+    client = FakeClient(np.stack([g0, g1]), np.array([0.3, 0.9], np.float32),
+                        tags=["obb", "diff"])
+    gcfg = {**GCFG, "planner": "topdown", "obb_density": "dense", "skip_obb_rule": "auto"}
+    src = SimCloudGraspSource(FakeFrames(), FakePoseSource(Pose(np.eye(3), [0.4, -0.2, 0.8])),
+                              lambda: client, gcfg)
+    cands = src.grasps(robot=None, side=RIGHT, target="block")
+    assert client.kw["planner"] == "topdown" and client.kw["obb_density"] == "dense"
+    assert client.kw["skip_obb_rule"] == "auto"
+    assert cands[0].confidence == pytest.approx(0.9) and cands[0].extra["branch_tag"] == "diff"
+    assert cands[1].extra["branch_tag"] == "obb"
 
 
 def test_sim_cloud_source_empty_without_pose():
@@ -102,9 +121,11 @@ class FakeRobotCam:
 class FakeViz:
     def __init__(self):
         self.colors = "unset"
+        self.branch_tags = "unset"
 
-    def show_candidates(self, points, grasps, conf, colors=None):
+    def show_candidates(self, points, grasps, conf, colors=None, branch_tags=None):
         self.colors = colors
+        self.branch_tags = branch_tags
 
 
 def test_sim_cloud_source_colors_from_sim_rgb():
