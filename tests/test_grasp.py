@@ -55,5 +55,6 @@ def test_press_triggers_grasp():
 
 def test_open_reached():
     hand, fc, _ = _hand("left")
-    fc.set("left", np.zeros(7), [0] * 7, [0] * 7, [0] * 7)
+    open_t = hand._preset("open", "left")        # measured == open target (thumb_1 extended)
+    fc.set("left", open_t, [0] * 7, [0] * 7, [0] * 7)
     assert hand.open("left") is True

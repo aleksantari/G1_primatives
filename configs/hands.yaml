@@ -6,12 +6,17 @@
 #   RIGHT 3,4=index_0,1    5,6=middle_0,1     <- middle/index SWAP between hands
 # MIRRORING (URDF limits): the whole hand is sign-mirrored L vs R -- LEFT thumb curls
 # +, fingers -; RIGHT thumb curls -, fingers +. So flexion presets are PER-HAND:
-# a preset value may be a flat 7-vector (both hands, e.g. `open`) OR {left:[...], right:[...]}.
+# a preset value may be a flat 7-vector (both hands, e.g. `pinch`) OR {left:[...], right:[...]}.
 # Each closed value curls ~80% toward that joint's in-range limit; thumb_0 (rotation) = 0.
 # Verify in sim with `python scripts/hand_diag.py --side {left,right}`.
 dex3:
   presets:
-    open:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # thumb_1 (flexion, axis Z) extended to its open-direction LIMIT (URDF: right +0.7243,
+    # left -0.7243) so the thumb opens fully -- same flexion direction, thumb_0 rotation left
+    # at 0 (NOT rotated). thumb_2 + fingers already fully open at 0.
+    open:
+      left:  [0.0, -0.72431163, 0.0, 0.0, 0.0, 0.0, 0.0]   # th0, th1, th2, mid0,mid1, idx0,idx1
+      right: [0.0,  0.72431163, 0.0, 0.0, 0.0, 0.0, 0.0]   # th0, th1, th2, idx0,idx1, mid0,mid1
     power_close:                          # thumb_0 rotation kept neutral (0)
       left:  [0.0,  0.85,  1.40, -1.30, -1.40, -1.30, -1.40]  # th0,th1,th2, mid0,mid1, idx0,idx1
       right: [0.0, -0.85, -1.40,  1.30,  1.40,  1.30,  1.40]  # th0,th1,th2, idx0,idx1, mid0,mid1
