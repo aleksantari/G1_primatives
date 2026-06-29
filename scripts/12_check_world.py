@@ -42,6 +42,9 @@ def main():
     ap.add_argument("--probe", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
                     help="report ESDF + raw-cloud coverage near a pelvis-frame point (e.g. the cube "
                          "[0.3 -0.1 0.1]) -> is the object actually in the world, or was it erased?")
+    ap.add_argument("--margin", type=float, default=None,
+                    help="override robot_mask_margin (m) for the self-filter -- sweep to find the "
+                         "value that removes the arm WITHOUT erasing a nearby object")
     args = ap.parse_args()
 
     robot = make_robot(connect_dds=False, connect_camera=True,        # camera only, no motion
@@ -80,7 +83,9 @@ def main():
 
     # --- build the ESDF world exactly as the planner does (with the robot self-filter) ---
     home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])           # arm config in the depth (no motion)
-    rf = None if args.no_self_filter else robot.planner.robot_depth_filter(home)
+    rf = None if args.no_self_filter else robot.planner.robot_depth_filter(home, margin=args.margin)
+    if args.margin is not None:
+        print(f"self-filter margin override: {args.margin} m")
     mapper = EsdfMapper(grid_center=p["grid_center"], extent_m=p["extent_m"],
                         esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
                         image_hw=depth.shape, depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
