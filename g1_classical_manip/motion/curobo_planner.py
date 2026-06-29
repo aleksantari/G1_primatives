@@ -294,8 +294,16 @@ class CuroboArmPlanner:
         goals = list(wrist_goals)
         if not goals:
             raise PlanningError("plan_grasp_set: no candidate goals")
-        K = min(len(goals), self._max_goalset)             # clamp to the warmed goalset size
-        goals = goals[:K]
+        goals = goals[:self._max_goalset]                  # clamp to the warmed goalset size
+        # cuRobo's warmup only primes the path matching max_goalset (>1 -> the GOALSET path), so
+        # the single-goal (num_goalset=1) path is cold: a lone goal makes plan_grasp's first solve
+        # fail ("Goalset planning returned None"). The goalset path (num_goalset>1) is robust AND
+        # primes the single-goal path used internally for approach/grasp/lift -- so never feed a
+        # lone goal: duplicate it (both entries are the same grasp; clamp the chosen index back).
+        n_real = len(goals)
+        if n_real == 1:
+            goals = goals + goals
+        K = len(goals)
         active = WRIST_FRAME[side]
         mp = self._grasp_planner(side)                     # single-tool-frame planner (see above)
         start = self._joint_state(start_q_repo14)
@@ -319,6 +327,8 @@ class CuroboArmPlanner:
 
         gi = getattr(res, "goalset_index", None)
         idx = int(gi.view(-1)[0].item()) if gi is not None else -1
+        if idx >= n_real:                                  # a duplicated lone goal -> the real one
+            idx = n_real - 1
 
         def _ok(x):
             return bool(x is not None and x.any())

@@ -229,6 +229,20 @@ def test_plan_grasp_set_clamps_k_to_max_goalset(monkeypatch):
     assert rec["from_poses"]["num_goalset"] == 2          # clamped to max_goalset
 
 
+def test_plan_grasp_set_duplicates_lone_goal(monkeypatch):
+    # cuRobo's num_goalset=1 path is cold (warmup only primes the goalset path), so a lone
+    # candidate is duplicated to num_goalset=2 (robust goalset path) and the chosen index is
+    # clamped back to the single real candidate even if cuRobo returns the duplicate (index 1).
+    rec = _inject_curobo_types(monkeypatch)
+    out = _planner(FakeMP(_grasp_result(idx=1))).plan_grasp_set(
+        np.zeros(14), RIGHT, [Pose(np.eye(3), [0.4, -0.2, 0.8])],
+        approach_axis="x", approach_offset=-0.1, lift_axis="z", lift_offset=0.1)
+    assert rec["from_poses"]["num_goalset"] == 2                    # lone goal duplicated
+    active = rec["from_poses"]["pose_dict"]["right_wrist_yaw_link"]
+    assert active.position.shape == (2, 3) and np.allclose(active.position[0], active.position[1])
+    assert out.chosen_index == 0                                    # clamped to the real candidate
+
+
 def test_plan_grasp_set_empty_raises():
     with pytest.raises(PlanningError):
         _planner(FakeMP(_grasp_result())).plan_grasp_set(

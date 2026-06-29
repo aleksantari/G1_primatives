@@ -19,7 +19,8 @@ By default the K ranked candidates are fed to cuRobo's plan_grasp as ONE goalset
 the feasible grasp (goalset_index) and plans approach->grasp->lift as native segments, sweeping the
 configured (approach, lift) offsets (planner.yaml: grasp.strategies). `--select`:
   reachable  feed ALL candidates -- cuRobo globally picks the feasible one
-  top        feed ONLY the top-confidence grasp (the one viser draws the mesh on) -- no selection
+  first      feed ONLY the #1 (highest-confidence) grasp (the one viser draws the mesh on) -- no
+             selection. NB: "first" = top-CONFIDENCE, unrelated to the server's top-DOWN planner
 `--legacy` restores the old path (sequential plan_to_pose probe + manual approach/descend/lift
 offsets) as an A-B baseline. The approach backs off along the grasp's own APPROACH axis (derived
 grasp +Z -> wrist +X), the lift goes world +Z up. Operator-gated each step; on any failure it opens
@@ -101,9 +102,10 @@ def main():
                     help="SAM3 segmentation mode (overrides grasp.yaml segment.mode)")
     ap.add_argument("--visualize", action="store_true",
                     help="show cloud + ranked grasps in a viser GUI (graspgenx source)")
-    ap.add_argument("--select", choices=["reachable", "top"], default="reachable",
+    ap.add_argument("--select", choices=["reachable", "first"], default="reachable",
                     help="reachable = feed ALL candidates to plan_grasp (cuRobo picks the feasible); "
-                         "top = feed ONLY the top-confidence grasp (the viser mesh-overlay best)")
+                         "first = feed ONLY the #1 highest-confidence grasp (the viser mesh-overlay "
+                         "best). 'first' is top-CONFIDENCE, NOT the server's top-DOWN planner")
     ap.add_argument("--legacy", action="store_true",
                     help="old path: sequential plan_to_pose probe + manual approach/descend/lift "
                          "(A-B baseline vs the native plan_grasp goalset solve)")
@@ -227,7 +229,7 @@ def main():
             print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
 
         if args.legacy:                  # --- old sequential probe + manual offsets (A-B baseline) ---
-            if args.select == "top":
+            if args.select == "first":
                 chosen = cands[0]                        # confidence-sorted -> [0] = the viser best
                 grasp = _shift_z(chosen.wrist_goal, args.grasp_z)
                 try:                                      # probe but DO NOT fall back -- just warn
@@ -235,7 +237,7 @@ def main():
                     reach = "plans OK"
                 except PlanningError:
                     reach = "WILL NOT PLAN -- approach/descend will fail"
-                print(f"select=top: top grasp confidence {chosen.confidence:.3f} -- {reach}")
+                print(f"select=first: top grasp confidence {chosen.confidence:.3f} -- {reach}")
             else:
                 chosen, grasp = _select_candidate(robot, side, cands, args.grasp_z)
                 if chosen is None:
@@ -256,7 +258,7 @@ def main():
                 raise RuntimeError("lift move failed")
         else:                            # --- native cuRobo plan_grasp goalset path ---
             from dataclasses import replace
-            feed = cands[:1] if args.select == "top" else cands
+            feed = cands[:1] if args.select == "first" else cands
             if args.grasp_z:             # optional vertical pre-shift of the grasp goals
                 feed = [replace(c, wrist_goal=_shift_z(c.wrist_goal, args.grasp_z)) for c in feed]
             res = P.grasp_motion(
