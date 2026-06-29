@@ -32,6 +32,8 @@ class HeadCamera:
         self.host = host
         self.backend = backend
         self._client = None
+        self._depth_sock = None        # zmq backend: optional 2nd SUB for the sim depth stream
+        self._depth_hw = None          # (height, width) for reshaping raw float32 depth
         # stereo: slice the side-by-side frame and keep one eye (real ZED head).
         self._stereo = bool(kwargs.get("stereo", False))
         self._stereo_side = str(kwargs.get("stereo_side", "left"))
@@ -60,6 +62,19 @@ class HeadCamera:
             self._sock.setsockopt(zmq.SUBSCRIBE, b"")
             self._sock.setsockopt(zmq.RCVTIMEO, int(kwargs.get("recv_timeout_ms", 2000)))
             self._sock.connect(f"tcp://{host}:{port}")
+            # optional depth: a 2nd SUB on depth_port. The Isaac sim head camera publishes a
+            # raw float32 (height,width) depth map in MILLIMETERS there (mirroring the real
+            # ZED), so the same deproject -> PointCloud -> cuRobo Mapper/ESDF path runs in sim.
+            # Gate: depth_port configured AND depth not forced off.
+            dport = kwargs.get("depth_port")
+            if dport is not None and self._depth_pref is not False:
+                self._depth_sock = zmq.Context.instance().socket(zmq.SUB)
+                self._depth_sock.setsockopt(zmq.CONFLATE, 1)
+                self._depth_sock.setsockopt(zmq.SUBSCRIBE, b"")
+                self._depth_sock.setsockopt(zmq.RCVTIMEO, int(kwargs.get("recv_timeout_ms", 2000)))
+                self._depth_sock.connect(f"tcp://{host}:{int(dport)}")
+                self._depth_hw = (int(kwargs.get("depth_height", 480)),
+                                  int(kwargs.get("depth_width", 640)))
         elif backend == "teleimager":
             from teleimager import ImageClient  # lazy; hardware env only
             self._client = ImageClient(host=host, **kwargs)
@@ -114,19 +129,35 @@ class HeadCamera:
     # --------------------------------------------------------------------- depth
     @property
     def has_depth(self) -> bool:
-        """Whether a head depth stream is available on this backend/target. Only the real
-        ZED (``unitree`` backend) publishes depth; sim/teleimager are color-only."""
-        if self.backend != "unitree" or self._client is None or self._depth_pref is False:
+        """Whether a head depth stream is available on this backend/target. The real ZED
+        (``unitree`` backend) publishes depth; the ``zmq`` backend has it when the sim
+        advertises a depth_port (Isaac front_camera distance_to_image_plane); teleimager is
+        color-only. A ``depth=False`` kwarg forces it off."""
+        if self._depth_pref is False:
             return False
-        return bool(getattr(self._client, "has_depth", False))
+        if self.backend == "unitree":
+            return self._client is not None and bool(getattr(self._client, "has_depth", False))
+        if self.backend == "zmq":
+            return self._depth_sock is not None
+        return False
 
     def get_depth_frame(self) -> Optional[np.ndarray]:
-        """Latest head depth as float32 (720,1280) in MILLIMETERS, NaN/inf = invalid (the
-        mask is the consumer's job; meters = depth/1000). NOT stereo-sliced -- head depth
-        is already a single left-eye map. Returns None when no depth stream exists (sim /
-        teleimager / depth disabled) or no frame has arrived yet."""
+        """Latest head depth as float32 in MILLIMETERS, NaN/inf = invalid (masking is the
+        consumer's job; meters = depth/1000). NOT stereo-sliced -- head depth is a single map.
+        Real ZED (``unitree``): (720,1280). Isaac sim (``zmq``): a raw float32 (h,w) buffer on
+        depth_port. Returns None when no depth stream exists or no frame has arrived yet."""
         if not self.has_depth:
             return None
+        if self.backend == "zmq":
+            try:
+                buf = self._depth_sock.recv()
+            except self._zmq.Again:
+                return None                                # no depth frame within the timeout
+            h, w = self._depth_hw
+            d = np.frombuffer(buf, dtype=np.float32)
+            if d.size != h * w:
+                return None                                # shape mismatch (check depth_h/w cfg)
+            return d.reshape(h, w).copy()                  # writable copy (frombuffer is RO)
         return self._client.get_head_depth_frame()
 
     def shape(self) -> Tuple[int, int]:

@@ -42,3 +42,11 @@ stream:
   host: "127.0.0.1"          # sim loopback.
   port: 55555                # head_camera zmq_port (teleimager cam_config_server.yaml).
   stereo: false              # sim head is mono -> no slice.
+  # Head DEPTH: a 2nd ZMQ PUB the sim opens (camera_state._publish_head_depth) carrying a raw
+  # float32 (depth_height,depth_width) map in MILLIMETERS -- the Isaac front_camera
+  # distance_to_image_plane, scaled meters->mm to mirror the real ZED. Drives the same
+  # deproject -> PointCloud -> cuRobo Mapper/ESDF collision world as real. Match the sim env
+  # ISAAC_HEAD_DEPTH_PORT (default 55556) + the 640x480 front_camera resolution.
+  depth_port: 55556
+  depth_height: 480
+  depth_width: 640

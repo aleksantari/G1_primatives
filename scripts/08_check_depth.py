@@ -62,8 +62,9 @@ def main():
     robot = make_robot(connect_dds=False, connect_camera=True,   # camera only -> no motion
                        camera_config=_rig.camera_config_for(args.target))
     if not robot.camera.has_depth:
-        print(f"[{args.target}] no head depth stream on this target -- only the real ZED "
-              "publishes depth (sim is color-only). Nothing to do.")
+        print(f"[{args.target}] no head depth stream on this target. Real = the ZED; sim = the "
+              "Isaac front_camera depth PUB (needs a depth_port in camera_*.yaml + a sim built "
+              "with the distance_to_image_plane annotator). Nothing to do.")
         return
 
     view = _rig.Viewer("head depth", save_path="/tmp/head_depth.png")
