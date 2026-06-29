@@ -117,13 +117,17 @@ class EsdfMapper:
         d = np.asarray(depth_mm, np.float32) / 1000.0                 # mm -> meters
         d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)         # invalid -> 0 (< depth_min -> rejected)
         depth_t = torch.as_tensor(d, dtype=torch.float32, device=self._device).unsqueeze(0)  # (1,H,W)
+        # The TSDF integrator REQUIRES rgb (num_cameras,H,W,3) uint8 even though colour is
+        # irrelevant to the ESDF -- feed zeros (matching the camera's H,W = the Mapper's image_hw).
+        rgb_t = torch.zeros((depth_t.shape[0], depth_t.shape[-2], depth_t.shape[-1], 3),
+                            dtype=torch.uint8, device=self._device)
         fx, fy = float(intrinsics["fx"]), float(intrinsics["fy"])
         cx, cy = float(intrinsics["cx"]), float(intrinsics["cy"])
         K = torch.tensor([[[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]]],
                          dtype=torch.float32, device=self._device)   # (1,3,3)
         pos = torch.tensor([list(T_pelvis_camera.translation)], dtype=torch.float32, device=self._device)
         quat = torch.tensor([list(T_pelvis_camera.quaternion_wxyz())], dtype=torch.float32, device=self._device)
-        obs = CameraObservation(depth_image=depth_t, intrinsics=K,
+        obs = CameraObservation(depth_image=depth_t, rgb_image=rgb_t, intrinsics=K,
                                 pose=CuPose(position=pos, quaternion=quat), depth_to_meter=1.0)
         mapper.integrate(obs)
         grid = mapper.compute_esdf()
