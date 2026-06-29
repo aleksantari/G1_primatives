@@ -108,9 +108,15 @@ def main():
         wp = robot.planner.fk(side, home).translation
         wrists[side] = wp
         if len(occ):
-            d = float(np.linalg.norm(occ - wp, axis=1).min())
-            flag = "  <-- ARM STILL IN THE WORLD" if d < 0.10 else "  (clear)"
-            print(f"self-view {side:5s}: wrist@home {np.round(wp,3)} nearest occupied {d*1000:.0f} mm{flag}")
+            dists = np.linalg.norm(occ - wp, axis=1)
+            near = occ[dists < 0.15]                      # occupied voxels near the wrist
+            # the ARM reaches UP to the shoulder (z~0.3); the table/block are low (z<~0.13). So
+            # TALL occupied geometry near the wrist = un-removed arm; low = just table/block.
+            zhi = float(near[:, 2].max()) if len(near) else -9.9
+            arm = zhi > 0.15
+            flag = "  <-- ARM REMNANT (tall geom near wrist)" if arm else "  (arm clear; near = table/block)"
+            print(f"self-view {side:5s}: wrist@home {np.round(wp,3)} nearest occ {dists.min()*1000:.0f} mm, "
+                  f"tallest-near z={zhi:.3f}{flag}")
 
     # --- object probe: is the cube actually in the ESDF (vs erased by the self-filter / occlusion)? ---
     if args.probe is not None:

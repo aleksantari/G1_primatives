@@ -81,4 +81,8 @@ grasp:
     # into the world (without this the grasp starts inside a baked-in copy of the arm -> infeasible).
     # Keep ON. Bigger margin removes more of the robot but risks erasing object points near the hand.
     self_filter: true
-    robot_mask_margin: 0.05        # m around each collision sphere to treat as robot
+    # m around each collision sphere to treat as robot. TRADEOFF (the hand is near the object at
+    # home): too big erodes a nearby object out of the world, too small leaves arm fragments. 0.05
+    # (cuRobo default) eroded the block to ~1 voxel -> the approach plowed through it; 0.02 keeps
+    # the block solid while the tall arm is removed (validate with 12_check_world --probe/--margin).
+    robot_mask_margin: 0.02

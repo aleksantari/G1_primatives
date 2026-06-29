@@ -320,7 +320,7 @@ class CuroboArmPlanner:
             depth_min_m=float(c.get("depth_min_m", 0.1)),
             depth_max_m=float(c.get("depth_max_m", 2.0)),
             self_filter=bool(c.get("self_filter", True)),
-            robot_mask_margin=float(c.get("robot_mask_margin", 0.05)),
+            robot_mask_margin=float(c.get("robot_mask_margin", 0.02)),
         )
 
     def robot_depth_filter(self, q_repo14, margin: Optional[float] = None):

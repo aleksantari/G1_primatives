@@ -306,7 +306,7 @@ def test_cw_params_defaults():
     pr = p._cw_params()
     assert pr["grid_center"] == [0.4, 0.0, 0.2] and pr["extent_m"] == [1.2, 1.2, 1.0]
     assert pr["esdf_voxel_size"] == 0.02 and pr["depth_max_m"] == 2.0
-    assert pr["self_filter"] is True and pr["robot_mask_margin"] == 0.05
+    assert pr["self_filter"] is True and pr["robot_mask_margin"] == 0.02
 
 
 def test_robot_depth_filter_none_q_returns_none():
