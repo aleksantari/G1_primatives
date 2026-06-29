@@ -23,8 +23,11 @@ grasps against the object cloud (the client-side equivalent of GraspGenX's
 - Imports **nothing** from the `graspgenx` package (that would pull torch + a multi-GB
   auto-download). The viser primitives + gripper loader are vendored, exactly like
   `grasp/graspgenx_client.py` already vendors the ZMQ client.
-- Colors: **confidence gradient** (red→green) for all grasps, **blue** = model's
-  top-confidence grasp, **green** = the grasp cuRobo actually selected.
+- Colors: by default a **confidence gradient** (red→green) for all grasps; when GraspGenX
+  protocol-v2 `branch_tags` are passed, grasps are instead colored by branch — **amber** = OBB
+  (top-down) grasp, **purple** = diffusion grasp. **blue** = model's top-confidence grasp,
+  **green** = the grasp cuRobo actually selected. The `[GraspViz]` summary line reports the
+  obb/diff split.
 
 Open the viewer at `http://localhost:8080` (forward it if headless:
 `ssh -N -L 8080:localhost:8080 <host>`).

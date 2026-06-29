@@ -69,7 +69,8 @@ retimer**. The executor owns the only handle to `G1_29_ArmController`; planning 
 g1_classical_manip/
 ├── spatial/                   # pose.py (SE(3) Pose, pin.SE3 replacement) · pointcloud.py (PointCloud)
 ├── motion/
-│   ├── curobo_planner.py      # CuroboArmPlanner: plan_to_pose, plan_to_pose_set, plan_joint, fk
+│   ├── curobo_planner.py      # CuroboArmPlanner: plan_to_pose, plan_to_pose_set, plan_joint, fk,
+│   │                          #   plan_grasp_set / plan_grasp_set_sweep (native cuRobo plan_grasp)
 │   ├── executor.py            # streams JointTrajectory @ control_hz; prime + abort-to-hold; settle
 │   └── planner_base.py        # JointPath / JointTrajectory containers (DOF=14)
 ├── ee/                        # hand_base (ABC), dex3, dex1 — presets + grasp verification
@@ -80,7 +81,8 @@ g1_classical_manip/
 ├── grasp/                     # GraspSource: base · apriltag_source (A-B ref) · graspgenx_source ·
 │                              #   sim_cloud_source (sim GT cube) · graspgenx_client (ZMQ :5556) ·
 │                              #   tool_transform (grasp→wrist)
-├── primitives.py              # home / move / move_to_candidates / open_hand / close_hand / detect
+├── primitives.py              # home / move / grasp_motion / open_hand / close_hand / detect
+│                              #   (move_to_candidates = legacy sequential grasp, --legacy only)
 ├── factory.py                 # make_robot(): planner + DDS controllers + executor + perception + grasp
 ├── perception/                # LIVE: transforms · base · apriltag_block · ground_truth · sim_state
 │                              #   · depth (deproject→PointCloud) · segment (SAM3 mask seam)
@@ -122,8 +124,13 @@ tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/gra
   position/velocity/acceleration + `dt`); `compute_kinematics(...).tool_poses.get_link_pose`.
 - Goal frame is the **wrist-yaw link** directly; the palm/grasp-frame offset is applied above the
   planner by the **grasp sources** (`grasp/tool_transform.py`), which return wrist-yaw goals — so
-  `move`/`plan_to_pose` stay wrist-yaw. `plan_to_pose_set` plans the first reachable of a ranked
-  candidate list (native cuRobo goalset deferred).
+  `move`/`plan_to_pose` stay wrist-yaw. The grasp primitive (`grasp_motion`) plans candidates with
+  cuRobo's **native** `plan_grasp` (`plan_grasp_set` / `plan_grasp_set_sweep`: a K-candidate goalset
+  → cuRobo picks the feasible grasp → + native approach/grasp/lift segments). Because `plan_grasp`
+  offsets EVERY goal tool frame, the grasp planner is a dedicated **single-tool-frame** `MotionPlanner`
+  per side (`_grasp_planner`), not the main 3-frame planner; a lone candidate is duplicated into a
+  2-row goalset so cuRobo always uses the warmed goalset solver (the `num_goalset=1` path is cold).
+  `plan_to_pose_set` (sequential, first-reachable of a ranked list) is now only the `--legacy` baseline.
 - **Speed** is governed by the cuRobo robot config's joint limits, but the executor plays the
   plan back at `planner.yaml: executor.time_dilation` (default 0.5 on real, forced 1.0 in sim).
   Real needs the slowdown: the arm controller's velocity clip is measured-relative, so it caps PD
@@ -155,7 +162,8 @@ Vendored from `unitreerobotics/xr_teleoperate` (Apache-2.0; keep headers + NOTIC
 
 cuRobo V2 (`NVlabs/curobo`): ships official G1 + Dex3 configs; builds CUDA extensions from
 source (here for sm_120 / torch cu128). `plan_grasp` chains approach → grasp → lift with
-finger collisions disabled during final approach — maps onto a future pick primitive.
+finger collisions disabled during final approach — **now wired** as the `grasp_motion` primitive
+(via `plan_grasp_set_sweep`); it is the default grasp path (`--legacy` restores the old sequential).
 
 ---
 
@@ -163,11 +171,15 @@ finger collisions disabled during final approach — maps onto a future pick pri
 1. **Tune dex3 grasp presets** (`hands.yaml`) — right-thumb `power_close` stall fixed; make
    `pinch` per-hand and tune the `verify` thresholds.
 2. ~~**Grasp-frame offset**~~ — **DONE**: the wrist→palm offset lives in `grasp/tool_transform.py`;
-   grasp sources return wrist-yaw goals. (`wristyaw_grasp_rpy` rotation seed still EMPIRICAL.)
-3. ~~**Pick composite**~~ — **DONE**: `07_pick_place` (AprilTag) + `09_graspgen` (GraspSource).
+   grasp sources return wrist-yaw goals. The GraspGenX `wristyaw_grasp_rpy` + `palm_offset_xyz` are
+   **DERIVED from kinematics** (`scripts/derive_graspgenx_tool_transform.py`) and **sim-validated
+   2026-06-28** (`[π/2,0,π]`, `[0.1142,−0.0286,0]`); closing-roll sign still pending one HW grasp.
+3. ~~**Pick composite**~~ — **DONE**: `07_pick_place` (AprilTag) + `09_graspgen` (GraspSource),
+   the latter on cuRobo's native `plan_grasp` (goalset pick + approach/grasp/lift).
 4. ~~**Grasp sources + perception**~~ — **DONE (offline)**: `GraspSource` seam (`apriltag` |
-   `graspgenx`); depth→`PointCloud` (`perception/depth`); SAM3 segmentation (`perception/segment`,
-   `:5557`) → GraspGenX (`:5556`) → 6-DoF grasps. Real grasp run pending hardware.
+   `graspgenx` | `sim_cloud`); depth→`PointCloud` (`perception/depth`); SAM3 segmentation
+   (`perception/segment`, `:5557`) → GraspGenX (`:5556`, **protocol v2**: `planner` topdown/graspmoe/
+   diffusion, obb/diff `branch_tags`) → 6-DoF grasps. Real grasp run pending hardware.
 5. **Rerun logging** — current q / target pose / state, on every primitive.
 6. **World model** — add the table (and obstacles) to the cuRobo world (depth → ESDF a natural fit).
 7. **Hardware bring-up** — see `HARDWARE_TODO.md` (DDS, debug mode, tracking, gravity comp, the
@@ -182,7 +194,10 @@ truth block source); Inspire/BrainCo hands (keep the registry seam, skip the cla
 on-robot (PC2) deployment of planner code.
 
 ## 7. Gotchas (encode these, don't rediscover)
-- **Debug mode first** on hardware: `MotionSwitcher.Enter_Debug_Mode()` before any `rt/lowcmd`.
+- **Debug mode first** on hardware (required before any `rt/lowcmd`), but the **OPERATOR sets it via
+  the physical remote** on this rig — `make_robot` does NOT call `MotionSwitcher` (releasing it on an
+  already-debug robot drops it back out of low-level control → arms don't move). Opt into the SDK
+  release only with `enter_debug_mode=True`. See the CLAUDE.md debug-mode gotcha.
 - **Velocity clip vs planner**: the controller's clip is a safety net; if it fires during
   nominal execution, the cuRobo joint limits are wrong — treat as a bug.
 - **Sim both-hands gate**: the sim applies hand joints only if both left+right cmds are

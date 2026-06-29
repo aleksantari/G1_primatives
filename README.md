@@ -29,7 +29,8 @@ retiming step. The executor holds the only handle to `G1_29_ArmController`.
 ```python
 home(robot)                       # both arms to the launch pose (forearms forward), settle
 move(robot, side, goal_pose)      # one wrist to goal_pose (pelvis frame); other arm holds
-move_to_candidates(robot, side, goal_poses)  # first reachable of a ranked goal list
+grasp_motion(robot, side, candidates, ...)   # native cuRobo plan_grasp: goalset pick +
+                                  #   approach → grasp → close → lift
 open_hand(robot, side)            # blocks until the fingers finish moving
 close_hand(robot, side, verify=, fraction=)  # fraction<1 closes partway; verify=True = held?
 detect(robot, target="block")     # head-cam AprilTag → object pose (pelvis frame)
@@ -38,7 +39,9 @@ Action verbs return `Result(ok, info)`; `detect` returns a `Detection` whose `.p
 straight into `move`. Tasks are composed from these. **Grasp poses** come from a
 `robot.grasp_source` (a `GraspSource`: `apriltag` A-B reference · `graspgenx` learned 6-DoF
 grasps from a segmented depth cloud · `sim_cloud` sim-only GT cube cloud) returning ranked
-wrist-yaw goal `Pose`s that `move_to_candidates` consumes.
+wrist-yaw `GraspCandidate`s that `grasp_motion` plans via cuRobo's native `plan_grasp`
+(it picks the feasible grasp from the goalset). `move_to_candidates` (sequential, first-reachable)
+is the `--legacy` fallback.
 
 ## Layout
 ```
@@ -51,7 +54,7 @@ g1_classical_manip/
   robot_control/   robot_arm (G1_29_ArmController), robot_hand_unitree (threaded Dex3/Dex1)
   grasp/           base (GraspSource ABC + GraspCandidate) · apriltag_source (A-B ref) ·
                    graspgenx_source · graspgenx_client (ZMQ :5556) · tool_transform (grasp→wrist)
-  primitives.py    home / move / move_to_candidates / open_hand / close_hand / detect
+  primitives.py    home / move / grasp_motion / open_hand / close_hand / detect
   factory.py       make_robot() — cuRobo planner + DDS controllers + executor + perception + grasp
   image_server/    HeadCamera — head-cam color + depth frames (zmq | teleimager | unitree_lerobot)
   perception/      transforms (frame math, cuRobo FK) · base (Detector seam) · apriltag_block ·
@@ -168,13 +171,19 @@ e-stop; needs both servers + the ZED + debug mode set on the remote):
 bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --source graspgenx --segment interactive --visualize'
 ```
 A-B against the known-good path with `--source apriltag`. `--visualize` opens the same viser view
-(the chosen reachable grasp in green). The grasp→wrist orientation seed
-(`grasp.yaml: wristyaw_grasp_rpy`) is **EMPIRICAL** — verify it before trusting (`HARDWARE_TODO.md`).
+(the chosen reachable grasp in green). The grasp→wrist transform (`grasp.yaml: wristyaw_grasp_rpy`
++ `palm_offset_xyz`) is **DERIVED from kinematics** and **sim-validated** (see
+`scripts/derive_graspgenx_tool_transform.py`); the closing-roll sign still wants one gated hardware
+grasp (`HARDWARE_TODO.md`). The grasp plans on cuRobo's native `plan_grasp` (goalset pick +
+approach/grasp/lift); `--legacy` restores the old sequential path. Useful flags: `--select
+{reachable,first}` (all candidates vs the single top-confidence one), `--grasp-only` (one move
+straight to the grasp, no approach/lift — a frame sanity check).
 
 **In the Isaac sim (de-risk before the robot)** — `--source sim_cloud` builds a ground-truth cube
 cloud from the live `rt/sim_state` block pose → GraspGenX → the same tool transform + gated motion,
-so you can tune `wristyaw_grasp_rpy` and watch a 6-DoF grasp execute in physics with **no ZED, no
-SAM3** (only the GraspGenX server + the sim). Needs `perception.yaml: detector: sim_state`:
+so you can watch a 6-DoF grasp execute in physics with **no ZED, no SAM3** (only the GraspGenX
+server + the sim). This is the path that **sim-validated the transform** (the run prints an FK check
+that our Dex3 fingers straddle the GT cube). Needs `perception.yaml: detector: sim_state`:
 ```bash
 CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
   bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target sim --source sim_cloud --visualize'
@@ -206,11 +215,14 @@ turns masked depth into a pelvis-frame `PointCloud`, segmented by **SAM3** over 
 (`perception/{segment,sam3_client,segment_gui}`, `:5557`) — a 2D mask applied before deproject,
 with an interactive cv2 GUI (`scripts/10_segment.py`, validated on static images; `--save` writes a
 **colored** `.ply` for the offline viz). The single-object cloud feeds the **GraspGenX** service
-(`grasp/graspgenx_client`, `:5556`) which returns ranked 6-DoF grasps; a fixed grasp→tool transform
-(`grasp/tool_transform`) maps them to wrist-yaw goals that `plan_to_pose_set` picks a reachable one
-from. `scripts/09_graspgen.py --source apriltag|graspgenx|sim_cloud` runs the A-B pick+lift
-(`sim_cloud` = a ground-truth cube cloud from `rt/sim_state` → GraspGenX, **sim-only**, no ZED/SAM3
-— the de-risk path for `wristyaw_grasp_rpy` + 6-DoF execution before the robot). **Offline-tested**
-(mock ZMQ servers, synthetic depth); the real GraspGenX/SAM3 grasp run + the **EMPIRICAL
-`wristyaw_grasp_rpy`** calibration are pending hardware — see `HARDWARE_TODO.md`. Depth wire spec:
+(`grasp/graspgenx_client`, `:5556`, **protocol v2**: a `planner` mode — `topdown` for grab-from-above,
+`graspmoe`, or `diffusion` — and obb/diff `branch_tags`) which returns ranked 6-DoF grasps; a
+kinematics-DERIVED grasp→tool transform (`grasp/tool_transform`) maps them to wrist-yaw goals that
+the `grasp_motion` primitive plans with cuRobo's **native** `plan_grasp` (a K-candidate goalset →
+cuRobo picks the feasible grasp → + approach/grasp/lift segments; `--legacy` = old sequential
+`plan_to_pose_set`). `scripts/09_graspgen.py --source apriltag|graspgenx|sim_cloud` runs the A-B
+pick+lift (`sim_cloud` = a ground-truth cube cloud from `rt/sim_state` → GraspGenX, **sim-only**, no
+ZED/SAM3 — the path that **sim-validated** the transform + 6-DoF execution). The transform
+(`wristyaw_grasp_rpy` + `palm_offset_xyz`) is now **sim-validated**; the real GraspGenX/SAM3 grasp
+run + the closing-roll-sign confirmation are pending hardware — see `HARDWARE_TODO.md`. Depth wire spec:
 `docs/depth_integration_handoff.md`.

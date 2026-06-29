@@ -37,8 +37,9 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
 4. **Config-driven:** robot/planner/hand params + the cuRobo robot config live in
    `configs/*.yaml`. `hand: dex3 → dex1` is a one-line switch.
 5. **Primitives are the surface** (`primitives.py`): `home`, `move`, `open_hand`,
-   `close_hand`, each returning `Result(ok, info)`. Tasks are composed from these. Keep
-   new behavior out of here unless it's a genuine new primitive.
+   `close_hand`, `grasp_motion` (native cuRobo `plan_grasp`: goalset pick + approach/grasp/lift),
+   each returning `Result(ok, info)`. Tasks are composed from these. Keep new behavior out of
+   here unless it's a genuine new primitive.
 6. **Safety:** the executor primes to the trajectory start, streams at `control_hz`, and
    **aborts-to-hold** past `tracking_error_abort_rad`; hand/move primitives block until the
    motion completes; `home` starts and ends at the launch pose. **Launch home:**
@@ -76,22 +77,37 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   `scripts/derive_graspgenx_tool_transform.py` (provenance) registers GraspGenX's grasp convention
   (origin=gripper base, +Z approach, +X=thumb-vs-fingers closing, fingertips at +Z=0.07) against
   the Dex3 URDF via `ee/hand_kinematics.py` (hand FK): **rotation** = the fixed axis map (approach
-  +Z→wrist +X, closing +X→wrist +Y, spread +Y→wrist +Z) = `wristyaw_grasp_rpy: [π/2,0,π/2]` — the
-  old `[0,π/2,0]` gripped along index↔middle, a 90° roll error; **translation** = our power_close
-  contact midpoint (FK) minus the 0.07 depth along approach = `graspgenx.palm_offset_xyz:
-  [0.0442,0.0414,0]` (so fingers land ON the object, not 7 cm short). Config stores the RIGHT
-  hand; LEFT is mirrored across the wrist Y-plane in code. `09 --source sim_cloud` FK-verifies our
-  fingers straddle the GT cube (the check the viser gripper-mesh overlay can't do). Still verify
-  the closing-roll sign on one gated hardware grasp. (`07_pick_place`/`apriltag` keep their own
-  `palm_offset` — the A-B reference — untouched.)
+  +Z→wrist +Y, closing +X→wrist −X, spread +Y→wrist +Z) = `wristyaw_grasp_rpy: [π/2,0,π]`
+  (SIM-VALIDATED 2026-06-28). The earlier `[π/2,0,π/2]` (approach→wrist +X) put the palm 90° off —
+  the Dex3 came down thumb-along-the-top instead of palm-down; a +90° yaw about wrist +Z fixes it
+  (the even-older `[0,π/2,0]` was the AprilTag-era guess). NOTE: the Dex3's real thumb-vs-fingers
+  opposition is DIAGONAL in the wrist XY-plane (FK ~[0.66,−0.75,0]); this clean-axis map is the
+  sim-matched approximation that makes the palm face down — a no-op closing-spin for a symmetric
+  cube, revisit per-object. **translation** = our power_close contact midpoint (FK) minus the 0.07
+  depth along approach (now wrist +Y) = `graspgenx.palm_offset_xyz: [0.1142,−0.0286,0]` (so fingers
+  land ON the object, not 7 cm short). Config stores the RIGHT hand; LEFT is mirrored across the
+  wrist Y-plane in code. `09 --source sim_cloud` FK-verifies our fingers straddle the GT cube (the
+  check the viser gripper-mesh overlay can't do). Still verify the closing-roll sign on one gated
+  hardware grasp. (`07_pick_place`/`apriltag` keep their own `palm_offset` — the A-B reference —
+  untouched.)
 - **Grasp pipeline** (`grasp/` + `perception/{depth,segment,sam3_client,segment_gui}.py`,
   `spatial/pointcloud.py`): `robot.grasp_source` is a `GraspSource` (`grasp.yaml: grasp_source` =
   `apriltag` A-B ref | `graspgenx` | `sim_cloud`) returning ranked wrist-yaw `GraspCandidate`s;
-  `move_to_candidates` / `plan_to_pose_set` plan the first reachable (native cuRobo goalset
-  deferred). GraspGenX path: head depth → `deproject_depth` (mask-gated, optional `rgb=` →
+  the `grasp_motion` primitive plans them with cuRobo's **native** `plan_grasp` (planner
+  `plan_grasp_set` / `plan_grasp_set_sweep`: a K-candidate **goalset** — cuRobo picks the feasible
+  grasp — + native approach/grasp/lift segments). `plan_grasp` offsets EVERY goal tool frame, so the
+  grasp planner is a dedicated **single-tool-frame** `MotionPlanner` per side (`_grasp_planner`); the
+  main 3-frame planner can't be used. A lone candidate is duplicated into a 2-row goalset (cuRobo
+  `warmup` only primes the goalset solver, never the cold `num_goalset=1` path). `move_to_candidates`
+  / `plan_to_pose_set` (sequential, first-reachable) is now only the `09 --legacy` A-B baseline.
+  GraspGenX path: head depth → `deproject_depth` (mask-gated, optional `rgb=` →
   per-point color, viz-only) → pelvis `PointCloud` → **SAM3** mask (ZMQ `:5557`, 2D mask applied
-  PRE-deproject; `Segmenter.mask(rgb)` seam, interactive cv2 GUI) → **GraspGenX** ZMQ (`:5556`) →
-  6-DoF grasps → tool transform. `PointCloud` carries optional `colors` (N,3) parallel to `points`
+  PRE-deproject; `Segmenter.mask(rgb)` seam, interactive cv2 GUI) → **GraspGenX** ZMQ (`:5556`,
+  **protocol v2**: `infer` → `(grasps, conf, branch_tags)`; kwargs `planner`
+  {diffusion|graspmoe|**topdown**}, `obb_density`, `skip_obb_rule`; `branch_tags[i]` ∈ {obb,diff}.
+  `grasp.yaml` defaults to `planner: topdown` for grab-from-above) → 6-DoF grasps → tool transform.
+  Viz colors obb (amber) vs diff (purple); `09` prints the obb/diff split + a top-down(approach≈−Z)
+  count. `PointCloud` carries optional `colors` (N,3) parallel to `points`
   (transform-carried, voxel-averaged) — purely for viz; consumers send `.points` (N,3), so color
   never reaches GraspGenX. `sim_cloud` (`sim_cloud_source.py`): a SIM-ONLY GT cube cloud from the
   `rt/sim_state` block pose (no camera/depth/SAM3) → same GraspGenX + tool transform; the in-sim
