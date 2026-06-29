@@ -74,6 +74,7 @@ def _planner(mp):
     p._joint_state = lambda q: "START"
     p._tensor_k = lambda arr: np.asarray(arr, float)                    # keep numpy for asserts
     p._jointstate_to_trajectory = lambda js, last, lbl, dt=None: f"traj:{lbl}"
+    p._hold_idle = lambda traj, side, hold: traj                        # conversion is stubbed
     p._grasp_planner = lambda side: mp
     return p
 
@@ -248,6 +249,31 @@ def test_plan_grasp_set_empty_raises():
         _planner(FakeMP(_grasp_result())).plan_grasp_set(
             np.zeros(14), RIGHT, [], approach_axis="x", approach_offset=-0.1,
             lift_axis="z", lift_offset=0.1)
+
+
+# --------------------------------------------------------------- _hold_idle
+def test_hold_idle_pins_idle_arm():
+    from g1_classical_manip.motion.planner_base import JointTrajectory
+    from g1_classical_manip.ee.hand_base import LEFT
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    # a 4-step trajectory where every joint ramps (so drift would show); idle arm must be pinned.
+    q = np.tile(np.linspace(1.0, 2.0, 14), (4, 1)) + np.arange(4)[:, None] * 0.1
+    traj = JointTrajectory(np.arange(4) * 0.025, q.copy(), np.ones((4, 14)), np.ones((4, 14)))
+    hold = np.arange(14, dtype=float) * 0.01            # the start/home config to pin to
+    out = p._hold_idle(traj, RIGHT, hold)               # active = right (7:14), idle = left (0:7)
+    assert np.allclose(out.q[:, 0:7], hold[0:7])        # idle (left) pinned to hold, every step
+    assert np.allclose(out.qd[:, 0:7], 0.0) and np.allclose(out.qdd[:, 0:7], 0.0)
+    assert np.allclose(out.q[:, 7:14], q[:, 7:14])      # active (right) untouched
+    assert out.meta["idle_held"] is True
+    # LEFT active -> right (7:14) is the idle arm that gets pinned
+    traj2 = JointTrajectory(np.arange(4) * 0.025, q.copy(), np.ones((4, 14)), np.ones((4, 14)))
+    out2 = p._hold_idle(traj2, LEFT, hold)
+    assert np.allclose(out2.q[:, 7:14], hold[7:14]) and np.allclose(out2.q[:, 0:7], q[:, 0:7])
+
+
+def test_hold_idle_passthrough_none():
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    assert p._hold_idle(None, RIGHT, np.zeros(14)) is None
 
 
 # --------------------------------------------------------------- plan_grasp_set_sweep

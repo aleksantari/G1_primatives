@@ -39,12 +39,21 @@ grasp:
   max_goalset: 128            # MotionPlannerCfg.create(max_goalset=…); must be >= graspgenx.topk (100).
                               # cuRobo's default is 1 -> multi-candidate goalset solves would be forbidden.
   # Axis strings are UNSIGNED ('x'|'y'|'z'); the SIGN is in the per-strategy offset.
-  approach_axis: x            # DERIVED: grasp +Z (approach) -> wrist +X (wristyaw_grasp_rpy [pi/2,0,pi/2]).
+  approach_axis: y            # DERIVED: grasp +Z (approach) -> wrist +Y (wristyaw_grasp_rpy [pi/2,0,pi]).
+                              # Was 'x' under the old [pi/2,0,pi/2] transform; the 2026-06-28 re-derive
+                              # maps approach to wrist +Y (closing -> -X, spread -> +Z), so the pre-grasp
+                              # back-off must run along wrist Y, not X. Only matters when plan_approach
+                              # is on (--grasp-only skips it, which is why the stale 'x' went unnoticed).
   approach_in_tool_frame: true   # back off along the grasp approach line (tool/wrist frame)
   lift_axis: z                # WORLD/pelvis +Z (up). NOT the tool frame -- tool +Z is the spread axis.
   lift_in_tool_frame: false
+  hold_idle_arm: true         # pin the idle (non-active) arm to its start/home config in every
+                              # planned segment. The single-tool-frame grasp planner leaves the idle
+                              # arm unconstrained, so trajopt drifts it (and drift accumulates across
+                              # approach/grasp/lift). true = hold it still (arms share no joints, so
+                              # the active trajectory is untouched). See curobo_planner._hold_idle.
   disable_collision_links: null  # null -> [active wrist link] (config has grasp_contact_link_names: null)
-  # approach_offset NEGATIVE (back off -wrist-X, away from the object); lift_offset POSITIVE (world +Z up).
+  # approach_offset NEGATIVE (back off -wrist-Y, away from the object); lift_offset POSITIVE (world +Z up).
   strategies:
     - {approach_offset: -0.15, lift_offset: 0.20}
     - {approach_offset: -0.10, lift_offset: 0.15}

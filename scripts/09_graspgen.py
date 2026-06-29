@@ -22,8 +22,10 @@ configured (approach, lift) offsets (planner.yaml: grasp.strategies). `--select`
   first      feed ONLY the #1 (highest-confidence) grasp (the one viser draws the mesh on) -- no
              selection. NB: "first" = top-CONFIDENCE, unrelated to the server's top-DOWN planner
 `--legacy` restores the old path (sequential plan_to_pose probe + manual approach/descend/lift
-offsets) as an A-B baseline. The approach backs off along the grasp's own APPROACH axis (derived
-grasp +Z -> wrist +X), the lift goes world +Z up. Operator-gated each step; on any failure it opens
+offsets) as an A-B baseline. The approach backs off along the grasp's own APPROACH axis (grasp +Z,
+read from the grasp pose in the PELVIS frame -- so legacy is independent of the wrist transform,
+unlike the native path which offsets in the wrist/tool frame), the lift goes world +Z up. Operator-
+gated each step; on any failure it opens
 + homes. On real: gravity comp + time_dilation apply from config; operator sets debug mode via the
 remote first. Watch the e-stop.
 
@@ -119,15 +121,16 @@ def main():
                     help="pre-grasp back-off along the grasp approach axis (m)")
     ap.add_argument("--grasp-z", type=float, default=0.0,
                     help="vertical offset added to the grasp pose (m, +z)")
-    # Tool-frame calibration: post-rotate each grasp wrist goal in the WRIST (tool) frame.
-    # roll = about wrist +X (the approach axis); pitch = about wrist +Y (swaps approach <->
-    # palm-normal, the "palm faces down" fix); yaw = about wrist +Z. Sweep to overlay the Dex3
-    # on the GraspGenX gripper mesh, then bake the winner into grasp.yaml: wristyaw_grasp_rpy.
+    # Tool-frame calibration (vestigial now -- the transform is baked into grasp.yaml; kept for
+    # re-tuning). Post-rotate each grasp wrist goal in the WRIST (tool) frame. Under the derived
+    # [pi/2,0,pi] map: wrist +X ~ closing axis, wrist +Y = approach axis, wrist +Z = spread axis.
+    # roll = about wrist +X (closing); pitch = about wrist +Y (approach); yaw = about wrist +Z
+    # (spread). Sweep to overlay the Dex3 on the GraspGenX gripper mesh, then bake the winner into
+    # grasp.yaml: wristyaw_grasp_rpy.
     ap.add_argument("--grasp-roll-deg", type=float, default=0.0,
-                    help="rotate each grasp wrist goal about wrist +X (approach axis) by N deg")
+                    help="rotate each grasp wrist goal about wrist +X (closing axis) by N deg")
     ap.add_argument("--grasp-pitch-deg", type=float, default=0.0,
-                    help="rotate each grasp wrist goal about wrist +Y by N deg "
-                         "(swaps approach<->palm-normal; the likely 'palm faces down' fix)")
+                    help="rotate each grasp wrist goal about wrist +Y (approach axis) by N deg")
     ap.add_argument("--grasp-yaw-deg", type=float, default=0.0,
                     help="rotate each grasp wrist goal about wrist +Z by N deg")
     ap.add_argument("--lift", type=float, default=0.10, help="lift height after grasp (m, +z)")

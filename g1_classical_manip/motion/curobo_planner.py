@@ -271,12 +271,34 @@ class CuroboArmPlanner:
             self._grasp_mp[side] = mp
         return mp
 
+    def _hold_idle(self, traj, side: str, hold_q_repo14):
+        """Pin the IDLE (non-`side`) arm's 7 joints to `hold_q_repo14` across every waypoint of a
+        planned grasp segment (and zero their vel/accel). The single-tool-frame grasp planner only
+        constrains the active wrist -- the idle arm is an unconstrained DoF, so trajopt drifts it,
+        and the drift accumulates across the approach/grasp/lift solves. Overriding it to the start
+        (home) config holds it still. The arms share no joints, so the active-arm trajectory is
+        untouched. NOTE: cuRobo collision-checked the active arm against the *drifted* idle arm;
+        pinning to home is the safe rest pose for a single-side grasp, but for a cross-body reach
+        re-verify (the rigorous alternative is to LOCK the idle joints in the grasp planner so the
+        solve is collision-consistent)."""
+        if traj is None:
+            return traj
+        idle = LEFT if side == RIGHT else RIGHT
+        cols = slice(0, 7) if idle == LEFT else slice(7, DOF)   # repo order: left 0:7, right 7:14
+        hold = np.asarray(hold_q_repo14, float).reshape(DOF)[cols]
+        traj.q[:, cols] = hold
+        traj.qd[:, cols] = 0.0
+        traj.qdd[:, cols] = 0.0
+        traj.meta["idle_held"] = True
+        return traj
+
     def plan_grasp_set(self, start_q_repo14, side: str, wrist_goals,
                        approach_axis: str, approach_offset: float,
                        lift_axis: str, lift_offset: float,
                        approach_in_tool_frame: bool = True,
                        lift_in_tool_frame: bool = False,
                        plan_approach: bool = True, plan_lift: bool = True,
+                       hold_idle: bool = True,
                        disable_collision_links: Optional[List[str]] = None) -> GraspPlanOutcome:
         """Native cuRobo goalset grasp solve over K candidate wrist-yaw goals (cuRobo
         plan_grasp). Builds a K-goalset GoalToolPose on ONLY the active wrist link, calls
@@ -288,7 +310,7 @@ class CuroboArmPlanner:
         approach/lift IK infeasible. cuRobo seeds trajopt from current_state, so the idle arm
         stays at its start config without an explicit hold goal. Axis args are UNSIGNED
         ('x'|'y'|'z'); the SIGN lives in the offset. Approach defaults to the tool frame (back
-        off along the grasp approach axis, -wrist-X for our derived transform); lift defaults to
+        off along the grasp approach axis, -wrist-Y for our derived transform); lift defaults to
         the WORLD/pelvis frame (+Z up) -- tool-frame +Z is the spread axis, not up."""
         from curobo.types import GoalToolPose, Pose as CuPose
         goals = list(wrist_goals)
@@ -334,7 +356,8 @@ class CuroboArmPlanner:
             return bool(x is not None and x.any())
 
         def _seg(js, last, lbl):
-            return self._jointstate_to_trajectory(js, last, lbl) if js is not None else None
+            traj = self._jointstate_to_trajectory(js, last, lbl) if js is not None else None
+            return self._hold_idle(traj, side, start_q_repo14) if hold_idle else traj
 
         return GraspPlanOutcome(
             success=_ok(res.success), chosen_index=idx,
@@ -351,10 +374,12 @@ class CuroboArmPlanner:
                              approach_axis: str, lift_axis: str,
                              approach_in_tool_frame: bool = True,
                              lift_in_tool_frame: bool = False,
+                             hold_idle: bool = True,
                              disable_collision_links: Optional[List[str]] = None) -> GraspPlanOutcome:
         """Try each strategy dict ({approach_offset, lift_offset?, plan_approach?, plan_lift?})
         in order via plan_grasp_set; return the first whose outcome.success, else the last
-        failing outcome (its status says why). Mirrors GraspGenX's approach/lift offset sweep."""
+        failing outcome (its status says why). Mirrors GraspGenX's approach/lift offset sweep.
+        `hold_idle` pins the idle arm to the start config in every segment (see _hold_idle)."""
         if not list(wrist_goals):
             raise PlanningError("plan_grasp_set_sweep: no candidate goals")
         last = None
@@ -366,6 +391,7 @@ class CuroboArmPlanner:
                 approach_in_tool_frame=approach_in_tool_frame,
                 lift_in_tool_frame=lift_in_tool_frame,
                 plan_approach=s.get("plan_approach", True), plan_lift=s.get("plan_lift", True),
+                hold_idle=hold_idle,
                 disable_collision_links=disable_collision_links)
             if out.success:
                 return out

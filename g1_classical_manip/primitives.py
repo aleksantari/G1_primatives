@@ -82,9 +82,10 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
     out = robot.planner.plan_grasp_set_sweep(
         q0, side, [c.wrist_goal for c in cands],
         strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),
-        approach_axis=gp.get("approach_axis", "x"), lift_axis=gp.get("lift_axis", "z"),
+        approach_axis=gp.get("approach_axis", "y"), lift_axis=gp.get("lift_axis", "z"),
         approach_in_tool_frame=gp.get("approach_in_tool_frame", True),
         lift_in_tool_frame=gp.get("lift_in_tool_frame", False),
+        hold_idle=gp.get("hold_idle_arm", True),
         disable_collision_links=gp.get("disable_collision_links"))
     if not out.success:
         return GraspResult(False, f"plan_grasp failed: {out.status}", out.chosen_index, out)
