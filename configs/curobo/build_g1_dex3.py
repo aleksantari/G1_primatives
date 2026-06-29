@@ -13,8 +13,10 @@ Pipeline (consolidated from the original two scratch scripts in
      collision spheres (fit_collision_spheres -- slow, one-time), and the
      self-collision-ignore matrix (compute_collision_matrix).
   2. We hand-set `tool_frames` (the two wrist-yaw links) and inject the 27
-     `lock_joints` (12 legs + waist_yaw + 14 Dex3 hand joints, all at 0) so cuRobo
-     plans the 14 arm joints only (left 7 + right 7).
+     `lock_joints` (12 legs + waist_yaw + 14 Dex3 hand joints) so cuRobo plans the
+     14 arm joints only (left 7 + right 7). The hands are locked at the DEPLOYED
+     "open" preset (thumb_1 at the URDF open limit, all else 0), NOT all-zero -- see
+     the LOCK definition below.
   3. PATCH the self-collision-ignore matrix: RobotBuilder's auto-matrix only ignored
      3 of the 6 adjacent torso<->shoulder pairs, which flags a FALSE "start in
      collision" at the home pose (all-zeros). We add all 6 bidirectionally.
@@ -47,9 +49,15 @@ for s in ("left", "right"):
     for j in ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle_roll"):
         LOCK[f"{s}_{j}_joint"] = 0.0
 LOCK["waist_yaw_joint"] = 0.0
+# Hands locked at the DEPLOYED "open" preset (configs/hands.yaml dex3.open), NOT all-zero: the
+# Dex3 thumb opens FULLY only at thumb_1 = the URDF open-direction limit (right +0.7243, left
+# -0.7243); zero leaves it half-abducted. Locking the planner's static hand at the pose we
+# actually approach with makes its thumb collision spheres match reality (the self-filter tracks
+# the LIVE hand separately; this is the planner side). All other hand joints are open at 0.
+OPEN_THUMB_1 = {"left": -0.72431163, "right": 0.72431163}
 for s in ("left", "right"):
     for j in ("thumb_0", "thumb_1", "thumb_2", "middle_0", "middle_1", "index_0", "index_1"):
-        LOCK[f"{s}_hand_{j}_joint"] = 0.0
+        LOCK[f"{s}_hand_{j}_joint"] = OPEN_THUMB_1[s] if j == "thumb_1" else 0.0
 
 
 def build():
@@ -73,8 +81,15 @@ def build():
 
 
 def patch():
-    """Step 3: torso_link <-> all 6 shoulder links ignored bidirectionally (they are
-    adjacent; the auto-matrix missed 3, causing a false start-in-collision at home)."""
+    """Step 3: self-collision-ignore pairs the auto-matrix (computed at the all-zero build pose)
+    missed, which would FALSELY flag a start-in-collision at the deployed posture:
+      * torso_link <-> all 6 shoulder links (adjacent; the auto-matrix missed 3, causing a false
+        start-in-collision at home).
+      * {side}_hand_thumb_1_link <-> {side}_wrist_yaw_link: with the thumb locked at its OPEN limit
+        (thumb_1 = +/-0.7243, see LOCK) the thumb_1 sphere swings back and clips the large wrist-yaw
+        sphere. They are 3 joints apart in the chain (wrist_yaw -> palm -> thumb_0 -> thumb_1) so the
+        thumb can never physically reach the wrist -- a conservative-sphere artifact, safe to ignore.
+        (Verified: with the thumb locked open this is the ONLY non-ignored overlapping pair at home.)"""
     d = yaml.safe_load(open(OUT))
     ig = d["kinematics"]["self_collision_ignore"]
     shoulders = [f"{s}_shoulder_{j}_link" for s in ("left", "right")
@@ -88,9 +103,13 @@ def patch():
     for sh in shoulders:
         add("torso_link", sh)
         add(sh, "torso_link")
+    for s in ("left", "right"):                       # open-thumb sphere clips the wrist-yaw sphere
+        add(f"{s}_hand_thumb_1_link", f"{s}_wrist_yaw_link")
+        add(f"{s}_wrist_yaw_link", f"{s}_hand_thumb_1_link")
     with open(OUT, "w") as f:
         yaml.safe_dump(d, f, sort_keys=False)
     print("torso_link ignores:", sorted(ig["torso_link"]))
+    print("thumb_1<->wrist_yaw ignores added (both hands)")
 
 
 if __name__ == "__main__":
