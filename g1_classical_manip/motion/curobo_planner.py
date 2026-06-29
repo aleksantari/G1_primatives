@@ -333,8 +333,11 @@ class CuroboArmPlanner:
         if self._segmenter is None:
             from curobo._src.perception.robot_segmenter import RobotSegmenter
             m = self._cw_params()["robot_mask_margin"] if margin is None else float(margin)
+            # ops_dtype=float32: the default bfloat16 trips cuRobo's own check_float32_tensors on
+            # the (non-torch.compile) cdist path -- "robot_spheres expected float32 got bfloat16".
             self._segmenter = RobotSegmenter(
-                self._mp.kinematics, distance_threshold=m, use_cuda_graph=False)
+                self._mp.kinematics, distance_threshold=m, use_cuda_graph=False,
+                ops_dtype=self._torch.float32)
         js = self._joint_state(q_repo14)               # 14 active joints, cuRobo order
 
         def _filter(obs):
