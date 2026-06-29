@@ -41,6 +41,38 @@ REPO_ARM = [f"{s}_{j}_joint" for s in ("left", "right")
             for j in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow",
                       "wrist_roll", "wrist_pitch", "wrist_yaw")]
 
+# Dex3 hand joint order AS RETURNED BY robot.hand.get_q(side) (the Dex3_1_*_JointIndex enums).
+# NOTE the asymmetry: the LEFT hand is thumb,thumb,thumb,MIDDLE,MIDDLE,INDEX,INDEX but the RIGHT
+# hand is thumb,thumb,thumb,INDEX,INDEX,MIDDLE,MIDDLE -- so live hand q MUST be mapped to cuRobo
+# joint names by THIS table, never by raw index. Feeds live finger angles into the self-filter
+# (the arms-only planning model locks all hand joints at 0 = open, so it can't mask a bent finger).
+_DEX3_GETQ_JOINTS = {
+    LEFT:  [f"left_hand_{p}_joint"
+            for p in ("thumb_0", "thumb_1", "thumb_2", "middle_0", "middle_1", "index_0", "index_1")],
+    RIGHT: [f"right_hand_{p}_joint"
+            for p in ("thumb_0", "thumb_1", "thumb_2", "index_0", "index_1", "middle_0", "middle_1")],
+}
+
+
+def _seg_positions(seg_names, q_repo14, hand_q=None):
+    """Ordered position list matching `seg_names` (the hand-active segmenter's active joints):
+    arm joints from `q_repo14` (repo order, matched BY NAME) + hand joints from
+    `hand_q={LEFT:(7,), RIGHT:(7,)}` (each mapped by the per-side Dex3 get_q order in
+    _DEX3_GETQ_JOINTS). Hand joints with no live value default to 0.0 (open). Pure / GPU-free, so
+    the index<->middle name mapping is unit-testable without building cuRobo kinematics."""
+    q = np.asarray(q_repo14, float).reshape(DOF)
+    vals = {n: float(q[i]) for i, n in enumerate(REPO_ARM)}
+    for n in seg_names:
+        vals.setdefault(n, 0.0)                        # hands (and any non-arm) default open
+    if hand_q is not None:
+        for side, names in _DEX3_GETQ_JOINTS.items():
+            hq = hand_q.get(side)
+            if hq is None:
+                continue
+            for n, v in zip(names, np.asarray(hq, float).reshape(7)):
+                vals[n] = float(v)
+    return [vals[n] for n in seg_names]
+
 
 class PlanningError(RuntimeError):
     pass
@@ -85,7 +117,8 @@ class CuroboArmPlanner:
         self._cw_cfg = (self.planner_cfg.get("grasp") or {}).get("collision_world") or {}
         self._cw_enabled = bool(self._cw_cfg.get("enabled", False))
         self._esdf_mapper = None  # lazy EsdfMapper (depth -> ESDF), built on first depth frame
-        self._segmenter = None    # lazy cuRobo RobotSegmenter (self-filter the arm out of depth)
+        self._segmenter = None    # lazy cuRobo RobotSegmenter (self-filter the robot out of depth)
+        self._seg_names = None     # its active joint order (arm + hands; live finger tracking)
         self.active = list(self._mp.joint_names)          # 14 arm joints, cuRobo order
         self.tool_frames = list(self._mp.tool_frames)
         assert len(self.active) == DOF, f"expected {DOF} active joints, got {len(self.active)}"
@@ -306,6 +339,7 @@ class CuroboArmPlanner:
         self._grasp_mp = {}        # force rebuild with/without the voxel channel
         self._esdf_mapper = None
         self._segmenter = None
+        self._seg_names = None
 
     def _cw_params(self) -> dict:
         """Depth-ESDF collision-world params (planner.yaml grasp.collision_world) with defaults
@@ -323,22 +357,47 @@ class CuroboArmPlanner:
             robot_mask_margin=float(c.get("robot_mask_margin", 0.02)),
         )
 
-    def robot_depth_filter(self, q_repo14, margin: Optional[float] = None):
+    def _build_hand_segmenter(self, margin: float):
+        """Build a RobotSegmenter whose kinematics has the HAND joints ACTIVE (unlocked from the
+        arms-only planning config), so the self-filter masks the fingers at their LIVE pose. The
+        planner's own model locks every hand joint at 0 (open) and so can't mask a bent finger;
+        this dedicated model leaves the planner untouched. Returns (segmenter, active_joint_names).
+        Mirrors RobotSegmenter.from_robot_file but forces ops_dtype=float32 (the default bfloat16
+        trips cuRobo's own check_float32_tensors on the cdist path)."""
+        import copy
+        from curobo._src.util_file import load_yaml
+        from curobo._src.types.robot import RobotCfg
+        from curobo._src.types.device_cfg import DeviceCfg
+        from curobo._src.robot.kinematics.kinematics import Kinematics
+        from curobo._src.perception.robot_segmenter import RobotSegmenter
+        cfg = copy.deepcopy(load_yaml(self._robot_cfg_path))
+        lj = cfg["kinematics"].get("lock_joints") or {}
+        cfg["kinematics"]["lock_joints"] = {k: v for k, v in lj.items() if "hand" not in k}
+        kin = Kinematics(RobotCfg.create(cfg, device_cfg=DeviceCfg()).kinematics)
+        seg = RobotSegmenter(kin, distance_threshold=margin, use_cuda_graph=False,
+                             ops_dtype=self._torch.float32)
+        return seg, list(kin.joint_names)
+
+    def _seg_joint_state(self, q_repo14, hand_q=None):
+        """JointState over the segmenter's active joints (arm + hands), ordered to its kinematics."""
+        from curobo.types import JointState
+        pos = _seg_positions(self._seg_names, q_repo14, hand_q)
+        t = self._torch.tensor(pos, dtype=self._torch.float32, device="cuda").unsqueeze(0)
+        return JointState.from_position(t, joint_names=list(self._seg_names))
+
+    def robot_depth_filter(self, q_repo14, hand_q=None, margin: Optional[float] = None):
         """A ``CameraObservation -> robot-removed depth`` callback (cuRobo RobotSegmenter): zeros
-        the depth pixels within `margin` of the robot's collision spheres at config `q_repo14`, so
-        the head camera doesn't fuse the robot's own arm/hands into the collision world. Reuses the
-        planner's kinematics (FK + collision spheres). Returns None if q is None."""
+        the depth pixels within `margin` of the robot's collision spheres at the given config, so
+        the head camera doesn't fuse the robot's own arm/hands into the collision world. Masks the
+        arm at `q_repo14` (repo order) AND the fingers at their LIVE pose when `hand_q`
+        ({LEFT:(7,), RIGHT:(7,)} from robot.hand.get_q) is passed -- else the hands default to
+        open (0). Returns None if q is None."""
         if q_repo14 is None:
             return None
         if self._segmenter is None:
-            from curobo._src.perception.robot_segmenter import RobotSegmenter
             m = self._cw_params()["robot_mask_margin"] if margin is None else float(margin)
-            # ops_dtype=float32: the default bfloat16 trips cuRobo's own check_float32_tensors on
-            # the (non-torch.compile) cdist path -- "robot_spheres expected float32 got bfloat16".
-            self._segmenter = RobotSegmenter(
-                self._mp.kinematics, distance_threshold=m, use_cuda_graph=False,
-                ops_dtype=self._torch.float32)
-        js = self._joint_state(q_repo14)               # 14 active joints, cuRobo order
+            self._segmenter, self._seg_names = self._build_hand_segmenter(m)
+        js = self._seg_joint_state(q_repo14, hand_q)
 
         def _filter(obs):
             _, filtered = self._segmenter.get_robot_mask_from_active_js(obs, js)
@@ -347,13 +406,14 @@ class CuroboArmPlanner:
         return _filter
 
     def update_grasp_world(self, side: str, depth_mm, intrinsics: dict, T_pelvis_camera,
-                           q_repo14=None) -> bool:
+                           q_repo14=None, hand_q=None) -> bool:
         """Build a fresh ESDF from the head depth and load it into `side`'s grasp planner, so the
         next plan_grasp avoids the object/table. No-op (returns False) when the collision world is
         disabled or there is no depth. `depth_mm` (H,W float32 mm), `intrinsics` {fx,fy,cx,cy},
         `T_pelvis_camera` = the camera optical pose in pelvis. `q_repo14` = the arm config at which
-        the depth was captured -> the robot is self-filtered out of the depth (essential: else the
-        arm is fused into the world and plan_grasp starts the arm inside a copy of itself)."""
+        the depth was captured + `hand_q` ({LEFT:(7,),RIGHT:(7,)} live finger angles) -> the robot
+        (arm AND fingers) is self-filtered out of the depth (essential: else the arm/hand is fused
+        into the world and plan_grasp starts the arm inside a copy of itself)."""
         if not self._cw_enabled or depth_mm is None:
             return False
         import numpy as _np
@@ -367,7 +427,7 @@ class CuroboArmPlanner:
                 esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
                 image_hw=(int(hw[0]), int(hw[1])),
                 depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
-        rf = self.robot_depth_filter(q_repo14) if p["self_filter"] else None
+        rf = self.robot_depth_filter(q_repo14, hand_q=hand_q) if p["self_filter"] else None
         grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera, robot_filter=rf)
         self._grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
         return True

@@ -293,10 +293,11 @@ def test_set_collision_world_toggles_and_drops_cache():
     p._esdf_mapper = "stale"
     assert p.collision_world_enabled is False
     p._segmenter = "stale"
+    p._seg_names = ["stale"]
     p.set_collision_world(True, {"enabled": True, "extent_m": [1, 1, 1]})
     assert p.collision_world_enabled is True
     assert p._grasp_mp == {} and p._esdf_mapper is None      # dropped -> rebuilds voxel-capable
-    assert p._segmenter is None                              # self-filter segmenter dropped too
+    assert p._segmenter is None and p._seg_names is None     # self-filter segmenter dropped too
     assert p._cw_cfg["extent_m"] == [1, 1, 1]
 
 
@@ -312,6 +313,39 @@ def test_cw_params_defaults():
 def test_robot_depth_filter_none_q_returns_none():
     p = CuroboArmPlanner.__new__(CuroboArmPlanner)
     assert p.robot_depth_filter(None) is None             # no q -> no filter (GPU-free path)
+
+
+def _cur_hand(side):  # cuRobo active-joint order: BOTH hands thumb -> middle -> index
+    return [f"{side}_hand_{p}_joint" for p in
+            ("thumb_0", "thumb_1", "thumb_2", "middle_0", "middle_1", "index_0", "index_1")]
+
+
+def test_seg_positions_maps_hands_by_name_not_index():
+    # The Dex3 get_q RIGHT order is thumb,thumb,thumb,INDEX,INDEX,MIDDLE,MIDDLE -- but cuRobo orders
+    # the right hand thumb,middle,index. A raw-index copy would swap index<->middle. _seg_positions
+    # must place them BY NAME. (LEFT get_q order already matches cuRobo, so it's a straight map.)
+    from g1_classical_manip.motion.curobo_planner import _seg_positions, REPO_ARM
+    from g1_classical_manip.ee.hand_base import LEFT, RIGHT
+    seg_names = list(REPO_ARM) + _cur_hand("left") + _cur_hand("right")
+    q_arm = np.arange(14, dtype=float)
+    hand_q = {LEFT: np.array([10, 11, 12, 13, 14, 15, 16.]),    # t0 t1 t2 m0 m1 i0 i1
+              RIGHT: np.array([20, 21, 22, 23, 24, 25, 26.])}    # t0 t1 t2 i0 i1 m0 m1
+    d = dict(zip(seg_names, _seg_positions(seg_names, q_arm, hand_q)))
+    for i, n in enumerate(REPO_ARM):                            # arm: repo order, by name
+        assert d[n] == float(i)
+    assert d["left_hand_thumb_0_joint"] == 10 and d["left_hand_middle_0_joint"] == 13
+    assert d["left_hand_index_0_joint"] == 15
+    assert d["right_hand_thumb_0_joint"] == 20                  # the swap: index/middle by NAME
+    assert d["right_hand_index_0_joint"] == 23 and d["right_hand_index_1_joint"] == 24
+    assert d["right_hand_middle_0_joint"] == 25 and d["right_hand_middle_1_joint"] == 26
+
+
+def test_seg_positions_defaults_hands_open_without_hand_q():
+    from g1_classical_manip.motion.curobo_planner import _seg_positions, REPO_ARM
+    seg_names = list(REPO_ARM) + ["right_hand_thumb_0_joint", "left_hand_index_1_joint"]
+    d = dict(zip(seg_names, _seg_positions(seg_names, np.ones(14), None)))
+    assert d["right_hand_thumb_0_joint"] == 0.0 and d["left_hand_index_1_joint"] == 0.0
+    assert d[REPO_ARM[0]] == 1.0
 
 
 def test_update_grasp_world_noops():

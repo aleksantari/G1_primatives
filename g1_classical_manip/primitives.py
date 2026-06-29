@@ -92,7 +92,9 @@ def _update_collision_world(robot, side: str, q0=None) -> None:
     try:
         K = robot.cfg["camera"]["intrinsics"]
         T_pc = robot.frames.T_pelvis_camera(None)          # head cam is q-independent (locked torso)
-        if planner.update_grasp_world(side, depth, K, T_pc, q0):
+        hand = getattr(robot, "hand", None)                # live finger angles -> self-filter the hand
+        hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hand is not None else None
+        if planner.update_grasp_world(side, depth, K, T_pc, q0, hand_q=hand_q):
             print("grasp_motion: collision world updated from head depth (ESDF, robot self-filtered)")
     except Exception as e:                        # noqa: BLE001 - best-effort; never block the grasp
         print(f"grasp_motion: collision world skipped: {e}")

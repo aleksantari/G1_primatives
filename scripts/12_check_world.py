@@ -12,10 +12,16 @@ answer the two questions that decide whether plan_grasp can use it:
      arm inside a baked-in copy of itself -> "Goalset planning returned None". The wrist-FK probe
      + the viser overlay reveal this.
 
-Camera-only: make_robot(connect_dds=False) -> no DDS, no homing, nothing moves. World params come
-from planner.yaml grasp.collision_world (edit there to tune grid_center / extent_m / voxel).
+Connects DDS read-only via _rig.connect (sim -> domain 1/lo, home_on_connect=False -> NOTHING moves)
+so the robot self-filter runs at the LIVE measured arm q -- exactly like the real grasp path
+(primitives._update_collision_world passes the current q). The filter masks the robot at the config
+IN the depth frame, so it MUST match where the arm actually is; if no live state arrives it falls
+back to home. Pass --no-dds for pure offline inspection (camera/ZMQ depth only, self-filter at home).
+World params come from planner.yaml grasp.collision_world (edit there to tune grid_center/extent/voxel).
 
   sim:  bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --target sim --visualize'
+        (DDS uses domain 1/lo directly like 01_check_dds -- no CYCLONEDDS_URI needed. Depth comes
+         over ZMQ :55556. The sim must be up for both the depth stream AND the live arm q.)
 """
 import argparse
 import sys
@@ -47,10 +53,17 @@ def main():
                          "value that removes the arm WITHOUT erasing a nearby object")
     ap.add_argument("--esdf-voxel", type=float, default=None,
                     help="override esdf_voxel_size (m) -- finer = a crisper object (tsdf set to half)")
+    ap.add_argument("--no-dds", action="store_true",
+                    help="don't connect DDS (offline: camera/ZMQ depth only); self-filter at home "
+                         "instead of the live measured arm q")
     args = ap.parse_args()
 
-    robot = make_robot(connect_dds=False, connect_camera=True,        # camera only, no motion
-                       camera_config=_rig.camera_config_for(args.target))
+    if args.no_dds:                                                  # offline: camera/ZMQ only
+        robot = make_robot(connect_dds=False, connect_camera=True,
+                           camera_config=_rig.camera_config_for(args.target))
+    else:                                                            # live q; home_on_connect=False -> no motion
+        robot = _rig.connect(args.target, home_on_connect=False, connect_camera=True,
+                             camera_config=_rig.camera_config_for(args.target))
     cam = robot.camera
     if not cam.has_depth:
         print(f"[{args.target}] no head depth stream -- run 08_check_depth first."); return
@@ -84,8 +97,28 @@ def main():
     print(f"raw cloud : {len(cloud):6d} pts ({len(cloud_box)} in box)  box AABB(pelvis) {_aabb(cloud_box)}")
 
     # --- build the ESDF world exactly as the planner does (with the robot self-filter) ---
-    home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])           # arm config in the depth (no motion)
-    rf = None if args.no_self_filter else robot.planner.robot_depth_filter(home, margin=args.margin)
+    # The self-filter masks the robot at the arm config IN the depth frame, so read the LIVE
+    # measured q (matches what primitives._update_collision_world passes on the real grasp). Falls
+    # back to home if no lowstate arrived (DDS quiet -> e.g. missing CYCLONEDDS_URI in sim).
+    home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])
+    q_arm, src = home, "home (fallback -- no live arm state)"
+    arm = getattr(robot, "arm", None)
+    if arm is not None:
+        for _ in range(20):                                          # wait briefly for lowstate
+            q_live = arm.get_current_dual_arm_q()
+            if np.any(q_live):                                       # nonzero -> real state arrived
+                q_arm, src = q_live, "live (measured)"
+                break
+            time.sleep(0.05)
+    print(f"self-filter arm q [{src}]: {np.round(q_arm, 3)}")
+    # live finger angles -> the self-filter masks the HAND at its real pose (the arms-only planning
+    # model locks fingers open, so a bent thumb would otherwise survive into the world).
+    hand = getattr(robot, "hand", None)
+    hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hand is not None else None
+    if hand_q is not None:
+        print(f"self-filter hand q: L {np.round(hand_q[LEFT], 2)}  R {np.round(hand_q[RIGHT], 2)}")
+    rf = None if args.no_self_filter else \
+        robot.planner.robot_depth_filter(q_arm, hand_q=hand_q, margin=args.margin)
     if args.margin is not None:
         print(f"self-filter margin override: {args.margin} m")
     ev = float(args.esdf_voxel) if args.esdf_voxel else p["esdf_voxel_size"]
@@ -111,7 +144,7 @@ def main():
     # --- self-view probe: is the robot's own arm STILL in the world? (should be clear once filtered) ---
     wrists = {}
     for side in (LEFT, RIGHT):
-        wp = robot.planner.fk(side, home).translation
+        wp = robot.planner.fk(side, q_arm).translation
         wrists[side] = wp
         if len(occ):
             dists = np.linalg.norm(occ - wp, axis=1)
@@ -119,9 +152,9 @@ def main():
             # the ARM reaches UP to the shoulder (z~0.3); the table/block are low (z<~0.13). So
             # TALL occupied geometry near the wrist = un-removed arm; low = just table/block.
             zhi = float(near[:, 2].max()) if len(near) else -9.9
-            arm = zhi > 0.15
-            flag = "  <-- ARM REMNANT (tall geom near wrist)" if arm else "  (arm clear; near = table/block)"
-            print(f"self-view {side:5s}: wrist@home {np.round(wp,3)} nearest occ {dists.min()*1000:.0f} mm, "
+            arm_remnant = zhi > 0.15
+            flag = "  <-- ARM REMNANT (tall geom near wrist)" if arm_remnant else "  (arm clear; near = table/block)"
+            print(f"self-view {side:5s}: wrist@q {np.round(wp,3)} nearest occ {dists.min()*1000:.0f} mm, "
                   f"tallest-near z={zhi:.3f}{flag}")
 
     # --- object probe: is the cube actually in the ESDF (vs erased by the self-filter / occlusion)? ---
@@ -157,7 +190,7 @@ def main():
         if args.probe is not None:
             srv.scene.add_icosphere("/probe", radius=0.03, color=(0, 220, 0),
                                     position=tuple(float(x) for x in args.probe))
-        print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@home)")
+        print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@q)")
         print("Ctrl-C to exit.")
         try:
             while True:
