@@ -45,6 +45,8 @@ def main():
     ap.add_argument("--margin", type=float, default=None,
                     help="override robot_mask_margin (m) for the self-filter -- sweep to find the "
                          "value that removes the arm WITHOUT erasing a nearby object")
+    ap.add_argument("--esdf-voxel", type=float, default=None,
+                    help="override esdf_voxel_size (m) -- finer = a crisper object (tsdf set to half)")
     args = ap.parse_args()
 
     robot = make_robot(connect_dds=False, connect_camera=True,        # camera only, no motion
@@ -86,8 +88,12 @@ def main():
     rf = None if args.no_self_filter else robot.planner.robot_depth_filter(home, margin=args.margin)
     if args.margin is not None:
         print(f"self-filter margin override: {args.margin} m")
+    ev = float(args.esdf_voxel) if args.esdf_voxel else p["esdf_voxel_size"]
+    tv = ev / 2 if args.esdf_voxel else p["tsdf_voxel_size"]
+    if args.esdf_voxel:
+        print(f"esdf voxel override: {ev} m (tsdf {tv} m)")
     mapper = EsdfMapper(grid_center=p["grid_center"], extent_m=p["extent_m"],
-                        esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
+                        esdf_voxel_size=ev, tsdf_voxel_size=tv,
                         image_hw=depth.shape, depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
     t0 = time.time()
     mapper.esdf_from_depth(depth, K, T_pc, robot_filter=rf)         # first call JIT-compiles kernels

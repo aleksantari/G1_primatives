@@ -72,8 +72,10 @@ grasp:
     enabled: false
     grid_center: [0.4, 0.0, 0.2]   # pelvis-frame centre of the workspace box (m)
     extent_m:    [1.2, 1.2, 1.0]   # workspace box size (m); ESDF is built over this
-    esdf_voxel_size: 0.02          # ESDF resolution (m) -- collision query grid
-    tsdf_voxel_size: 0.01          # TSDF fusion resolution (m), finer than the ESDF
+    esdf_voxel_size: 0.01          # ESDF resolution (m) -- collision query grid. 1cm: a ~5cm block
+                                   # is ~5 voxels (vs ~2-3 at 2cm), so the self-filter's top-shave
+                                   # leaves a solid obstacle the approach keeps clearance from.
+    tsdf_voxel_size: 0.005         # TSDF fusion resolution (m), finer than the ESDF
     depth_min_m: 0.1               # ignore depth nearer than this (m)
     depth_max_m: 2.0               # ignore depth past this (m) -- crop to the workspace
     # Robot self-filter (cuRobo RobotSegmenter): zero the depth pixels within robot_mask_margin of
