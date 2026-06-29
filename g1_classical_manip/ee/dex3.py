@@ -48,6 +48,11 @@ class Dex3Hand(Hand):
     def get_state(self, side):
         return self.ctrl.get_state(side)
 
+    def get_q(self, side):
+        """Latest measured (7,) finger joint positions for `side` (Dex3 get_q order). Used to
+        self-filter the hand at its LIVE pose in the depth collision world."""
+        return self.ctrl.get_q(side)
+
     def _preset(self, name, side) -> np.ndarray:
         """Resolve a preset to a 7-vector for `side`: a flat array (same for both
         hands) or per-hand {left,right}. dex3 thumb flexion + finger curl are

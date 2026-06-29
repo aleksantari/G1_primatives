@@ -114,7 +114,7 @@ def main():
     # live finger angles -> the self-filter masks the HAND at its real pose (the arms-only planning
     # model locks fingers open, so a bent thumb would otherwise survive into the world).
     hand = getattr(robot, "hand", None)
-    hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hand is not None else None
+    hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hasattr(hand, "get_q") else None
     if hand_q is not None:
         print(f"self-filter hand q: L {np.round(hand_q[LEFT], 2)}  R {np.round(hand_q[RIGHT], 2)}")
     rf = None if args.no_self_filter else \
