@@ -1,0 +1,123 @@
+#!/usr/bin/env python
+"""12 - Inspect the depth-ESDF collision world IN ISOLATION (no planning, no motion).
+
+Builds the cuRobo Mapper world from ONE head depth frame and reports/visualises it, so we can
+answer the two questions that decide whether plan_grasp can use it:
+
+  1. Is the geometry placed correctly in the pelvis frame? -> the ESDF occupied voxels should
+     overlap the raw deproject cloud (our known-good convention). If they're rotated/offset, the
+     Mapper camera-pose convention is wrong.
+  2. Is anything in the world that should NOT be (the ROBOT'S OWN ARM)? The head camera looking
+     at the table also sees the forearms/hands; if those get fused, the grasp planner starts the
+     arm inside a baked-in copy of itself -> "Goalset planning returned None". The wrist-FK probe
+     + the viser overlay reveal this.
+
+Camera-only: make_robot(connect_dds=False) -> no DDS, no homing, nothing moves. World params come
+from planner.yaml grasp.collision_world (edit there to tune grid_center / extent_m / voxel).
+
+  sim:  bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --target sim --visualize'
+"""
+import argparse
+import sys
+import time
+
+import numpy as np
+import _rig
+from g1_classical_manip.factory import make_robot
+from g1_classical_manip.ee.hand_base import LEFT, RIGHT
+from g1_classical_manip.motion.collision_world import EsdfMapper
+from g1_classical_manip.perception.depth import deproject_depth
+
+
+def _aabb(p):
+    return (np.round(p.min(0), 3).tolist(), np.round(p.max(0), 3).tolist()) if len(p) else (None, None)
+
+
+def main():
+    ap = _rig.add_target_arg(argparse.ArgumentParser())
+    ap.add_argument("--visualize", action="store_true", help="viser overlay (occupied vs cloud vs wrists)")
+    ap.add_argument("--port", type=int, default=8080)
+    args = ap.parse_args()
+
+    robot = make_robot(connect_dds=False, connect_camera=True,        # camera only, no motion
+                       camera_config=_rig.camera_config_for(args.target))
+    cam = robot.camera
+    if not cam.has_depth:
+        print(f"[{args.target}] no head depth stream -- run 08_check_depth first."); return
+
+    depth = None                                                     # prime the conflate socket
+    for _ in range(40):
+        depth = cam.get_depth_frame()
+        if depth is not None:
+            break
+        time.sleep(0.05)
+    if depth is None:
+        print("no depth frame received (is the sim publishing depth on :55556?)"); return
+    finite = np.isfinite(depth)
+    print(f"depth: {depth.shape} finite={100*finite.mean():.0f}% "
+          f"range[{np.nanmin(depth[finite])/1000:.2f},{np.nanmax(depth[finite])/1000:.2f}]m")
+
+    K = robot.cfg["camera"]["intrinsics"]
+    T_pc = robot.frames.T_pelvis_camera(None)                        # head cam optical pose in pelvis
+    p = robot.planner._cw_params()                                  # same params plan_grasp would use
+    print(f"world: grid_center={p['grid_center']} extent_m={p['extent_m']} "
+          f"esdf_voxel={p['esdf_voxel_size']} depth=[{p['depth_min_m']},{p['depth_max_m']}]m")
+
+    # --- raw deproject (known-good convention) for placement comparison ---
+    cloud = deproject_depth(depth, K, T_pc, z_max_m=p["depth_max_m"]).points
+    print(f"raw cloud : {len(cloud):6d} pts  AABB(pelvis) {_aabb(cloud)}")
+
+    # --- build the ESDF world exactly as the planner does ---
+    mapper = EsdfMapper(grid_center=p["grid_center"], extent_m=p["extent_m"],
+                        esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
+                        image_hw=depth.shape, depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
+    t0 = time.time()
+    mapper.esdf_from_depth(depth, K, T_pc)                          # first call JIT-compiles kernels
+    occ = mapper.occupied_points()
+    print(f"ESDF      : {len(occ):6d} occupied voxels  AABB(pelvis) {_aabb(occ)}  ({time.time()-t0:.1f}s)")
+    if len(occ) and len(cloud):
+        dc = np.linalg.norm(np.array(_aabb(occ)[0]) - np.array(_aabb(cloud)[0])) \
+            + np.linalg.norm(np.array(_aabb(occ)[1]) - np.array(_aabb(cloud)[1]))
+        tag = "OK (placement matches the raw cloud)" if dc < 0.10 else \
+            "MISMATCH -> camera-pose convention is likely wrong"
+        print(f"  occupied vs raw-cloud AABB delta {dc*1000:.0f} mm -> {tag}")
+
+    # --- self-view probe: is the robot's own arm in the world? ---
+    home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])
+    wrists = {}
+    for side in (LEFT, RIGHT):
+        wp = robot.planner.fk(side, home).translation
+        wrists[side] = wp
+        if len(occ):
+            d = float(np.linalg.norm(occ - wp, axis=1).min())
+            flag = "  <-- ARM LIKELY IN THE WORLD (self-view!)" if d < 0.10 else ""
+            print(f"self-view {side:5s}: wrist@home {np.round(wp,3)} nearest occupied {d*1000:.0f} mm{flag}")
+
+    if args.visualize:
+        try:
+            import viser
+        except Exception as e:                                       # noqa: BLE001
+            print(f"viser unavailable: {e}"); sys.exit(0)
+        srv = viser.ViserServer(host="127.0.0.1", port=args.port)
+        if len(cloud):
+            srv.scene.add_point_cloud("/raw_cloud", points=cloud.astype(np.float32),
+                                      colors=np.tile([150, 150, 150], (len(cloud), 1)).astype(np.uint8),
+                                      point_size=0.004)
+        if len(occ):
+            srv.scene.add_point_cloud("/esdf_occupied", points=occ.astype(np.float32),
+                                      colors=np.tile([255, 40, 40], (len(occ), 1)).astype(np.uint8),
+                                      point_size=float(p["esdf_voxel_size"]) * 0.9)
+        for side, wp in wrists.items():
+            srv.scene.add_icosphere(f"/wrist_{side}", radius=0.04, color=(40, 40, 255),
+                                    position=tuple(float(x) for x in wp))
+        print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@home)")
+        print("Ctrl-C to exit.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+
+
+if __name__ == "__main__":
+    main()

@@ -134,3 +134,16 @@ class EsdfMapper:
         if not getattr(grid, "name", None):
             grid.name = "head_esdf"
         return grid
+
+    def occupied_points(self) -> np.ndarray:
+        """(N,3) pelvis-frame centres of the currently-occupied TSDF voxels (the fused surface) --
+        for INSPECTING the world independently of the planner: confirm the geometry sits where it
+        should (vs the raw deproject cloud / GT object) and reveal anything that should NOT be there
+        (e.g. the robot's own arm, baked in because the head camera sees it). Call after
+        esdf_from_depth. Empty array if nothing has been integrated."""
+        if self._mapper is None:
+            return np.zeros((0, 3), np.float32)
+        vox = self._mapper.integrator.extract_occupied_voxels(surface_only=False)
+        if vox is None or len(vox) == 0:
+            return np.zeros((0, 3), np.float32)
+        return vox.centers.detach().cpu().numpy().astype(np.float32)
