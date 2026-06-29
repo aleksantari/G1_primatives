@@ -23,6 +23,11 @@ from g1_classical_manip.ee.hand_base import LEFT, RIGHT
 
 # wrist-yaw tool frames (the MVP goal frame). 5cm L_ee/palm offset is a later refinement.
 WRIST_FRAME = {LEFT: "left_wrist_yaw_link", RIGHT: "right_wrist_yaw_link"}
+# Active-hand collision links (palm + Dex3 fingers, from the cuRobo config's collision_link_names).
+# Disabled during plan_grasp when a depth ESDF world is on, so the open hand sitting in the object/
+# table ESDF at the grasp pose isn't flagged as a collision (the grasp is meant to CONTACT the object).
+_HAND_PARTS = ["palm", "thumb_0", "thumb_1", "thumb_2", "index_0", "index_1", "middle_0", "middle_1"]
+HAND_LINKS = {s: [f"{s}_hand_{p}_link" for p in _HAND_PARTS] for s in (LEFT, RIGHT)}
 # Head-camera link. Listed in the cuRobo config's tool_frames ONLY so its pelvis-frame
 # pose is FK-queryable (perception). It is fixed to the locked torso, so plan_to_pose
 # pins it to its constant current FK pose -- it never constrains the arms.
@@ -74,6 +79,12 @@ class CuroboArmPlanner:
             robot=robot_cfg_path, max_goalset=self._max_goalset))
         self._mp.warmup(enable_graph=True, num_warmup_iterations=5)
         self._grasp_mp = {}       # lazy per-side single-tool-frame planners for plan_grasp
+        # Depth-ESDF collision world (planner.yaml grasp.collision_world). OFF by default: when on,
+        # the grasp planner is built voxel-capable and the head depth ESDF is loaded before plan_grasp
+        # so the approach routes around the object/table. See motion/collision_world.py.
+        self._cw_cfg = (self.planner_cfg.get("grasp") or {}).get("collision_world") or {}
+        self._cw_enabled = bool(self._cw_cfg.get("enabled", False))
+        self._esdf_mapper = None  # lazy EsdfMapper (depth -> ESDF), built on first depth frame
         self.active = list(self._mp.joint_names)          # 14 arm joints, cuRobo order
         self.tool_frames = list(self._mp.tool_frames)
         assert len(self.active) == DOF, f"expected {DOF} active joints, got {len(self.active)}"
@@ -266,10 +277,69 @@ class CuroboArmPlanner:
             with open(self._robot_cfg_path) as f:
                 rcfg = yaml.safe_load(f)
             rcfg["kinematics"]["tool_frames"] = [WRIST_FRAME[side]]
-            mp = MotionPlanner(MotionPlannerCfg.create(robot=rcfg, max_goalset=self._max_goalset))
+            scene_model = None
+            if self._cw_enabled:                 # voxel-capable: allocate the ESDF channel at build
+                from curobo._src.geom.types import SceneCfg
+                from g1_classical_manip.motion.collision_world import empty_esdf_grid
+                p = self._cw_params()
+                scene_model = SceneCfg(voxel=[empty_esdf_grid(
+                    p["grid_center"], p["extent_m"], p["esdf_voxel_size"])])
+            mp = MotionPlanner(MotionPlannerCfg.create(
+                robot=rcfg, max_goalset=self._max_goalset, scene_model=scene_model))
             mp.warmup(enable_graph=False, num_warmup_iterations=1)
             self._grasp_mp[side] = mp
         return mp
+
+    @property
+    def collision_world_enabled(self) -> bool:
+        """True when the depth-ESDF collision world is on (planner.yaml grasp.collision_world)."""
+        return self._cw_enabled
+
+    def set_collision_world(self, enabled: bool, cfg: Optional[dict] = None) -> None:
+        """Toggle the depth-ESDF collision world at runtime (e.g. a `--collision-world` flag).
+        Call BEFORE the first grasp: the grasp planner is built voxel-capable lazily, so any
+        already-built (non-voxel) grasp planner is dropped here to rebuild with the new setting."""
+        self._cw_enabled = bool(enabled)
+        if cfg is not None:
+            self._cw_cfg = cfg
+        self._grasp_mp = {}        # force rebuild with/without the voxel channel
+        self._esdf_mapper = None
+
+    def _cw_params(self) -> dict:
+        """Depth-ESDF collision-world params (planner.yaml grasp.collision_world) with defaults
+        sized for the G1 tabletop workspace in the pelvis frame. extent is a multiple of
+        esdf_voxel_size so the empty (build) grid and the live ESDF have identical voxel shape."""
+        c = self._cw_cfg
+        return dict(
+            grid_center=list(c.get("grid_center", [0.4, 0.0, 0.2])),
+            extent_m=list(c.get("extent_m", [1.2, 1.2, 1.0])),
+            esdf_voxel_size=float(c.get("esdf_voxel_size", 0.02)),
+            tsdf_voxel_size=float(c.get("tsdf_voxel_size", 0.01)),
+            depth_min_m=float(c.get("depth_min_m", 0.1)),
+            depth_max_m=float(c.get("depth_max_m", 2.0)),
+        )
+
+    def update_grasp_world(self, side: str, depth_mm, intrinsics: dict, T_pelvis_camera) -> bool:
+        """Build a fresh ESDF from the head depth and load it into `side`'s grasp planner, so the
+        next plan_grasp avoids the object/table. No-op (returns False) when the collision world is
+        disabled or there is no depth. `depth_mm` (H,W float32 mm), `intrinsics` {fx,fy,cx,cy},
+        `T_pelvis_camera` = the camera optical pose in pelvis (spatial.pose.Pose)."""
+        if not self._cw_enabled or depth_mm is None:
+            return False
+        import numpy as _np
+        from curobo._src.geom.types import SceneCfg
+        if self._esdf_mapper is None:
+            from g1_classical_manip.motion.collision_world import EsdfMapper
+            p = self._cw_params()
+            hw = _np.asarray(depth_mm).shape
+            self._esdf_mapper = EsdfMapper(
+                grid_center=p["grid_center"], extent_m=p["extent_m"],
+                esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
+                image_hw=(int(hw[0]), int(hw[1])),
+                depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
+        grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera)
+        self._grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
+        return True
 
     def _hold_idle(self, traj, side: str, hold_q_repo14):
         """Pin the IDLE (non-`side`) arm's 7 joints to `hold_q_repo14` across every waypoint of a
@@ -338,6 +408,8 @@ class CuroboArmPlanner:
 
         if disable_collision_links is None:               # config has grasp_contact_link_names: null
             disable_collision_links = [active]
+            if self._cw_enabled:                          # let the open hand sit in the object ESDF
+                disable_collision_links = disable_collision_links + HAND_LINKS[side]
         res = mp.plan_grasp(
             goal, start,
             grasp_approach_axis=approach_axis, grasp_approach_offset=float(approach_offset),

@@ -115,6 +115,10 @@ def main():
                     help="skip the approach back-off AND the lift: plan ONE free-space move "
                          "straight to the grasp pose, then close. Isolates the grasp frame "
                          "(chosen.wrist_goal) for a sanity check (native path)")
+    ap.add_argument("--collision-world", action="store_true",
+                    help="build a depth-ESDF collision world (head depth -> cuRobo Mapper) so the "
+                         "approach routes AROUND the object/table (planner.yaml grasp.collision_world). "
+                         "Needs a head depth stream (08_check_depth --target <t> green)")
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT)
     ap.add_argument("--object", default="block")
     ap.add_argument("--approach", type=float, default=0.10,
@@ -167,6 +171,11 @@ def main():
     if args.grasp_only:        # frame sanity check: ONE move straight to the grasp pose, no
         robot.cfg["planner"].setdefault("grasp", {})["strategies"] = [   # back-off, no lift
             {"approach_offset": 0.0, "plan_approach": False, "plan_lift": False}]
+    if args.collision_world:   # depth-ESDF world: approach routes around the object/table
+        cw = robot.cfg["planner"].setdefault("grasp", {}).setdefault("collision_world", {})
+        cw["enabled"] = True
+        robot.planner.set_collision_world(True, cw)     # rebuilds the grasp planner voxel-capable
+        print("collision world: ON (head depth -> cuRobo ESDF; approach is obstacle-aware)")
 
     side, auto, rc = args.side, args.no_confirm, 0
     try:

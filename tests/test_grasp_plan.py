@@ -71,6 +71,7 @@ def _planner(mp):
     (the single-tool-frame grasp planner) and the helpers plan_grasp_set needs are stubbed."""
     p = CuroboArmPlanner.__new__(CuroboArmPlanner)
     p._max_goalset = 128
+    p._cw_enabled = False                                              # collision world off by default
     p._joint_state = lambda q: "START"
     p._tensor_k = lambda arr: np.asarray(arr, float)                    # keep numpy for asserts
     p._jointstate_to_trajectory = lambda js, last, lbl, dt=None: f"traj:{lbl}"
@@ -249,6 +250,68 @@ def test_plan_grasp_set_empty_raises():
         _planner(FakeMP(_grasp_result())).plan_grasp_set(
             np.zeros(14), RIGHT, [], approach_axis="x", approach_offset=-0.1,
             lift_axis="z", lift_offset=0.1)
+
+
+# --------------------------------------------------------------- depth-ESDF collision world
+def test_plan_grasp_set_disables_hand_links_when_cw_on(monkeypatch):
+    from g1_classical_manip.motion.curobo_planner import HAND_LINKS
+    _inject_curobo_types(monkeypatch)
+    mp = FakeMP(_grasp_result())
+    p = _planner(mp)
+    p._cw_enabled = True                          # collision world on -> open hand may touch the ESDF
+    p.plan_grasp_set(np.zeros(14), RIGHT, [Pose(np.eye(3), [0.4, -0.2, 0.8])],
+                     approach_axis="y", approach_offset=-0.1, lift_axis="z", lift_offset=0.1)
+    dl = mp.kw["disable_collision_links"]
+    assert dl[0] == "right_wrist_yaw_link"
+    assert set(HAND_LINKS[RIGHT]).issubset(set(dl))     # active hand links disabled for the grasp
+    assert "right_hand_palm_link" in dl and "right_hand_thumb_2_link" in dl
+
+
+def test_plan_grasp_set_no_hand_links_when_cw_off(monkeypatch):
+    _inject_curobo_types(monkeypatch)
+    mp = FakeMP(_grasp_result())
+    _planner(mp).plan_grasp_set(np.zeros(14), RIGHT, [Pose(np.eye(3), [0.4, -0.2, 0.8])],
+                                approach_axis="y", approach_offset=-0.1, lift_axis="z", lift_offset=0.1)
+    assert mp.kw["disable_collision_links"] == ["right_wrist_yaw_link"]   # unchanged when world off
+
+
+def test_hand_links_map():
+    from g1_classical_manip.motion.curobo_planner import HAND_LINKS
+    from g1_classical_manip.ee.hand_base import LEFT
+    assert HAND_LINKS[RIGHT] == [
+        "right_hand_palm_link", "right_hand_thumb_0_link", "right_hand_thumb_1_link",
+        "right_hand_thumb_2_link", "right_hand_index_0_link", "right_hand_index_1_link",
+        "right_hand_middle_0_link", "right_hand_middle_1_link"]
+    assert all(lk.startswith("left_hand_") for lk in HAND_LINKS[LEFT])
+
+
+def test_set_collision_world_toggles_and_drops_cache():
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    p._cw_enabled = False
+    p._cw_cfg = {}
+    p._grasp_mp = {"right": "stale"}              # a cached non-voxel grasp planner
+    p._esdf_mapper = "stale"
+    assert p.collision_world_enabled is False
+    p.set_collision_world(True, {"enabled": True, "extent_m": [1, 1, 1]})
+    assert p.collision_world_enabled is True
+    assert p._grasp_mp == {} and p._esdf_mapper is None      # dropped -> rebuilds voxel-capable
+    assert p._cw_cfg["extent_m"] == [1, 1, 1]
+
+
+def test_cw_params_defaults():
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    p._cw_cfg = {}
+    pr = p._cw_params()
+    assert pr["grid_center"] == [0.4, 0.0, 0.2] and pr["extent_m"] == [1.2, 1.2, 1.0]
+    assert pr["esdf_voxel_size"] == 0.02 and pr["depth_max_m"] == 2.0
+
+
+def test_update_grasp_world_noops():
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    p._cw_enabled = False
+    assert p.update_grasp_world(RIGHT, np.zeros((4, 4)), {}, None) is False   # world off
+    p._cw_enabled = True
+    assert p.update_grasp_world(RIGHT, None, {}, None) is False               # no depth
 
 
 # --------------------------------------------------------------- _hold_idle

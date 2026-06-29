@@ -13,6 +13,7 @@ it's genuinely a new primitive.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -66,6 +67,36 @@ class GraspResult:
     outcome: object = None        # the planner GraspPlanOutcome (segments, per-phase flags)
 
 
+def _update_collision_world(robot, side: str) -> None:
+    """Build the depth-ESDF collision world from the head camera before a grasp plan. Gated:
+    a no-op unless the planner has the collision world enabled AND a head depth frame is
+    available. SOURCE-INDEPENDENT -- it uses the head depth, so it works with any grasp source
+    (apriltag / graspgenx / sim_cloud). Best-effort: a perception hiccup never blocks the grasp
+    (the planner just falls back to self-collision-only)."""
+    planner = robot.planner
+    if not getattr(planner, "collision_world_enabled", False):
+        return
+    cam = getattr(robot, "camera", None)
+    if cam is None or not cam.has_depth:
+        return
+    depth = None
+    for _ in range(20):                          # CONFLATE socket: wait briefly for a fresh frame
+        depth = cam.get_depth_frame()
+        if depth is not None:
+            break
+        time.sleep(0.05)
+    if depth is None:
+        print("grasp_motion: collision world skipped (no head depth frame)")
+        return
+    try:
+        K = robot.cfg["camera"]["intrinsics"]
+        T_pc = robot.frames.T_pelvis_camera(None)          # head cam is q-independent (locked torso)
+        if planner.update_grasp_world(side, depth, K, T_pc):
+            print("grasp_motion: collision world updated from head depth (ESDF)")
+    except Exception as e:                        # noqa: BLE001 - best-effort; never block the grasp
+        print(f"grasp_motion: collision world skipped: {e}")
+
+
 def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
                  on_selected=None) -> GraspResult:
     """Native cuRobo plan_grasp over ranked grasp candidates: solve a K-goalset (cuRobo picks
@@ -78,6 +109,7 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
     if not cands:
         return GraspResult(False, "no candidates")
     gp = (robot.cfg["planner"].get("grasp") or {})
+    _update_collision_world(robot, side)        # depth-ESDF world (gated), before planning
     q0 = robot.arm.get_current_dual_arm_q()
     out = robot.planner.plan_grasp_set_sweep(
         q0, side, [c.wrist_goal for c in cands],

@@ -61,3 +61,18 @@ grasp:
     - {approach_offset: -0.10, plan_lift: false}      # approach + grasp only
     - {approach_offset: -0.10, plan_approach: false}  # grasp-at-goal only (no free-space approach)
     - {approach_offset: -0.05, plan_lift: false}      # short approach, last-ditch
+  # Depth-ESDF collision world: head depth -> cuRobo Mapper -> ESDF VoxelGrid -> the grasp planner,
+  # so the APPROACH routes around the object/table instead of barging through it. SAME path sim
+  # (Isaac front_camera depth) + real (ZED); source-independent (uses head depth, any grasp source).
+  # The grasp planner is built voxel-capable and the active hand links are collision-disabled during
+  # the grasp (so the open hand may sit in the object ESDF). See motion/collision_world.py.
+  # OFF by default -- opt in here or with `09_graspgen.py --collision-world`. Needs a head depth
+  # stream (08_check_depth --target <t> green). extent_m is a multiple of esdf_voxel_size.
+  collision_world:
+    enabled: false
+    grid_center: [0.4, 0.0, 0.2]   # pelvis-frame centre of the workspace box (m)
+    extent_m:    [1.2, 1.2, 1.0]   # workspace box size (m); ESDF is built over this
+    esdf_voxel_size: 0.02          # ESDF resolution (m) -- collision query grid
+    tsdf_voxel_size: 0.01          # TSDF fusion resolution (m), finer than the ESDF
+    depth_min_m: 0.1               # ignore depth nearer than this (m)
+    depth_max_m: 2.0               # ignore depth past this (m) -- crop to the workspace
