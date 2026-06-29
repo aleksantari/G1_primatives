@@ -39,6 +39,9 @@ def main():
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--no-self-filter", action="store_true",
                     help="skip the robot self-filter -> show the raw world WITH the arm baked in")
+    ap.add_argument("--probe", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
+                    help="report ESDF + raw-cloud coverage near a pelvis-frame point (e.g. the cube "
+                         "[0.3 -0.1 0.1]) -> is the object actually in the world, or was it erased?")
     args = ap.parse_args()
 
     robot = make_robot(connect_dds=False, connect_camera=True,        # camera only, no motion
@@ -104,6 +107,19 @@ def main():
             flag = "  <-- ARM STILL IN THE WORLD" if d < 0.10 else "  (clear)"
             print(f"self-view {side:5s}: wrist@home {np.round(wp,3)} nearest occupied {d*1000:.0f} mm{flag}")
 
+    # --- object probe: is the cube actually in the ESDF (vs erased by the self-filter / occlusion)? ---
+    if args.probe is not None:
+        pt = np.array(args.probe, float)
+        d_occ = float(np.linalg.norm(occ - pt, axis=1).min()) if len(occ) else 9.9
+        n_occ = int((np.linalg.norm(occ - pt, axis=1) < 0.05).sum()) if len(occ) else 0
+        d_raw = float(np.linalg.norm(cloud - pt, axis=1).min()) if len(cloud) else 9.9
+        n_raw = int((np.linalg.norm(cloud - pt, axis=1) < 0.05).sum()) if len(cloud) else 0
+        verdict = ("IN THE WORLD" if n_occ > 0 else
+                   ("ERASED -- raw cloud has it but the ESDF doesn't (self-filter occlusion/over-mask)"
+                    if n_raw > 0 else "NOT SEEN -- absent from BOTH (out of box / occluded / no depth)"))
+        print(f"probe {np.round(pt,3)}: ESDF nearest {d_occ*1000:.0f} mm, {n_occ} within 5cm | "
+              f"raw cloud nearest {d_raw*1000:.0f} mm, {n_raw} within 5cm -> {verdict}")
+
     if args.visualize:
         try:
             import viser
@@ -121,6 +137,9 @@ def main():
         for side, wp in wrists.items():
             srv.scene.add_icosphere(f"/wrist_{side}", radius=0.04, color=(40, 40, 255),
                                     position=tuple(float(x) for x in wp))
+        if args.probe is not None:
+            srv.scene.add_icosphere("/probe", radius=0.03, color=(0, 220, 0),
+                                    position=tuple(float(x) for x in args.probe))
         print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@home)")
         print("Ctrl-C to exit.")
         try:
