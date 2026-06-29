@@ -67,12 +67,13 @@ class GraspResult:
     outcome: object = None        # the planner GraspPlanOutcome (segments, per-phase flags)
 
 
-def _update_collision_world(robot, side: str) -> None:
+def _update_collision_world(robot, side: str, q0=None) -> None:
     """Build the depth-ESDF collision world from the head camera before a grasp plan. Gated:
     a no-op unless the planner has the collision world enabled AND a head depth frame is
     available. SOURCE-INDEPENDENT -- it uses the head depth, so it works with any grasp source
-    (apriltag / graspgenx / sim_cloud). Best-effort: a perception hiccup never blocks the grasp
-    (the planner just falls back to self-collision-only)."""
+    (apriltag / graspgenx / sim_cloud). `q0` (current arm config) self-filters the robot out of
+    the depth. Best-effort: a perception hiccup never blocks the grasp (the planner just falls
+    back to self-collision-only)."""
     planner = robot.planner
     if not getattr(planner, "collision_world_enabled", False):
         return
@@ -91,8 +92,8 @@ def _update_collision_world(robot, side: str) -> None:
     try:
         K = robot.cfg["camera"]["intrinsics"]
         T_pc = robot.frames.T_pelvis_camera(None)          # head cam is q-independent (locked torso)
-        if planner.update_grasp_world(side, depth, K, T_pc):
-            print("grasp_motion: collision world updated from head depth (ESDF)")
+        if planner.update_grasp_world(side, depth, K, T_pc, q0):
+            print("grasp_motion: collision world updated from head depth (ESDF, robot self-filtered)")
     except Exception as e:                        # noqa: BLE001 - best-effort; never block the grasp
         print(f"grasp_motion: collision world skipped: {e}")
 
@@ -109,8 +110,8 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
     if not cands:
         return GraspResult(False, "no candidates")
     gp = (robot.cfg["planner"].get("grasp") or {})
-    _update_collision_world(robot, side)        # depth-ESDF world (gated), before planning
     q0 = robot.arm.get_current_dual_arm_q()
+    _update_collision_world(robot, side, q0)    # depth-ESDF world (gated), self-filtered at q0
     out = robot.planner.plan_grasp_set_sweep(
         q0, side, [c.wrist_goal for c in cands],
         strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),

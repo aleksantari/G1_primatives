@@ -85,6 +85,7 @@ class CuroboArmPlanner:
         self._cw_cfg = (self.planner_cfg.get("grasp") or {}).get("collision_world") or {}
         self._cw_enabled = bool(self._cw_cfg.get("enabled", False))
         self._esdf_mapper = None  # lazy EsdfMapper (depth -> ESDF), built on first depth frame
+        self._segmenter = None    # lazy cuRobo RobotSegmenter (self-filter the arm out of depth)
         self.active = list(self._mp.joint_names)          # 14 arm joints, cuRobo order
         self.tool_frames = list(self._mp.tool_frames)
         assert len(self.active) == DOF, f"expected {DOF} active joints, got {len(self.active)}"
@@ -304,6 +305,7 @@ class CuroboArmPlanner:
             self._cw_cfg = cfg
         self._grasp_mp = {}        # force rebuild with/without the voxel channel
         self._esdf_mapper = None
+        self._segmenter = None
 
     def _cw_params(self) -> dict:
         """Depth-ESDF collision-world params (planner.yaml grasp.collision_world) with defaults
@@ -317,27 +319,53 @@ class CuroboArmPlanner:
             tsdf_voxel_size=float(c.get("tsdf_voxel_size", 0.01)),
             depth_min_m=float(c.get("depth_min_m", 0.1)),
             depth_max_m=float(c.get("depth_max_m", 2.0)),
+            self_filter=bool(c.get("self_filter", True)),
+            robot_mask_margin=float(c.get("robot_mask_margin", 0.05)),
         )
 
-    def update_grasp_world(self, side: str, depth_mm, intrinsics: dict, T_pelvis_camera) -> bool:
+    def robot_depth_filter(self, q_repo14, margin: Optional[float] = None):
+        """A ``CameraObservation -> robot-removed depth`` callback (cuRobo RobotSegmenter): zeros
+        the depth pixels within `margin` of the robot's collision spheres at config `q_repo14`, so
+        the head camera doesn't fuse the robot's own arm/hands into the collision world. Reuses the
+        planner's kinematics (FK + collision spheres). Returns None if q is None."""
+        if q_repo14 is None:
+            return None
+        if self._segmenter is None:
+            from curobo._src.perception.robot_segmenter import RobotSegmenter
+            m = self._cw_params()["robot_mask_margin"] if margin is None else float(margin)
+            self._segmenter = RobotSegmenter(
+                self._mp.kinematics, distance_threshold=m, use_cuda_graph=False)
+        js = self._joint_state(q_repo14)               # 14 active joints, cuRobo order
+
+        def _filter(obs):
+            _, filtered = self._segmenter.get_robot_mask_from_active_js(obs, js)
+            return filtered
+
+        return _filter
+
+    def update_grasp_world(self, side: str, depth_mm, intrinsics: dict, T_pelvis_camera,
+                           q_repo14=None) -> bool:
         """Build a fresh ESDF from the head depth and load it into `side`'s grasp planner, so the
         next plan_grasp avoids the object/table. No-op (returns False) when the collision world is
         disabled or there is no depth. `depth_mm` (H,W float32 mm), `intrinsics` {fx,fy,cx,cy},
-        `T_pelvis_camera` = the camera optical pose in pelvis (spatial.pose.Pose)."""
+        `T_pelvis_camera` = the camera optical pose in pelvis. `q_repo14` = the arm config at which
+        the depth was captured -> the robot is self-filtered out of the depth (essential: else the
+        arm is fused into the world and plan_grasp starts the arm inside a copy of itself)."""
         if not self._cw_enabled or depth_mm is None:
             return False
         import numpy as _np
         from curobo._src.geom.types import SceneCfg
+        p = self._cw_params()
         if self._esdf_mapper is None:
             from g1_classical_manip.motion.collision_world import EsdfMapper
-            p = self._cw_params()
             hw = _np.asarray(depth_mm).shape
             self._esdf_mapper = EsdfMapper(
                 grid_center=p["grid_center"], extent_m=p["extent_m"],
                 esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
                 image_hw=(int(hw[0]), int(hw[1])),
                 depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
-        grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera)
+        rf = self.robot_depth_filter(q_repo14) if p["self_filter"] else None
+        grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera, robot_filter=rf)
         self._grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
         return True
 

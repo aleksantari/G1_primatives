@@ -37,6 +37,8 @@ def main():
     ap = _rig.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--visualize", action="store_true", help="viser overlay (occupied vs cloud vs wrists)")
     ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--no-self-filter", action="store_true",
+                    help="skip the robot self-filter -> show the raw world WITH the arm baked in")
     args = ap.parse_args()
 
     robot = make_robot(connect_dds=False, connect_camera=True,        # camera only, no motion
@@ -63,34 +65,43 @@ def main():
     print(f"world: grid_center={p['grid_center']} extent_m={p['extent_m']} "
           f"esdf_voxel={p['esdf_voxel_size']} depth=[{p['depth_min_m']},{p['depth_max_m']}]m")
 
-    # --- raw deproject (known-good convention) for placement comparison ---
+    # raw deproject (known-good convention), CROPPED to the workspace box for an apples-to-apples
+    # placement check vs the box-bounded ESDF (the full cloud spans the whole frustum, so its raw
+    # AABB is meaningless here).
     cloud = deproject_depth(depth, K, T_pc, z_max_m=p["depth_max_m"]).points
-    print(f"raw cloud : {len(cloud):6d} pts  AABB(pelvis) {_aabb(cloud)}")
+    gc, ex = np.array(p["grid_center"]), np.array(p["extent_m"])
+    lo, hi = gc - ex / 2, gc + ex / 2
+    in_box = np.all((cloud >= lo) & (cloud <= hi), axis=1)
+    cloud_box = cloud[in_box]
+    print(f"raw cloud : {len(cloud):6d} pts ({len(cloud_box)} in box)  box AABB(pelvis) {_aabb(cloud_box)}")
 
-    # --- build the ESDF world exactly as the planner does ---
+    # --- build the ESDF world exactly as the planner does (with the robot self-filter) ---
+    home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])           # arm config in the depth (no motion)
+    rf = None if args.no_self_filter else robot.planner.robot_depth_filter(home)
     mapper = EsdfMapper(grid_center=p["grid_center"], extent_m=p["extent_m"],
                         esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
                         image_hw=depth.shape, depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
     t0 = time.time()
-    mapper.esdf_from_depth(depth, K, T_pc)                          # first call JIT-compiles kernels
+    mapper.esdf_from_depth(depth, K, T_pc, robot_filter=rf)         # first call JIT-compiles kernels
     occ = mapper.occupied_points()
-    print(f"ESDF      : {len(occ):6d} occupied voxels  AABB(pelvis) {_aabb(occ)}  ({time.time()-t0:.1f}s)")
-    if len(occ) and len(cloud):
-        dc = np.linalg.norm(np.array(_aabb(occ)[0]) - np.array(_aabb(cloud)[0])) \
-            + np.linalg.norm(np.array(_aabb(occ)[1]) - np.array(_aabb(cloud)[1]))
-        tag = "OK (placement matches the raw cloud)" if dc < 0.10 else \
-            "MISMATCH -> camera-pose convention is likely wrong"
-        print(f"  occupied vs raw-cloud AABB delta {dc*1000:.0f} mm -> {tag}")
+    sf = "off" if args.no_self_filter else "on"
+    print(f"ESDF      : {len(occ):6d} occupied voxels  AABB(pelvis) {_aabb(occ)}  "
+          f"(self_filter={sf}, {time.time()-t0:.1f}s)")
+    if len(occ) and len(cloud_box):
+        dc = np.linalg.norm(np.array(_aabb(occ)[0]) - np.array(_aabb(cloud_box)[0])) \
+            + np.linalg.norm(np.array(_aabb(occ)[1]) - np.array(_aabb(cloud_box)[1]))
+        tag = "OK (matches the in-box cloud)" if dc < 0.15 else \
+            "MISMATCH -> camera-pose convention may be wrong (or the self-filter removed a lot)"
+        print(f"  occupied vs in-box-cloud AABB delta {dc*1000:.0f} mm -> {tag}")
 
-    # --- self-view probe: is the robot's own arm in the world? ---
-    home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])
+    # --- self-view probe: is the robot's own arm STILL in the world? (should be clear once filtered) ---
     wrists = {}
     for side in (LEFT, RIGHT):
         wp = robot.planner.fk(side, home).translation
         wrists[side] = wp
         if len(occ):
             d = float(np.linalg.norm(occ - wp, axis=1).min())
-            flag = "  <-- ARM LIKELY IN THE WORLD (self-view!)" if d < 0.10 else ""
+            flag = "  <-- ARM STILL IN THE WORLD" if d < 0.10 else "  (clear)"
             print(f"self-view {side:5s}: wrist@home {np.round(wp,3)} nearest occupied {d*1000:.0f} mm{flag}")
 
     if args.visualize:

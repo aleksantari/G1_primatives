@@ -292,9 +292,11 @@ def test_set_collision_world_toggles_and_drops_cache():
     p._grasp_mp = {"right": "stale"}              # a cached non-voxel grasp planner
     p._esdf_mapper = "stale"
     assert p.collision_world_enabled is False
+    p._segmenter = "stale"
     p.set_collision_world(True, {"enabled": True, "extent_m": [1, 1, 1]})
     assert p.collision_world_enabled is True
     assert p._grasp_mp == {} and p._esdf_mapper is None      # dropped -> rebuilds voxel-capable
+    assert p._segmenter is None                              # self-filter segmenter dropped too
     assert p._cw_cfg["extent_m"] == [1, 1, 1]
 
 
@@ -304,6 +306,12 @@ def test_cw_params_defaults():
     pr = p._cw_params()
     assert pr["grid_center"] == [0.4, 0.0, 0.2] and pr["extent_m"] == [1.2, 1.2, 1.0]
     assert pr["esdf_voxel_size"] == 0.02 and pr["depth_max_m"] == 2.0
+    assert pr["self_filter"] is True and pr["robot_mask_margin"] == 0.05
+
+
+def test_robot_depth_filter_none_q_returns_none():
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    assert p.robot_depth_filter(None) is None             # no q -> no filter (GPU-free path)
 
 
 def test_update_grasp_world_noops():

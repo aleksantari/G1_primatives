@@ -76,3 +76,9 @@ grasp:
     tsdf_voxel_size: 0.01          # TSDF fusion resolution (m), finer than the ESDF
     depth_min_m: 0.1               # ignore depth nearer than this (m)
     depth_max_m: 2.0               # ignore depth past this (m) -- crop to the workspace
+    # Robot self-filter (cuRobo RobotSegmenter): zero the depth pixels within robot_mask_margin of
+    # the robot's collision spheres at the current q, so the head camera does NOT fuse the arm/hands
+    # into the world (without this the grasp starts inside a baked-in copy of the arm -> infeasible).
+    # Keep ON. Bigger margin removes more of the robot but risks erasing object points near the hand.
+    self_filter: true
+    robot_mask_margin: 0.05        # m around each collision sphere to treat as robot

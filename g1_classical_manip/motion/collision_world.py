@@ -96,11 +96,16 @@ class EsdfMapper:
             self._mapper = self._Mapper(self._cfg)
         return self._mapper
 
-    def esdf_from_depth(self, depth_mm: np.ndarray, intrinsics: dict, T_pelvis_camera: Pose):
+    def esdf_from_depth(self, depth_mm: np.ndarray, intrinsics: dict, T_pelvis_camera: Pose,
+                        robot_filter=None):
         """Head depth (H,W float32 MILLIMETERS) -> a cuRobo ESDF ``VoxelGrid`` (pelvis frame).
 
         ``intrinsics``: {fx,fy,cx,cy} (the depth map's pinhole). ``T_pelvis_camera``: our
-        ``spatial.pose.Pose`` = the camera OPTICAL frame in pelvis (Frames.T_pelvis_camera)."""
+        ``spatial.pose.Pose`` = the camera OPTICAL frame in pelvis (Frames.T_pelvis_camera).
+        ``robot_filter``: optional ``CameraObservation -> filtered_depth_tensor`` callback that
+        REMOVES the robot's own geometry from the depth before fusing (else the head camera fuses
+        the arm into the world and the grasp starts inside a copy of itself). See
+        CuroboArmPlanner.robot_depth_filter (cuRobo RobotSegmenter)."""
         torch = self._torch
         from curobo.types import CameraObservation, Pose as CuPose
         mapper = self._ensure()
@@ -129,6 +134,10 @@ class EsdfMapper:
         quat = torch.tensor([list(T_pelvis_camera.quaternion_wxyz())], dtype=torch.float32, device=self._device)
         obs = CameraObservation(depth_image=depth_t, rgb_image=rgb_t, intrinsics=K,
                                 pose=CuPose(position=pos, quaternion=quat), depth_to_meter=1.0)
+        if robot_filter is not None:                 # zero out the robot's own pixels (self-view)
+            filt = robot_filter(obs)
+            if filt is not None:
+                obs.depth_image = filt
         mapper.integrate(obs)
         grid = mapper.compute_esdf()
         if not getattr(grid, "name", None):
