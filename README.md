@@ -174,7 +174,8 @@ e-stop; needs both servers + the ZED + debug mode set on the remote):
 ```bash
 bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --source graspgenx --segment interactive --visualize'
 ```
-A-B against the known-good path with `--source apriltag`. `--visualize` opens the same viser view
+A-B against the AprilTag baseline via `07_pick_place --target real` (09 is GraspGenX-only).
+`--visualize` opens the same viser view
 (the chosen reachable grasp in green). The grasp→wrist transform (`grasp.yaml: wristyaw_grasp_rpy`
 + `palm_offset_xyz`) is **DERIVED from kinematics** and **sim-validated** (see
 `scripts/derive_graspgenx_tool_transform.py`); the closing-roll sign still wants one gated hardware
@@ -252,8 +253,9 @@ with an interactive cv2 GUI (`scripts/10_segment.py`, validated on static images
 kinematics-DERIVED grasp→tool transform (`grasp/tool_transform`) maps them to wrist-yaw goals that
 the `grasp_motion` primitive plans with cuRobo's **native** `plan_grasp` (a K-candidate goalset →
 cuRobo picks the feasible grasp → + approach/grasp/lift segments; `--legacy` = old sequential
-`plan_to_pose_set`). `scripts/09_graspgen.py --source apriltag|graspgenx|sim_cloud` runs the A-B
-pick+lift (`sim_cloud` = a ground-truth cube cloud from `rt/sim_state` → GraspGenX, **sim-only**, no
+`plan_to_pose_set`). `scripts/09_graspgen.py --source graspgenx|sim_cloud` runs the GraspGenX
+pick+lift (AprilTag is the `07_pick_place` A-B baseline; `sim_cloud` = a ground-truth cube cloud
+from `rt/sim_state` → GraspGenX, **sim-only**, no
 ZED/SAM3 — the path that **sim-validated** the transform + 6-DoF execution). The transform
 (`wristyaw_grasp_rpy` + `palm_offset_xyz`) is now **sim-validated**; the real GraspGenX/SAM3 grasp
 run + the closing-roll-sign confirmation are pending hardware — see `HARDWARE_TODO.md`. Depth wire spec:

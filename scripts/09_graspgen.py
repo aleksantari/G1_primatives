@@ -1,16 +1,17 @@
 #!/usr/bin/env python
-"""09 - Pick-and-lift driven by a GraspSource (AprilTag A-B reference OR GraspGenX), with
-optional SAM3 segmentation of the target object.
+"""09 - Pick-and-lift driven by a GraspGenX GraspSource (live depth on real, or the sim_cloud
+ground-truth de-risk path in sim), with optional SAM3 segmentation of the target object.
 
-Same shape as 07_pick_place, but the grasp comes from `robot.grasp_source`, planned with
-cuRobo's native plan_grasp (goalset selection + approach/grasp/lift segments):
+The AprilTag A-B grasp baseline lives in 07_pick_place (and stays a GraspSource in the codebase);
+09 is GraspGenX-only. Same shape as 07_pick_place, but the grasp comes from `robot.grasp_source`,
+planned with cuRobo's native plan_grasp (goalset selection + approach/grasp/lift segments):
 
     home -> open -> grasp_source.grasps(object) -> plan_grasp(goalset of K candidates)
          -> approach -> grasp -> close -> lift -> home   (cuRobo picks the feasible grasp)
 
-  --source apriltag    one candidate = detected pose + URDF palm offset (the known-good ref)
   --source graspgenx   ranked 6-DoF grasps from the GraspGenX ZMQ service (needs the server
                        up + the real depth stream; sim has no depth -> fails loudly)
+  --source sim_cloud   sim de-risk: GT cube cloud from rt/sim_state -> GraspGenX (no camera/SAM3)
   --segment interactive  refine a SAM3 mask (text/box/points) in a cv2 GUI before the cloud
             auto         one SAM3 call with grasp.yaml default_prompt
             none         no segmentation (whole frame)   [overrides grasp.yaml segment.mode]
@@ -51,8 +52,8 @@ def _shift_z(pose, dz: float):
 
 def _approach_pose(grasp_wrist, grasp_pose, dist: float):
     """Pre-grasp: back off `dist` along the grasp APPROACH axis (grasp +Z = into the object)
-    when the 6-DoF grasp frame is known (GraspGenX), else straight up (world +z; the AprilTag
-    top-down case). So the descend sweeps along the gripper's approach line, not diagonally."""
+    when the 6-DoF grasp frame is known (always, for GraspGenX/sim_cloud), else straight up
+    (world +z; defensive fallback). So the descend sweeps along the gripper's approach line."""
     axis = grasp_pose.rotation[:, 2] if grasp_pose is not None else np.array([0.0, 0.0, -1.0])
     p = grasp_wrist.copy()
     p.translation = grasp_wrist.translation - dist * np.asarray(axis, float)
@@ -98,8 +99,10 @@ def _select_candidate(robot, side, candidates, grasp_z):
 def main():
     ap = argparse.ArgumentParser()
     _rig.add_target_arg(ap)
-    ap.add_argument("--source", choices=["apriltag", "graspgenx", "sim_cloud"], default=None,
-                    help="grasp source (overrides grasp.yaml grasp_source; sim_cloud = sim GT cloud)")
+    ap.add_argument("--source", choices=["graspgenx", "sim_cloud"], default="graspgenx",
+                    help="grasp source: graspgenx (live depth, real) | sim_cloud (sim GT de-risk). "
+                         "Defaults to graspgenx; pass sim_cloud for the in-sim path. AprilTag is the "
+                         "07_pick_place baseline -- not selectable here (09 is GraspGenX-only).")
     ap.add_argument("--segment", choices=["auto", "interactive", "none"], default=None,
                     help="SAM3 segmentation mode (overrides grasp.yaml segment.mode)")
     ap.add_argument("--visualize", action="store_true",
@@ -160,7 +163,7 @@ def main():
             robot.cfg["grasp"].setdefault("graspgenx", {}).setdefault(
                 "visualize", {})["enabled"] = True
         robot.grasp_source = _build_grasp_source(robot.frames, robot.cfg)
-    src_kind = robot.cfg["grasp"].get("grasp_source", "apriltag")
+    src_kind = robot.cfg["grasp"].get("grasp_source", "graspgenx")   # --source forces this; never apriltag
     seg_mode = (robot.cfg["grasp"].get("segment", {}) or {}).get("mode")
     if args.abort is not None:
         robot.executor.abort_thresh = args.abort

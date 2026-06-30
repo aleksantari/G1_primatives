@@ -173,8 +173,9 @@ Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code 
         (`--source sim_cloud` straddle-the-GT-cube) confirms our Dex3 fingers land on the object.
         Needs `perception.yaml: detector: sim_state`.
   - [ ] **Real grasp run** — start the GraspGenX (`:5556`) + SAM3 (`:5557`) servers + robot, then
-        `09_graspgen --target real --source graspgenx --segment interactive` vs `--source apriltag`
-        (A-B on the same object). `10_segment --target real` first to confirm the live mask + masked
+        `09_graspgen --target real --source graspgenx --segment interactive` vs `07_pick_place
+        --target real` (the AprilTag baseline — A-B on the same object; 09 is GraspGenX-only).
+        `10_segment --target real` first to confirm the live mask + masked
         point count.
   - [ ] **Depth-ESDF collision world — BUILT + sim-validated, PENDING real validation** (commits
         dfca2e7..f4448eb; `motion/collision_world.py`, `planner.yaml: grasp.collision_world`). Head

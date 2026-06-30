@@ -55,6 +55,8 @@ CuroboArm     G1_29_Arm        Dex3Hand        Executor      HeadCamera      Gra
 
 ```
 robot.grasp_source.grasps(robot, side, "block")              [grasp/base.py: GraspSource ABC]
+   │   09 is GraspGenX-only (--source graspgenx | sim_cloud). AprilTag stays a GraspSource
+   │   (grasp/apriltag_source.py) but is the 07_pick_place baseline — not selectable here.
    │
    ├── graspgenx  (grasp/graspgenx_source.py: grasps)         ── REAL / live depth
    │     cam.get_rgb_frame() + cam.get_depth_frame()          [image_server/image_client.py]
@@ -64,14 +66,12 @@ robot.grasp_source.grasps(robot, side, "block")              [grasp/base.py: Gra
    │     client.infer(cloud.points, planner=topdown, ...) ──ZMQ :5556──► GraspGenX
    │                                              → (grasps, conf, branch_tags)  [grasp/graspgenx_client.py]
    │
-   ├── sim_cloud  (grasp/sim_cloud_source.py: grasps)         ── SIM de-risk (no camera/SAM3)
-   │     pose_source.block_pose() ◄── rt/sim_state            [perception/ground_truth.py: SimStateDetector]
-   │     sample_cube(edge, n) → GT cube cloud (pelvis)
-   │     client.infer(...) ──ZMQ :5556──► GraspGenX → (grasps, conf, tags)
-   │
-   └── apriltag   (grasp/apriltag_source.py)                  ── A-B reference (detect + URDF offset)
+   └── sim_cloud  (grasp/sim_cloud_source.py: grasps)         ── SIM de-risk (no camera/SAM3)
+         pose_source.block_pose() ◄── rt/sim_state            [perception/ground_truth.py: SimStateDetector]
+         sample_cube(edge, n) → GT cube cloud (pelvis)
+         client.infer(...) ──ZMQ :5556──► GraspGenX → (grasps, conf, tags)
          │
-         ▼ (all three converge)
+         ▼ (both converge)
    candidates_from_grasps(grasps, conf, side, palm_offset_xyz, R_wristyaw_grasp, branch_tags)
          │                                                    [grasp/tool_transform.py]
          │  applies the grasp→wrist-yaw transform (build_T_wristyaw_grasp): each GraspGenX
