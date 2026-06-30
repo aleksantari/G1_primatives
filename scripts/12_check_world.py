@@ -12,16 +12,23 @@ answer the two questions that decide whether plan_grasp can use it:
      arm inside a baked-in copy of itself -> "Goalset planning returned None". The wrist-FK probe
      + the viser overlay reveal this.
 
-Connects DDS read-only via _rig.connect (sim -> domain 1/lo, home_on_connect=False -> NOTHING moves)
-so the robot self-filter runs at the LIVE measured arm q -- exactly like the real grasp path
-(primitives._update_collision_world passes the current q). The filter masks the robot at the config
-IN the depth frame, so it MUST match where the arm actually is; if no live state arrives it falls
-back to home. Pass --no-dds for pure offline inspection (camera/ZMQ depth only, self-filter at home).
+Three sources for the depth frame + the robot pose:
+  * LIVE (default): connects DDS read-only via _rig.connect (sim -> domain 1/lo, home_on_connect=
+    False -> NOTHING moves) so the self-filter runs at the LIVE measured arm+finger q -- exactly
+    like the real grasp path (primitives._update_collision_world passes the current q). The filter
+    masks the robot at the config IN the depth frame, so it MUST match where the arm actually is;
+    if no live state arrives it falls back to home.
+  * --no-dds: camera/ZMQ depth only (no DDS); self-filter at home.
+  * --frame <capture.npz>: OFFLINE replay of an 11_capture_frame capture -- NO robot/camera/DDS at
+    all (planner-only on the GPU). Uses the frame's depth + intrinsics + T_pelvis_camera, and the
+    arm/hand q recorded at capture time if present (older captures lack them -> self-filter at home).
 World params come from planner.yaml grasp.collision_world (edit there to tune grid_center/extent/voxel).
 
-  sim:  bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --target sim --visualize'
-        (DDS uses domain 1/lo directly like 01_check_dds -- no CYCLONEDDS_URI needed. Depth comes
-         over ZMQ :55556. The sim must be up for both the depth stream AND the live arm q.)
+  sim:   bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --target sim --visualize'
+         (DDS uses domain 1/lo directly like 01_check_dds -- no CYCLONEDDS_URI needed. Depth over
+          ZMQ :55556; the sim must be up for both the depth stream AND the live arm q.)
+  demo:  bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --frame captures/scene1.npz --visualize'
+         (no robot -- inspect a captured world offline; the 11 -> 12 demo chain)
 """
 import argparse
 import sys
@@ -31,12 +38,46 @@ import numpy as np
 import _rig
 from g1_classical_manip.factory import make_robot
 from g1_classical_manip.ee.hand_base import LEFT, RIGHT
+from g1_classical_manip.motion.planner_base import DOF
 from g1_classical_manip.motion.collision_world import EsdfMapper
 from g1_classical_manip.perception.depth import deproject_depth
 
 
 def _aabb(p):
     return (np.round(p.min(0), 3).tolist(), np.round(p.max(0), 3).tolist()) if len(p) else (None, None)
+
+
+def _load_capture(path):
+    """An 11_capture_frame .npz -> (depth, K{fx,fy,cx,cy}, T_pelvis_camera Pose, q14|None,
+    hand_q{LEFT,RIGHT}|None). q14 / hand_q are present only if the capture recorded them (older
+    captures predate that -> None -> the self-filter falls back to home)."""
+    from g1_classical_manip.spatial.pose import Pose
+    z = np.load(path)
+    depth = np.asarray(z["depth"], np.float32)
+    K = {k: float(z[k]) for k in ("fx", "fy", "cx", "cy")}
+    T_pc = Pose.from_homogeneous(np.asarray(z["T_pelvis_camera"], float))
+    q14 = np.asarray(z["q14"], float) if "q14" in z and np.size(z["q14"]) == DOF else None
+    hand_q = None
+    if "hand_q_left" in z and "hand_q_right" in z and np.size(z["hand_q_left"]) == 7:
+        hand_q = {LEFT: np.asarray(z["hand_q_left"], float),
+                  RIGHT: np.asarray(z["hand_q_right"], float)}
+    return depth, K, T_pc, q14, hand_q
+
+
+def _live_q(robot):
+    """Live arm q (wait briefly for lowstate) + finger q for the self-filter. (None, None) if absent."""
+    arm = getattr(robot, "arm", None)
+    q14 = None
+    if arm is not None:
+        for _ in range(20):
+            q = arm.get_current_dual_arm_q()
+            if np.any(q):                                # nonzero -> real state arrived
+                q14 = q
+                break
+            time.sleep(0.05)
+    hand = getattr(robot, "hand", None)
+    hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hasattr(hand, "get_q") else None
+    return q14, hand_q
 
 
 def main():
@@ -56,32 +97,43 @@ def main():
     ap.add_argument("--no-dds", action="store_true",
                     help="don't connect DDS (offline: camera/ZMQ depth only); self-filter at home "
                          "instead of the live measured arm q")
+    ap.add_argument("--frame", default=None,
+                    help="OFFLINE: inspect an 11_capture_frame .npz (no robot/camera/DDS). Uses the "
+                         "frame's depth + intrinsics + T_pelvis_camera + recorded q (else home)")
     args = ap.parse_args()
 
-    if args.no_dds:                                                  # offline: camera/ZMQ only
-        robot = make_robot(connect_dds=False, connect_camera=True,
+    # --- source the depth + camera pose + robot config: a captured .npz (offline) OR live ---
+    q14 = hand_q = None
+    if args.frame:                                                   # OFFLINE replay -- no robot at all
+        robot = make_robot(connect_dds=False, connect_camera=False,  # planner only (GPU for the ESDF)
                            camera_config=_rig.camera_config_for(args.target))
-    else:                                                            # live q; home_on_connect=False -> no motion
-        robot = _rig.connect(args.target, home_on_connect=False, connect_camera=True,
-                             camera_config=_rig.camera_config_for(args.target))
-    cam = robot.camera
-    if not cam.has_depth:
-        print(f"[{args.target}] no head depth stream -- run 08_check_depth first."); return
-
-    depth = None                                                     # prime the conflate socket
-    for _ in range(40):
-        depth = cam.get_depth_frame()
-        if depth is not None:
-            break
-        time.sleep(0.05)
-    if depth is None:
-        print("no depth frame received (is the sim publishing depth on :55556?)"); return
+        depth, K, T_pc, q14, hand_q = _load_capture(args.frame)
+        print(f"frame: {args.frame}  depth {depth.shape}  (offline replay, no robot)")
+    else:
+        if args.no_dds:                                              # camera/ZMQ only, no DDS
+            robot = make_robot(connect_dds=False, connect_camera=True,
+                               camera_config=_rig.camera_config_for(args.target))
+        else:                                                        # live q; home_on_connect=False -> no motion
+            robot = _rig.connect(args.target, home_on_connect=False, connect_camera=True,
+                                 camera_config=_rig.camera_config_for(args.target))
+        cam = robot.camera
+        if not cam.has_depth:
+            print(f"[{args.target}] no head depth stream -- run 08_check_depth first."); return
+        depth = None                                                 # prime the conflate socket
+        for _ in range(40):
+            depth = cam.get_depth_frame()
+            if depth is not None:
+                break
+            time.sleep(0.05)
+        if depth is None:
+            print("no depth frame received (is the sim publishing depth on :55556?)"); return
+        K = robot.cfg["camera"]["intrinsics"]
+        T_pc = robot.frames.T_pelvis_camera(None)                    # head cam optical pose in pelvis
+        q14, hand_q = _live_q(robot)                                 # live arm + finger q for the self-filter
     finite = np.isfinite(depth)
     print(f"depth: {depth.shape} finite={100*finite.mean():.0f}% "
           f"range[{np.nanmin(depth[finite])/1000:.2f},{np.nanmax(depth[finite])/1000:.2f}]m")
 
-    K = robot.cfg["camera"]["intrinsics"]
-    T_pc = robot.frames.T_pelvis_camera(None)                        # head cam optical pose in pelvis
     p = robot.planner._cw_params()                                  # same params plan_grasp would use
     print(f"world: grid_center={p['grid_center']} extent_m={p['extent_m']} "
           f"esdf_voxel={p['esdf_voxel_size']} depth=[{p['depth_min_m']},{p['depth_max_m']}]m")
@@ -97,24 +149,17 @@ def main():
     print(f"raw cloud : {len(cloud):6d} pts ({len(cloud_box)} in box)  box AABB(pelvis) {_aabb(cloud_box)}")
 
     # --- build the ESDF world exactly as the planner does (with the robot self-filter) ---
-    # The self-filter masks the robot at the arm config IN the depth frame, so read the LIVE
-    # measured q (matches what primitives._update_collision_world passes on the real grasp). Falls
-    # back to home if no lowstate arrived (DDS quiet -> e.g. missing CYCLONEDDS_URI in sim).
+    # The self-filter masks the robot (arm + fingers) at the config IN the depth frame. Use the
+    # captured/live q if we have it; else fall back to home (an older capture, or DDS quiet in sim).
+    # The arms-only planning model locks the fingers open, so live finger q is what lets the filter
+    # mask a bent thumb at its real pose.
     home = np.deg2rad(robot.cfg["robot"]["home_q14_deg"])
-    q_arm, src = home, "home (fallback -- no live arm state)"
-    arm = getattr(robot, "arm", None)
-    if arm is not None:
-        for _ in range(20):                                          # wait briefly for lowstate
-            q_live = arm.get_current_dual_arm_q()
-            if np.any(q_live):                                       # nonzero -> real state arrived
-                q_arm, src = q_live, "live (measured)"
-                break
-            time.sleep(0.05)
+    if q14 is not None and np.size(q14) == DOF:
+        q_arm = np.asarray(q14, float).reshape(DOF)
+        src = "frame (recorded)" if args.frame else "live (measured)"
+    else:
+        q_arm, src = home, "home (fallback -- no recorded/live arm state)"
     print(f"self-filter arm q [{src}]: {np.round(q_arm, 3)}")
-    # live finger angles -> the self-filter masks the HAND at its real pose (the arms-only planning
-    # model locks fingers open, so a bent thumb would otherwise survive into the world).
-    hand = getattr(robot, "hand", None)
-    hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hasattr(hand, "get_q") else None
     if hand_q is not None:
         print(f"self-filter hand q: L {np.round(hand_q[LEFT], 2)}  R {np.round(hand_q[RIGHT], 2)}")
     rf = None if args.no_self_filter else \

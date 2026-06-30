@@ -218,9 +218,12 @@ connects DDS read-only (`home_on_connect=False` → nothing moves) and self-filt
 arm+hand q, matching the real grasp path. Flags: `--visualize` (viser overlay :8080),
 `--probe X Y Z` (is the object still in the ESDF or erased by the filter?), `--margin` (sweep the
 self-filter margin), `--esdf-voxel` (override resolution), `--no-self-filter`, `--no-dds` (offline,
-filter at home). The **sim** depth comes from the `unitree_sim_isaaclab` repo's head-depth ZMQ PUB
-(`:55556`, raw float32 mm, `front_camera` `distance_to_image_plane`); `camera_sim.yaml` subscribes
-via `stream.depth_port: 55556`.
+filter at home), `--frame captures/scene.npz` (**fully offline replay** of an `11_capture_frame`
+capture — no robot/camera/DDS; self-filters at the capture's recorded arm+hand q, else home). The
+**sim** depth comes from the `unitree_sim_isaaclab` repo's head-depth ZMQ PUB (`:55556`, raw float32
+mm, `front_camera` `distance_to_image_plane`); `camera_sim.yaml` subscribes via `stream.depth_port:
+55556`. Offline demo chain: `11_capture_frame` (records depth + intrinsics + pose) →
+`12_check_world.py --frame …`.
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs

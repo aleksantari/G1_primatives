@@ -178,8 +178,10 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   segment → graspgen_viz → capture_frame → check_world; each `--target sim|real`, shared
   `scripts/_rig.py`) + `hand_diag.py`. **GraspGenX (`:5556`) / SAM3 (`:5557`) ZMQ servers run SEPARATELY** (own repos/envs,
   launch cmds in README "Grasp pipeline"); `09 --visualize` / `10_graspgen_viz` render cloud + ranked
-  grasps in **viser** (`:8080`). Offline grasp demo: `11_capture_frame` → `10_segment --frame … --save`
-  → `10_graspgen_viz --pcd` (no robot).
+  grasps in **viser** (`:8080`). Offline demo (no robot): `11_capture_frame` (now also records the
+  arm+hand q) → `10_segment --frame … --save` → `10_graspgen_viz --pcd` for grasps, or
+  `12_check_world --frame …` to inspect the depth-ESDF collision world (self-filters at the
+  capture's recorded q, else home).
 - **Dormant on disk** (unimported, kept for later): `image_server/camera_rig.py` +
   `configs/cameras.yaml` (multi-camera). (`robot_control/motion_switcher.py` is wired but
   **opt-in** — `make_robot` lazily imports it only when `enter_debug_mode=True`; default off,
