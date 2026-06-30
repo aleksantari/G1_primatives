@@ -4,7 +4,7 @@
 #   graspgenx -- learned 6-DoF grasps from the GraspGenX ZMQ service (segmented cloud in).
 #   sim_cloud -- SIM only: GT cube cloud from rt/sim_state -> GraspGenX (no camera/depth/SAM3).
 # 09_graspgen.py --source overrides this per run for A-B comparison.
-grasp_source: apriltag
+grasp_source: graspgenx
 
 # AprilTag source. Its palm_offset_xyz is the URDF-measured wrist_yaw->palm offset, shared
 # by the GraspGenX source too (same gripper). Mirrors 07_pick_place's inline constants.

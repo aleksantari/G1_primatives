@@ -147,7 +147,7 @@ def main():
     ap.add_argument("--speed", type=float, default=None,
                     help="trajectory playback time-dilation (<1 = slower)")
     ap.add_argument("--no-confirm", action="store_true", help="skip the per-step prompt")
-    ap.add_argument("--close-frac", type=float, default=0.5, help="hand close fraction")
+    ap.add_argument("--close-frac", type=float, default=0.65, help="hand close fraction")
     args = ap.parse_args()
 
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
