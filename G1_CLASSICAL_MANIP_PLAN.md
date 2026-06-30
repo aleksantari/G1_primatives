@@ -72,6 +72,7 @@ g1_classical_manip/
 │   ├── curobo_planner.py      # CuroboArmPlanner: plan_to_pose, plan_to_pose_set, plan_joint, fk,
 │   │                          #   plan_grasp_set / plan_grasp_set_sweep (native cuRobo plan_grasp)
 │   ├── executor.py            # streams JointTrajectory @ control_hz; prime + abort-to-hold; settle
+│   ├── collision_world.py     # EsdfMapper: head depth → cuRobo Mapper → ESDF VoxelGrid (gated)
 │   └── planner_base.py        # JointPath / JointTrajectory containers (DOF=14)
 ├── ee/                        # hand_base (ABC), dex3, dex1 — presets + grasp verification
 ├── robot_control/
@@ -89,7 +90,8 @@ g1_classical_manip/
 │                              #   · sam3_client (ZMQ :5557) · segment_gui (cv2 mask GUI)
 ├── image_server/              # HeadCamera (head-cam color + depth frames; camera_rig dormant)
 configs/  robot, planner, hands, camera, perception, grasp, curobo/g1_dex3_curobo.yml, cyclonedds_loopback.xml
-scripts/  01_check_dds → 11_capture_frame ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
+scripts/  01_check_dds → 12_check_world ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
+          (12_check_world: inspect the depth-ESDF collision world in isolation — no planning/motion)
 tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/graspgenx_client/
           grasp_source/sam3_client/segment   (pure-math; no robot)
 ```
@@ -114,10 +116,21 @@ tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/gra
 ## 3. cuRobo integration specifics
 - Config `configs/curobo/g1_dex3_curobo.yml` from the **calibrated mode_16 dex3 URDF** (the
   same the sim now runs — sim == cuRobo == real). Tool frames `left/right_wrist_yaw_link`;
-  27 `lock_joints` → arms-only 14-DoF (active joints == the repo arm set).
-- `self_collision_ignore` patched: `torso_link` ignores all 6 shoulder links. The
+  27 `lock_joints` → arms-only 14-DoF (active joints == the repo arm set). The hands are locked
+  at the **DEPLOYED "open" preset** (`configs/hands.yaml dex3.open`: `thumb_1` at the URDF open
+  limit — right +0.7243, left −0.7243; all other hand joints 0), **NOT all-zero**: the Dex3 thumb
+  opens fully only at `thumb_1` = the open-direction limit, so the planner's static hand collision
+  spheres match the hand we actually plan/approach with. (The self-filter masks the LIVE hand
+  separately — see §3a.)
+- `self_collision_ignore` patched: (a) `torso_link` ignores all 6 shoulder links — the
   auto-generated matrix asymmetrically ignored only 3, causing a false "start in collision"
-  at the home pose (all-zeros). Verified collision-free after the patch.
+  at the home pose; (b) `{side}_hand_thumb_1_link ↔ {side}_wrist_yaw_link` — with the thumb
+  locked at its open limit the thumb_1 sphere swings back and clips the large wrist-yaw sphere
+  (a conservative-sphere artifact; the two are 3 joints apart and can never collide), which
+  otherwise flagged HOME as a start-in-collision. Verified collision-free after the patch.
+  Regenerate via `configs/curobo/build_g1_dex3.py` (LOCK + `patch()`; the committed yml is
+  hand-patched lock-values + ignore-entries only — **no sphere re-fit**, preserving the
+  hardware-validated geometry).
 - API used: `MotionPlanner(MotionPlannerCfg.create(robot=...))` + `warmup(enable_graph=True)`;
   `plan_pose(GoalToolPose, JointState)` and `plan_cspace(JointState, JointState)` →
   `TrajOptSolverResult` (`.success`, `.get_interpolated_plan()` carrying
@@ -139,6 +152,60 @@ tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/gra
   gravity comp ON, `arm_velocity_limit ≥ 12`, `time_dilation 0.5`, operator-set debug mode (no
   MotionSwitcher). Root fix (deferred): stop re-rate-limiting cuRobo's already-feasible trajectory
   during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
+  - The cuRobo config plans to **stock-aggressive dynamics** (`g1_dex3_curobo.yml` cspace:
+    `max_acceleration 10`, `max_jerk 500`, scales 1.0). The depth-ESDF collision-world APPROACH
+    route (§3a) is dynamic enough that the controller can't track it at full-speed playback even in
+    sim — the executor's tracking-error abort fires (`approach: tracking error 0.401 > 0.400 rad`).
+    Planning *succeeded*; **execution** aborted. Workaround `09_graspgen --speed 0.5` (confirmed). The
+    deferred root fix is the same one: lower `acceleration_scale` so the plan is feasible at
+    `time_dilation 1.0`, retuned together with real's dilation. Write-up:
+    `docs/trajectory_speed_tracking.md`.
+
+### 3a. Depth-ESDF collision world (built; gated OFF; sim-validated, real PENDING)
+
+A new collision-world subsystem so the grasp `plan_grasp` **approach routes around** the
+object/table instead of barging through it. Head-camera depth → cuRobo `Mapper` → ESDF
+`VoxelGrid` → fed to the grasp planner. **Same path sim + real** and **grasp-source-independent**
+(driven by head depth, so it works with `apriltag` / `graspgenx` / `sim_cloud` alike).
+
+- **`motion/collision_world.py` → `EsdfMapper`**: `depth_mm` + intrinsics + `T_pelvis_camera` →
+  ESDF VoxelGrid via the cuRobo Mapper (`esdf_from_depth`, `occupied_points`, `empty_esdf_grid`
+  helpers). The cuRobo camera frame is OpenCV optical = our deproject convention, so the camera
+  pose plugs in directly.
+- **Planner (`motion/curobo_planner.py`)** builds a voxel-capable grasp planner when the world is
+  enabled: `update_grasp_world(side, depth, K, T_pc, q14, hand_q)` builds the ESDF + self-filters +
+  `update_world`; `collision_world_enabled` / `set_collision_world(enabled, cfg)` / `_cw_params()`.
+  The ACTIVE hand links are collision-**disabled** during the grasp (the open hand may sit in the
+  object ESDF — the grasp is meant to CONTACT).
+- **`primitives.grasp_motion`** calls `_update_collision_world(robot, side, q0)` before planning
+  (gated, best-effort — a perception hiccup never blocks the grasp).
+- **Config** `configs/planner.yaml → grasp.collision_world`: `enabled: false` (**default OFF**),
+  `grid_center [0.4,0,0.2]`, `extent_m [1.2,1.2,1.0]`, `esdf_voxel_size 0.01`, `tsdf_voxel_size
+  0.005`, `depth_min_m 0.1`, `depth_max_m 2.0`, `self_filter: true`, `robot_mask_margin 0.02`.
+  Opt in via the flag or `09_graspgen.py --collision-world`. Needs a head depth stream
+  (`08_check_depth` green). **SIM depth source**: the (separate, user-managed) `unitree_sim_isaaclab`
+  repo publishes head depth on a dedicated ZMQ PUB **:55556** (raw float32 mm); robot side subscribes
+  via `image_server/image_client.py` (`get_depth_frame()`), `configs/camera_sim.yaml: depth_port 55556`.
+
+**Robot self-filter — LIVE pose tracking.** The head camera sees the robot's own arm/hands; unfiltered
+they fuse into the ESDF and `plan_grasp` starts inside a copy of itself ("Goalset planning returned
+None"). cuRobo `RobotSegmenter` zeros depth pixels within `robot_mask_margin` of the robot's collision
+spheres **at the CURRENT measured config** — arm q from `robot.arm.get_current_dual_arm_q()` AND fingers
+from `robot.hand.get_q(side)`. Because the arms-only PLANNING model locks the hand open, a SEPARATE
+hand-active segmenter kinematics is built (hand joints unlocked → 28 active DoF = 14 arm + 14 fingers)
+so a bent thumb is masked at its real pose. Notes: `ops_dtype=float32` (cuRobo's default bfloat16 trips
+its own float32 check on the cdist path); hand q is mapped **BY NAME** (the Dex3 `get_q` RIGHT order is
+thumb,index,middle but cuRobo orders the right hand thumb,middle,index — a raw copy would swap them).
+`robot.hand` is a `Dex3Hand` wrapper exposing `get_q(side)` (controller passthrough).
+
+**Inspect it in isolation: `scripts/12_check_world.py`** — the 12th bring-up rung. NO planning/motion:
+(1) is the geometry placed right (ESDF occupied voxels vs the raw deproject cloud)? (2) is the robot's
+own arm removed (self-filter working)? Connects DDS read-only (`home_on_connect=False` → nothing moves)
+and self-filters at the LIVE arm+hand q (matches the grasp path); `--no-dds` filters at home offline.
+Flags: `--visualize` (viser ESDF/cloud/wrist overlay :8080), `--probe X Y Z` (is the object in the ESDF
+or erased by the self-filter?), `--margin` (sweep the filter margin), `--esdf-voxel`, `--no-self-filter`.
+
+**Status: built and sim-validated; gated OFF by default; the real grasp run is PENDING hardware.**
 
 ---
 
@@ -181,7 +248,9 @@ finger collisions disabled during final approach — **now wired** as the `grasp
    (`perception/segment`, `:5557`) → GraspGenX (`:5556`, **protocol v2**: `planner` topdown/graspmoe/
    diffusion, obb/diff `branch_tags`) → 6-DoF grasps. Real grasp run pending hardware.
 5. **Rerun logging** — current q / target pose / state, on every primitive.
-6. **World model** — add the table (and obstacles) to the cuRobo world (depth → ESDF a natural fit).
+6. ~~**World model**~~ — **DONE (built; sim-validated; gated OFF)**: the depth-ESDF collision world
+   (head depth → cuRobo Mapper → ESDF, with a LIVE-pose robot self-filter) so the grasp approach
+   routes around the object/table — see §3a. `enabled: false` by default; real grasp run PENDING.
 7. **Hardware bring-up** — see `HARDWARE_TODO.md` (DDS, debug mode, tracking, gravity comp, the
    GraspGenX/SAM3 grasp run + `wristyaw_grasp_rpy` calibration).
 8. **Agent layer** — expose the primitives + grasp source as tools.

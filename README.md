@@ -50,6 +50,7 @@ g1_classical_manip/
   motion/          curobo_planner — the only planner (plan_to_pose / plan_to_pose_set / plan_joint, fk)
                    executor       — streams JointTrajectory @ control_hz, abort-to-hold
                    planner_base   — JointPath / JointTrajectory containers
+                   collision_world — EsdfMapper: head depth → cuRobo Mapper → ESDF for the grasp planner
   ee/              hand_base, dex3, dex1 — grasp presets + verification
   robot_control/   robot_arm (G1_29_ArmController), robot_hand_unitree (threaded Dex3/Dex1)
   grasp/           base (GraspSource ABC + GraspCandidate) · apriltag_source (A-B ref) ·
@@ -63,7 +64,7 @@ g1_classical_manip/
   viz/             GraspViz (viser) — point cloud + ranked grasps + gripper mesh (offline)
 configs/           robot, planner, hands, camera, perception, grasp (+ curobo/, cyclonedds_loopback.xml)
 assets/grippers/   <gripper>/{config.json, coll_mesh.obj} for the grasp viz (unitree_g1)
-scripts/           01_check_dds → 11_capture_frame ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
+scripts/           01_check_dds → 12_check_world ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
 tests/             test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/ graspgenx_client/
                    grasp_source/sam3_client/segment/viz   (pure-math, no robot)
 ```
@@ -106,20 +107,23 @@ python scripts/04_move.py        --target sim                # home (add --dz 0.
 python scripts/05_mvp_demo.py    --target sim    # home → move → close → open → home
 python scripts/06_detect.py      --target sim    # AprilTag feed: 3D pose axes + rpy vs ground truth
 python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→detect→grasp→lift→home
-python scripts/08_check_depth.py  --target real   # head-cam DEPTH feed (real only): mm stats + colorized view
+python scripts/08_check_depth.py  --target sim    # head-cam DEPTH feed (sim ZMQ :55556 / real ZED): mm stats + colorized view
 python scripts/09_graspgen.py    --target real --source graspgenx --segment interactive  # GraspGenX pick+lift
 python scripts/10_segment.py     --frame captures/scene1.npz --mode interactive --save   # SAM3 segment + save colored .ply
 python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.ply                         # GraspGenX grasps in viser
 python scripts/11_capture_frame.py --target real --out captures/scene1.npz               # save a frame (offline demo)
+python scripts/12_check_world.py --target sim --visualize  # inspect the depth-ESDF collision world (no motion): geometry + self-filter
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05`/`07`/`09`
-command the arms/hands, `06`/`08`/`10`/`11` are camera-only (`08` = head **depth** feed; `10` = SAM3
-**segmentation**; `11` = capture a frame for the offline demo; `10_graspgen_viz` = no robot at all).
-`02`/`06`/`07` work on both targets; `08`/`09 --source graspgenx`/`11` need the real ZED; `10`
-segments either the live ZED (`--target real`), a captured frame (`--frame`), or a static image
-(`--image`, no robot). The **grasp servers + the full offline grasp demo** (`09`/`10`/`10_graspgen_viz`/`11`)
-are in **Grasp pipeline** below. `--target real` uses the ZED head via `camera_real.yaml`; the camera
-scripts don't use the `CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand diagnostic.
+command the arms/hands, `06`/`08`/`10`/`11`/`12` are camera/inspection-only (`08` = head **depth** feed;
+`10` = SAM3 **segmentation**; `11` = capture a frame for the offline demo; `12` = inspect the
+**depth-ESDF collision world** with no planning/motion; `10_graspgen_viz` = no robot at all).
+`02`/`06`/`07` work on both targets; `08`/`12` work on both (sim depth over ZMQ `:55556`, real over the
+ZED); `09 --source graspgenx`/`11` need the real ZED; `10` segments either the live ZED (`--target
+real`), a captured frame (`--frame`), or a static image (`--image`, no robot). The **grasp servers +
+the full offline grasp demo** (`09`/`10`/`10_graspgen_viz`/`11`) are in **Grasp pipeline** below.
+`--target real` uses the ZED head via `camera_real.yaml`; the camera scripts don't use the
+`CYCLONEDDS_*` exports. `scripts/hand_diag.py` remains a low-level hand diagnostic.
 
 **Reset the block (sim only)** — re-place the red block at its spawn pose between pick
 attempts. Runs in the **`unitree`** (sim) env, on the same loopback bus:
@@ -177,7 +181,9 @@ A-B against the known-good path with `--source apriltag`. `--visualize` opens th
 grasp (`HARDWARE_TODO.md`). The grasp plans on cuRobo's native `plan_grasp` (goalset pick +
 approach/grasp/lift); `--legacy` restores the old sequential path. Useful flags: `--select
 {reachable,first}` (all candidates vs the single top-confidence one), `--grasp-only` (one move
-straight to the grasp, no approach/lift — a frame sanity check).
+straight to the grasp, no approach/lift — a frame sanity check), `--collision-world` (route the
+approach around the object/table via the depth-ESDF world — see below), `--speed 0.5` (slower
+playback if the dynamic approach trips the tracking-error abort).
 
 **In the Isaac sim (de-risk before the robot)** — `--source sim_cloud` builds a ground-truth cube
 cloud from the live `rt/sim_state` block pose → GraspGenX → the same tool transform + gated motion,
@@ -188,6 +194,32 @@ that our Dex3 fingers straddle the GT cube). Needs `perception.yaml: detector: s
 CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
   bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target sim --source sim_cloud --visualize'
 ```
+
+**Depth-ESDF collision world (`--collision-world`)** — head-camera depth → cuRobo `Mapper` →
+an ESDF `VoxelGrid` (`motion/collision_world.EsdfMapper`) handed to the grasp planner, so the
+native `plan_grasp` **approach** routes *around* the object/table instead of barging through it.
+The **same path works in sim and real** and is **source-independent** (it uses head depth, so any
+grasp source — apriltag / graspgenx / sim_cloud — benefits). A cuRobo `RobotSegmenter` **self-filters**
+the robot out of the depth (zeroing pixels within `robot_mask_margin` of the collision spheres at
+the **LIVE** measured config — arm q from DDS *and* finger q from the Dex3, via a hand-active
+segmenter kinematics); without it the grasp starts inside a baked-in copy of its own arm
+("Goalset planning returned None"). The active hand links are collision-disabled during the grasp
+(the open hand may sit in the object ESDF — the grasp is meant to *contact*). **OFF by default**;
+opt in with `09_graspgen.py --collision-world` or `planner.yaml: grasp.collision_world.enabled`
+(that block tunes `grid_center` / `extent_m` / `esdf_voxel_size` / `robot_mask_margin` / depth
+crop). The approach route is dynamic enough that full-speed playback can trip the tracking-error
+abort — pair with `--speed 0.5` (see `docs/trajectory_speed_tracking.md`).
+
+Inspect the world IN ISOLATION (no planning, no motion) with **`scripts/12_check_world.py`** — it
+builds the ESDF from one depth frame and answers: (1) is the geometry placed right (ESDF occupied
+voxels vs the raw deproject cloud)? (2) is the robot's own arm removed (self-filter working)? It
+connects DDS read-only (`home_on_connect=False` → nothing moves) and self-filters at the live
+arm+hand q, matching the real grasp path. Flags: `--visualize` (viser overlay :8080),
+`--probe X Y Z` (is the object still in the ESDF or erased by the filter?), `--margin` (sweep the
+self-filter margin), `--esdf-voxel` (override resolution), `--no-self-filter`, `--no-dds` (offline,
+filter at home). The **sim** depth comes from the `unitree_sim_isaaclab` repo's head-depth ZMQ PUB
+(`:55556`, raw float32 mm, `front_camera` `distance_to_image_plane`); `camera_sim.yaml` subscribes
+via `stream.depth_port: 55556`.
 
 ## Status
 cuRobo-native MVP is **sim-validated**: `home → move → close_hand → open_hand → home` runs

@@ -167,6 +167,26 @@ Need a **live GraspGenX server + a real pelvis cloud + a browser** (couldn't be 
 
 ---
 
+## Related: the collision-world viz (`12_check_world.py`)
+
+This doc is about **grasp candidates** (cloud + ranked 6-DoF grasps + gripper mesh). A
+separate viser viewer, **`scripts/12_check_world.py --visualize`**, renders the
+**depth-ESDF collision world** in isolation (no grasps, no planning, no motion) so you can
+verify ESDF placement and the robot self-filter:
+
+- **gray** = the raw deproject cloud (`/raw_cloud`)
+- **RED** = the ESDF occupied voxels (`/esdf_occupied`)
+- **blue** = the wrist-FK markers at the current q (`/wrist_{side}` icospheres)
+- **green** = the optional `--probe X Y Z` point (is the object in the ESDF, or erased by the
+  self-filter?)
+
+Same viser tooling, same default `:8080` port — but it shows the *world the grasp planner
+routes through*, not the grasp candidates. Use it when `plan_grasp` returns
+"Goalset planning returned None" (the arm may be fused into its own ESDF). See
+`docs/depth_integration_handoff.md` / the depth-ESDF collision world.
+
+---
+
 ## Notes / gotchas
 
 - `threshold_tuner` is **off** in the pick flow by default (keep the operator's attention on

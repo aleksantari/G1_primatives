@@ -53,11 +53,17 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
 ## Key facts (verified, don't re-derive)
 - cuRobo config: `configs/curobo/g1_dex3_curobo.yml`, built from the **calibrated mode_16
   dex3 URDF** (`assets/g1/g1_29dof_mode_16_dex3.urdf`) via cuRobo `RobotBuilder`; tool frames
-  `left/right_wrist_yaw_link`; 27 `lock_joints` → arms-only 14-DoF. `self_collision_ignore`
-  patched so `torso_link` ignores all 6 shoulder links (the auto-matrix asymmetrically missed
-  3, causing false start-in-collision at the home pose). **Regenerate with
-  `configs/curobo/build_g1_dex3.py`** (the provenance/recipe; not run at import — only when the
-  URDF or the arms-only reduction changes; the committed config is hardware-validated).
+  `left/right_wrist_yaw_link`; 27 `lock_joints` → arms-only 14-DoF. The hands are locked at the
+  **DEPLOYED "open" preset**, NOT all-zero: `thumb_1` at the URDF open limit (right +0.7243, left
+  −0.7243; `hands.yaml` dex3.open), all other hand joints 0 — so the planner's static hand
+  collision spheres match the hand we actually approach with (0 leaves the thumb half-abducted).
+  `self_collision_ignore` patched (`build_g1_dex3.patch()`) for two conservative-sphere artifacts
+  that else falsely flag start-in-collision at home: `torso_link` ↔ all 6 shoulder links (the
+  auto-matrix asymmetrically missed 3), and `{side}_hand_thumb_1_link` ↔ `{side}_wrist_yaw_link`
+  (the open thumb's sphere clips the wrist-yaw sphere; the thumb is 3 joints from the wrist, can't
+  reach it). **Regenerate with `configs/curobo/build_g1_dex3.py`** (the provenance/recipe; not run
+  at import — only when the URDF or the arms-only reduction changes; the committed config is
+  hardware-validated; lock-value + ignore tweaks are hand-patched in place, no sphere re-fit).
 - **Home = the sim launch pose: all arm joints 0 = forearms forward (elbows bent ~90°)**,
   collision-free. `configs/robot.yaml: home_q14_deg`.
 - cuRobo native plan ≈ 1.1 rad/s, `dt` 0.025 s. Trajectory SPEED is governed by the cuRobo
@@ -67,8 +73,11 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   `~kp·arm_velocity_limit·control_dt` and the arm can't track a full-speed trajectory → tracking
   error diverges → abort. So on real: `gravity_comp` ON (holds the arm), `arm_velocity_limit ≥ 12`
   (torque headroom), `time_dilation 0.5` (tracks). Sim bypasses the clip entirely, so it runs full
-  speed with no gravity comp. The root fix (deferred) is to not re-rate-limit cuRobo's already-
-  feasible trajectory during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
+  speed with no gravity comp. The root fix (deferred) is to lower the cuRobo cspace
+  `acceleration_scale` so the plan is feasible at `time_dilation 1.0` (then retune sim/real
+  together) instead of re-rate-limiting cuRobo's already-feasible trajectory at playback — the
+  collision-world approach is dynamic enough to trip this even in sim. See
+  `docs/trajectory_speed_tracking.md`, `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
 - Goal frame is the **wrist-yaw link** directly in the primitives (keeps them composable).
   The grasp→wrist transform (`grasp/tool_transform.py: build_T_wristyaw_grasp`) is applied by the
   **grasp sources** (`grasp/`). **GraspGenX's transform is DERIVED from kinematics, NOT the
@@ -116,6 +125,21 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   `msgpack`/`msgpack-numpy`. Scripts: `09_graspgen` (`--source`/`--segment`/`--visualize`),
   `10_segment` (SAM3 dev tool; `--image` static, `--save` writes a COLORED `.ply`), `10_graspgen_viz`
   (offline cloud → GraspGenX → viser `:8080`). All offline-tested; the real grasp run is pending hardware.
+- **Depth-ESDF collision world** (`motion/collision_world.py`; gated OFF by default —
+  `planner.yaml grasp.collision_world.enabled` or `09_graspgen --collision-world`): head depth →
+  cuRobo `Mapper` → ESDF `VoxelGrid` (`EsdfMapper`) → the grasp planner, so the native `plan_grasp`
+  **approach** routes around the object/table. SAME path sim + real, **source-independent** (head
+  depth, any grasp source). The grasp planner is built voxel-capable (`update_grasp_world`); the
+  active hand links are collision-disabled during the grasp (the open hand may sit in the object
+  ESDF — the grasp is meant to CONTACT). A cuRobo `RobotSegmenter` **self-filter** zeros the robot's
+  own pixels from the depth at its **LIVE measured config** — arm q + live finger q via a dedicated
+  **hand-active** segmenter kinematics (the arms-only planning model locks fingers open, so a bent
+  thumb would otherwise survive into the world); without it the arm/hand fuses in and the grasp
+  starts inside a copy of itself ("Goalset planning returned None"). Hand q mapped BY NAME (the Dex3
+  `get_q` right-hand order swaps index/middle vs left). `12_check_world` inspects the world in
+  isolation (ESDF vs raw cloud + self-view probe). Sim depth = Isaac `front_camera` over ZMQ
+  `:55556`. Sim-validated; real grasp run pending. See `docs/depth_integration_handoff.md`,
+  `docs/trajectory_speed_tracking.md`.
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp
   signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. Presets are being
@@ -144,13 +168,15 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   to return instantly, so close→open fired back-to-back and looked like nothing happened).
 - **Live now (not dormant):** the perception stack
   (`perception/{transforms,base,apriltag_block,ground_truth}.py`) and
-  `image_server/image_client.py` (head color **+ depth** — `HeadCamera.get_depth_frame()`, the
-  real ZED's raw-float32 720×1280 mm stream) + the **grasp pipeline** (`grasp/`,
+  `image_server/image_client.py` (head color **+ depth** — `HeadCamera.get_depth_frame()`: the
+  real ZED's raw-float32 720×1280 mm stream, or the **sim** Isaac `front_camera` depth over the
+  zmq backend `:55556`) + the **grasp pipeline** (`grasp/`,
   `perception/{depth,segment,sam3_client,segment_gui}.py`, `spatial/pointcloud.py`, `viz/` +
-  `assets/grippers/`). Current scripts: the numbered bring-up ladder (`01_check_dds … 11_capture_frame`:
+  `assets/grippers/`) + the **depth-ESDF collision world** (`motion/collision_world.py`).
+  Current scripts: the numbered bring-up ladder (`01_check_dds … 12_check_world`:
   check_dds → check_image → hands → move → mvp_demo → detect → pick_place → check_depth → graspgen →
-  segment → graspgen_viz → capture_frame; each `--target sim|real`, shared `scripts/_rig.py`) +
-  `hand_diag.py`. **GraspGenX (`:5556`) / SAM3 (`:5557`) ZMQ servers run SEPARATELY** (own repos/envs,
+  segment → graspgen_viz → capture_frame → check_world; each `--target sim|real`, shared
+  `scripts/_rig.py`) + `hand_diag.py`. **GraspGenX (`:5556`) / SAM3 (`:5557`) ZMQ servers run SEPARATELY** (own repos/envs,
   launch cmds in README "Grasp pipeline"); `09 --visualize` / `10_graspgen_viz` render cloud + ranked
   grasps in **viser** (`:8080`). Offline grasp demo: `11_capture_frame` → `10_segment --frame … --save`
   → `10_graspgen_viz --pcd` (no robot).

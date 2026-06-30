@@ -3,6 +3,24 @@
 **For:** the agent integrating depth into the ZMQ image client in the other repo.
 **Context:** The G1 image_server running on the robot's PC2 publishes a head-camera **depth** stream over ZMQ on a dedicated port. This was verified empirically against the live robot (PC2 IP `192.168.123.164`) on 2026-06-23. The depth publisher exists on PC2 only — the vendored/on-disk `image_server.py` in our repos has the depth *capture* scaffolding but no publish thread, so don't expect the source to show it. Trust the wire probe.
 
+> **STATUS (2026-06-29 update): DONE — depth is integrated AND consumed.** The client-side
+> subscriber described below is built (`image_server/image_client.py`: zmq-backend 2nd SUB +
+> `get_depth_frame()`), and depth now drives a real downstream consumer: the **depth-ESDF
+> collision world** (`g1_classical_manip/motion/collision_world.py`: `EsdfMapper` → cuRobo
+> `Mapper` → ESDF `VoxelGrid`), fed to the native `plan_grasp` so the grasp **approach** routes
+> around the object/table. A live cuRobo `RobotSegmenter` self-filter (hand-active, masks the
+> robot at its measured arm+finger q) keeps the robot's own arm out of the fused world
+> (`CuroboArmPlanner.robot_depth_filter` / `update_grasp_world` in `motion/curobo_planner.py`,
+> gated `configs/planner.yaml: grasp.collision_world`, default OFF). Inspect it in isolation with
+> `scripts/12_check_world.py` (the new top rung of the bring-up ladder). One open issue surfaced:
+> the dynamic approach route can outrun the controller's tracking-error abort at full-speed
+> playback — see `docs/trajectory_speed_tracking.md` (workaround `09_graspgen --speed 0.5`).
+>
+> The wire spec / probe / integration guidance below is the original handoff and remains accurate
+> as the **real-robot** port (`56555`, ZED, 720×1280). The **sim** path (Isaac `front_camera`
+> `distance_to_image_plane`) is the same code on a separate ZMQ PUB **`:55556`** at 480×640 mm —
+> see `configs/camera_sim.yaml: stream.depth_port`.
+
 ---
 
 ## TL;DR wire spec (head depth)
@@ -128,7 +146,11 @@ float32 is confirmed by: exact 921,600 count, presence of NaN/inf (raw uint16 ha
 
 ## Integration guidance for the client
 
-The depth path mirrors the existing color path — same SUB socket pattern, just a different port and decode. Concretely:
+**[DONE 2026-06-29]** All steps below are implemented in `image_server/image_client.py` (zmq
+backend: 2nd SUB on `depth_port`, single-part `recv()`, `np.frombuffer(..., float32)` decode,
+optional `get_depth_frame()` returning mm with NaN/inf preserved, graceful absence via a
+`depth_port`/`depth=` tri-state gate). Kept here as the spec of record. The depth path mirrors the
+existing color path — same SUB socket pattern, just a different port and decode. Concretely:
 
 1. **Config:** the depth port already lives in `cam_config_client.yaml` under `head_camera` as `zmq_depth_port: 56555` (and `enable_depth: true`). Read it from there; don't hardcode.
 2. **Subscriber:** add a SUB subscriber thread on `zmq_depth_port` exactly like the color subscriber (RCVHWM=1, LINGER=0, SUBSCRIBE=""). It's a single-part `recv()` — no multipart handling needed.

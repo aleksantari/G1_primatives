@@ -66,14 +66,31 @@ Expected (05_mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`
 - `05_mvp_demo.py --target sim` sets a 0.40 rad abort threshold (Isaac PD lags transiently on
   fast moves); the cuRobo trajectory itself tracks well within that. (`--target real` keeps the
   config default; override with `--abort`.)
+- **Sim executes at `time_dilation=1.0`** (factory-forced full-speed playback — the sim bypasses
+  the arm controller's measured-relative velocity clip, so it tracks the un-dilated cuRobo
+  trajectory; real defaults `0.5`). Caveat: a sufficiently dynamic route (e.g. the collision-world
+  grasp APPROACH) can still exceed the 0.40 abort budget at full speed — planning succeeds but
+  execution aborts (`approach: tracking error 0.401 > 0.400 rad`); `09_graspgen --speed 0.5`
+  fixes it. See `docs/trajectory_speed_tracking.md`.
+- **Sim head DEPTH stream.** Beyond the JPEG color PUB (`:55555`), the sim opens a 2nd ZMQ PUB
+  carrying the head `front_camera` `distance_to_image_plane` as a raw float32 `(480,640)` map in
+  MILLIMETERS (meters→mm, mirroring the real ZED). `image_client.py`'s `zmq` backend subscribes
+  on the configured `depth_port` and exposes it via `get_depth_frame()`; `configs/camera_sim.yaml`
+  sets `stream.depth_port 55556`, `depth_height 480`, `depth_width 640` (match the sim env's
+  `ISAAC_HEAD_DEPTH_PORT`). This feeds the SAME deproject → PointCloud → cuRobo Mapper/ESDF
+  collision world as real, and is what lets `scripts/12_check_world.py` run in sim. **The sim-side
+  depth publisher (`camera_state._publish_head_depth`) lives in the SEPARATE `unitree_sim_isaaclab`
+  repo (uncommitted, user-managed) — it is NOT in this repo.**
 
 ## Tasks available (G1-29dof + Dex3)
 `Isaac-PickPlace-RedBlock-G129-Dex3-Joint`, `Isaac-AprilTag-Calibration-G129-Dex3-Joint`,
 `Isaac-PickPlace-Cylinder-G129-Dex3-Joint`, `Isaac-Stack-RgyBlock-G129-Dex3-Joint`,
 `Isaac-Pick-Redblock-Into-Drawer-G129-Dex3-Joint`. Set via `TASK=...` for `launch_sim.sh`.
 
-## Not yet wired (future)
-Perception in sim uses the `videohub` RPC (`VideoClient.GetImageSample`), not teleimager/ZMQ
-— needs a small image backend. Episode reset is `rt/reset_pose/cmd` (String_, category int).
-Block ground-truth pose is on `rt/sim_state` (JSON). These are needed once perception is
-reworked cuRobo-native; the current arm+hand MVP needs none of them.
+## Perception in sim (now wired)
+Head **color** (JPEG, `:55555`) and **depth** (raw float32 mm, `:55556`) both stream over ZMQ
+PUB sockets the sim opens (see the head-depth gotcha above); `image_client.py`'s `zmq` backend
+SUBs both. Block ground-truth pose is on `rt/sim_state` (JSON), consumed by the `sim_cloud`
+grasp source. Episode reset is `rt/reset_pose/cmd` (String_, category int). This is what enables
+the in-sim de-risk path for the grasp pipeline + the depth-ESDF collision world
+(`scripts/09_graspgen.py`, `scripts/12_check_world.py`).
