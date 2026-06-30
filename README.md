@@ -177,9 +177,9 @@ bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --s
 A-B against the AprilTag baseline via `07_pick_place --target real` (09 is GraspGenX-only).
 `--visualize` opens the same viser view
 (the chosen reachable grasp in green). The grasp→wrist transform (`grasp.yaml: wristyaw_grasp_rpy`
-+ `palm_offset_xyz`) is **DERIVED from kinematics** and **sim-validated** (see
-`scripts/derive_graspgenx_tool_transform.py`); the closing-roll sign still wants one gated hardware
-grasp (`HARDWARE_TODO.md`). The grasp plans on cuRobo's native `plan_grasp` (goalset pick +
++ `palm_offset_xyz`) is **DERIVED from kinematics** and **hardware-confirmed** (real grasp picked
+the object 2026-06-30, incl. the closing-roll sign; see
+`scripts/derive_graspgenx_tool_transform.py`). The grasp plans on cuRobo's native `plan_grasp` (goalset pick +
 approach/grasp/lift); `--legacy` restores the old sequential path. Useful flags: `--select
 {reachable,first}` (all candidates vs the single top-confidence one), `--grasp-only` (one move
 straight to the grasp, no approach/lift — a frame sanity check), `--collision-world` (route the
@@ -209,7 +209,9 @@ segmenter kinematics); without it the grasp starts inside a baked-in copy of its
 opt in with `09_graspgen.py --collision-world` or `planner.yaml: grasp.collision_world.enabled`
 (that block tunes `grid_center` / `extent_m` / `esdf_voxel_size` / `robot_mask_margin` / depth
 crop). The approach route is dynamic enough that full-speed playback can trip the tracking-error
-abort — pair with `--speed 0.5` (see `docs/trajectory_speed_tracking.md`).
+abort, but the default `time_dilation 0.5` tracks clean — the **real grasp ran WITH
+`--collision-world` + the live self-filter, no aborts, at 0.5 (2026-06-30)** (see
+`docs/trajectory_speed_tracking.md`).
 
 Inspect the world IN ISOLATION (no planning, no motion) with **`scripts/12_check_world.py`** — it
 builds the ESDF from one depth frame and answers: (1) is the geometry placed right (ESDF occupied
@@ -237,8 +239,15 @@ within ~3° and `move` tracks clean. What makes it work on real: gravity comp **
 validated, off in sim), trajectory **`time_dilation 0.5`** (the velocity clip throttles PD torque,
 so the full-speed plan can't be tracked — play it back slower), **`arm_velocity_limit ≥ ~12`**, and
 debug mode set by the operator via the physical remote (we don't call `MotionSwitcher`). See
-`docs/gravity_comp.md`. Still to do on the robot: `detect` validation + ZED intrinsics/mount,
-hand-preset tuning, and the velocity-clip torque root-fix (time-dilation is a workaround). Rerun
+`docs/gravity_comp.md`. **On hardware (2026-06-30): the full GraspGenX pick-and-lift ran
+end-to-end on the physical G1** — live ZED depth → SAM3 → GraspGenX (`topdown`) → the derived
+grasp→wrist transform → cuRobo native `plan_grasp` (approach → grasp → close → lift) → picked +
+lifted the object, **with `--collision-world` + the live robot self-filter**, tracking clean at
+the default `time_dilation 0.5` (no aborts). This hardware-confirms the derived transform
+(`wristyaw_grasp_rpy` + `palm_offset_xyz`, incl. the closing-roll sign). Still to do on the robot:
+`detect` validation + ZED intrinsics/mount, `pinch`/`verify` hand-preset tuning, and the
+velocity-clip torque root-fix (the `acceleration_scale` fix is deferred + now lower-priority — 0.5
+is a real data point that the collision-world approach tracks). Rerun
 logging is still open. `scripts/07_pick_place.py` is the first **composite task** — a single-arm
 pick+lift (home→open→detect→approach→grasp→close→lift→home) with a URDF-measured palm/grasp
 offset, the LLM-composable baseline to expand (place/handover, dual-arm, multi-object) — see
@@ -259,7 +268,8 @@ cuRobo picks the feasible grasp → + approach/grasp/lift segments; `--legacy` =
 `plan_to_pose_set`). `scripts/09_graspgen.py --source graspgenx|sim_cloud` runs the GraspGenX
 pick+lift (AprilTag is the `07_pick_place` A-B baseline; `sim_cloud` = a ground-truth cube cloud
 from `rt/sim_state` → GraspGenX, **sim-only**, no
-ZED/SAM3 — the path that **sim-validated** the transform + 6-DoF execution). The transform
-(`wristyaw_grasp_rpy` + `palm_offset_xyz`) is now **sim-validated**; the real GraspGenX/SAM3 grasp
-run + the closing-roll-sign confirmation are pending hardware — see `HARDWARE_TODO.md`. Depth wire spec:
+ZED/SAM3 — the path that first **sim-validated** the transform + 6-DoF execution). The transform
+(`wristyaw_grasp_rpy` + `palm_offset_xyz`, incl. the closing-roll sign) is now
+**hardware-confirmed**: the real GraspGenX/SAM3 grasp picked + lifted the object on 2026-06-30
+(with `--collision-world` + the live self-filter) — see `HARDWARE_TODO.md`. Depth wire spec:
 `docs/depth_integration_handoff.md`.

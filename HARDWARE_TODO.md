@@ -40,11 +40,15 @@ motion code path.
 - Perception: AprilTag `detect()` + head-camera client. Real ZED **wired** (stereo-slice, RGB-first,
   **+ a raw-float32 depth stream**, `camera_real.yaml`); sim is `camera_sim.yaml`; selected by `--target`.
 
+**Grasp pipeline now runs on the physical robot (2026-06-30):** the full GraspGenX pick+lift —
+including the depth-ESDF collision world (`--collision-world`) — ran end-to-end on the real G1 and
+tracked clean at `time_dilation 0.5` (see the Composite-tasks and Motion sections).
+
 **Still needs the physical robot / camera:** fill the camera config (ZED intrinsics/mount) and run
-`06_detect --target real`; tune hand presets; resolve the velocity-clip torque root-cause so
-moves track at full speed (time-dilation is the current workaround); and validate the depth-ESDF
-collision world + the planned-trajectory speed/tracking margin on real grasps (see the Motion and
-Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code blockers.
+`06_detect --target real`; finish hand-preset tuning (`pinch` per-hand + `verify` thresholds);
+resolve the velocity-clip torque root-cause so moves track at full speed (the
+`acceleration_scale` root fix is now LOWER priority — 0.5 is a confirmed-good crutch — but still
+DEFERRED; see the Motion section and `docs/trajectory_speed_tracking.md`). Not motion-code blockers.
 
 ---
 
@@ -56,7 +60,7 @@ Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code 
 | `configs/hands.yaml` | `dex3.presets` (`open`/`power_close`/`pinch`) + `verify` thresholds | Being tuned: right-thumb `power_close` stall **fixed**; still make `pinch` per-hand and tune the `verify` thresholds against the real hand. |
 | `configs/camera_real.yaml` | `intrinsics` (fx,fy,cx,cy @1280×720) + `extrinsics.mount` + `stereo_side` | **Real head = ZED stereo.** Per-eye intrinsics for the chosen eye (ZED calibration) + the `d435_link`→eye `mount` offset (~half the stereo baseline) or detected block poses are laterally biased. |
 | `configs/curobo/g1_dex3_curobo.yml` | `lock_joints` values (+ `velocity_scale`) | Leg+waist locked positions if the mount tilts the pelvis; lower `velocity_scale` to slow the robot for bring-up. |
-| cuRobo world model | table / obstacles | **Depth-ESDF collision world now wired** (head depth → cuRobo Mapper → ESDF, `motion/collision_world.py`, `planner.yaml: grasp.collision_world`), but **OFF by default** (`enabled: false`) and **pending real validation** — see "Depth-ESDF collision world" under Composite tasks. A static table/obstacle world is still not configured separately; the ESDF is the live-perception alternative. |
+| cuRobo world model | table / obstacles | **Depth-ESDF collision world wired + real-validated 2026-06-30** (head depth → cuRobo Mapper → ESDF, `motion/collision_world.py`, `planner.yaml: grasp.collision_world`); still **OFF by default** (`enabled: false`), opt in via `09_graspgen --collision-world` — see "Depth-ESDF collision world" under Composite tasks. A static table/obstacle world is still not configured separately; the ESDF is the live-perception alternative. |
 
 ---
 
@@ -123,7 +127,11 @@ Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code 
       **root fix** — lower `acceleration_scale`/`velocity_scale` in the shared cspace so the plan is
       gentle enough to track at `time_dilation 1.0`, retuned together with real's dilation — is
       DEFERRED (it touches the hardware-validated config and would compound with the 0.5 if changed
-      naïvely → very slow real motion). **Pass:** real grasps/approaches track with no
+      naïvely → very slow real motion). **Real data point 2026-06-30:** the real collision-world
+      grasp — INCLUDING the obstacle-aware approach — tracked CLEAN at the default `time_dilation 0.5`
+      with NO tracking-error aborts. So 0.5 works for this approach on real: the `acceleration_scale`
+      root fix STAYS DEFERRED but is now LOWER priority (the crutch still stands; the root fix is NOT
+      done). **Pass:** real grasps/approaches track with no
       `tracking error > 0.20` abort. If they abort, confirm with `--speed` (lower it) first — see the
       doc's watch list.
 
@@ -131,6 +139,8 @@ Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code 
 - [ ] **Presets** — command `open`/`power_close`/`pinch` with `hand_diag.py`, read back q, fix the
       7-vectors + closing-direction signs in `hands.yaml`. Watch for fingers stalling short of
       target with **tau saturating** (joint-limit ceiling — back the preset off for those joints).
+      **Tuned 2026-06-30:** `09_graspgen --close-frac` default raised 0.5 → 0.65 (firmer close on the
+      real Dex3). `pinch` per-hand tuning + the `verify` thresholds (below) are still open.
 - [ ] **Thresholds** — set `verify.{stall_margin_rad, tau_threshold, press_threshold, still_dq}`
       so closing on a block → `grasped=True` and closing on air → `False`. **Pass:** 10/10 each.
 
@@ -172,13 +182,20 @@ Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code 
         sim_cloud --visualize` drove a 6-DoF grasp to the correct pose; the FK contact check
         (`--source sim_cloud` straddle-the-GT-cube) confirms our Dex3 fingers land on the object.
         Needs `perception.yaml: detector: sim_state`.
-  - [ ] **Real grasp run** — start the GraspGenX (`:5556`) + SAM3 (`:5557`) servers + robot, then
-        `09_graspgen --target real --source graspgenx --segment interactive` vs `07_pick_place
-        --target real` (the AprilTag baseline — A-B on the same object; 09 is GraspGenX-only).
-        `10_segment --target real` first to confirm the live mask + masked
-        point count.
-  - [ ] **Depth-ESDF collision world — BUILT + sim-validated, PENDING real validation** (commits
-        dfca2e7..f4448eb; `motion/collision_world.py`, `planner.yaml: grasp.collision_world`). Head
+  - [x] **Real grasp run — DONE, real-validated 2026-06-30.** The full GraspGenX pick+lift ran on the
+        physical G1: live ZED depth → SAM3 segmentation (`10_segment` / `09 --segment interactive`) →
+        GraspGenX (`grasp_source: graspgenx`, `planner: topdown`) → the kinematics-DERIVED grasp→wrist
+        tool transform → cuRobo native `plan_grasp` → approach → grasp → close → lift. The robot
+        picked + lifted the object. (Run as `09_graspgen --target real --source graspgenx --segment
+        interactive`, with `10_segment --target real` first to confirm the live mask + masked point
+        count.) `07_pick_place --target real` remains the AprilTag A-B baseline on the same object.
+  - [x] **Depth-ESDF collision world — DONE, real-validated 2026-06-30** (commits
+        dfca2e7..f4448eb; `motion/collision_world.py`, `planner.yaml: grasp.collision_world`).
+        Exercised WITH `09_graspgen --collision-world` IN the real grasp (no longer sim-only): the
+        obstacle-aware approach (head depth → cuRobo `Mapper` → ESDF) + the LIVE robot self-filter
+        (arm + finger hand-tracking via cuRobo `RobotSegmenter`) ran end-to-end on the physical G1,
+        and `12_check_world --target real` validated the geometry placement + self-filter on the real
+        ZED depth. Head
         depth → cuRobo `Mapper` → ESDF `VoxelGrid` → the grasp planner, so `plan_grasp`'s APPROACH
         routes around the object/table instead of barging through it (SAME path sim + real,
         source-independent). A cuRobo `RobotSegmenter` self-filter zeros depth within
@@ -192,22 +209,25 @@ Composite-tasks sections; `docs/trajectory_speed_tracking.md`). Not motion-code 
         removed, and the block stays solid (~5 voxels at the 1cm ESDF, not eroded to ~1). **Watch:**
         too-big a margin erodes the object out of the world; the planned approach is also more
         dynamic → see the trajectory speed/tracking item under Motion.
-  - [x] **`wristyaw_grasp_rpy` + `palm_offset_xyz` — DERIVED + sim-validated 2026-06-28**: no longer
-        a guess — `scripts/derive_graspgenx_tool_transform.py` derives the grasp→wrist_yaw map from
-        Dex3 FK (`[π/2,0,π]`: approach +Z→wrist +Y; `palm_offset [0.1142,−0.0286,0]`), sim-confirmed
-        via `--source sim_cloud` (palm faces down, FK contact on the cube). REMAINING: confirm the
-        closing-roll sign on one gated hardware grasp (the clean-axis map approximates the Dex3's
-        diagonal opposition — a no-op for a symmetric cube; revisit per-object).
-  - [ ] **Planner hand locked at the DEPLOYED-open pose — VALIDATE on real** (commit 2a71238).
+  - [x] **`wristyaw_grasp_rpy` + `palm_offset_xyz` — DERIVED, sim-validated 2026-06-28, real-validated
+        2026-06-30**: no longer a guess — `scripts/derive_graspgenx_tool_transform.py` derives the
+        grasp→wrist_yaw map from Dex3 FK (`[π/2,0,π]`: approach +Z→wrist +Y; `palm_offset
+        [0.1142,−0.0286,0]`), sim-confirmed via `--source sim_cloud` (palm faces down, FK contact on
+        the cube). The real grasp (2026-06-30) picked the object → the transform, INCLUDING the
+        closing-roll sign, is now HARDWARE-confirmed (this was the last "needs one gated hardware
+        grasp" item). NOTE: the clean-axis map still approximates the Dex3's diagonal opposition — a
+        no-op for a symmetric cube; revisit per-object.
+  - [x] **Planner hand locked at the DEPLOYED-open pose — DONE, real-validated 2026-06-30** (commit 2a71238).
         The cuRobo config now locks the planner's hand at the deployed "open" preset
         (`g1_dex3_curobo.yml: lock_joints` — `{side}_hand_thumb_1_joint` at the URDF open limit,
         right +0.7243 / left −0.7243, all other hand joints 0), NOT all-zero, so the static hand
         collision spheres match the hand we actually plan/approach with. Side effect FIXED: the open
         thumb's sphere clipped the wrist-yaw sphere → cuRobo flagged HOME as a self-collision start;
         patched `{side}_hand_thumb_1_link <-> {side}_wrist_yaw_link` into `self_collision_ignore`
-        (conservative-sphere artifact — same class as the torso↔shoulder patch). **Validate on real:**
-        `home`/`move`/`grasp_motion` plan cleanly from the launch pose (no "Start state in collision")
-        and the open-thumb geometry the planner assumes matches the real Dex3 open hand. (This
+        (conservative-sphere artifact — same class as the torso↔shoulder patch). **Real-validated
+        2026-06-30:** `home`/`move`/`grasp_motion` planned + executed cleanly from the launch pose on
+        the physical G1 (NO "Start state in collision"), and the open-thumb geometry the planner
+        assumes matches the real Dex3 open hand. (This
         supersedes the old CLAUDE.md facts "27 lock_joints … all at 0" and the torso↔shoulder-only
         self_collision_ignore note — both now incomplete.)
   - **Open:** place / handover, dual-arm, multi-object; SAM3 `image_jpeg` bandwidth path.

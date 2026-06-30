@@ -150,8 +150,11 @@ tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/gra
   torque at `~kp·arm_velocity_limit·control_dt` and the arm can't track a full-speed trajectory →
   tracking error diverges → abort. Hardware run config (2026-06-18, MVP validated on the real G1):
   gravity comp ON, `arm_velocity_limit ≥ 12`, `time_dilation 0.5`, operator-set debug mode (no
-  MotionSwitcher). Root fix (deferred): stop re-rate-limiting cuRobo's already-feasible trajectory
-  during planned execution. See `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
+  MotionSwitcher). The full GraspGenX grasp — INCLUDING the collision-world approach — tracked
+  CLEAN on real at the default `time_dilation 0.5` with no tracking-error aborts (real-validated
+  2026-06-30), so 0.5 is a confirmed real data point. Root fix (deferred, now LOWER priority): stop
+  re-rate-limiting cuRobo's already-feasible trajectory during planned execution. See
+  `docs/gravity_comp.md`, `HARDWARE_TODO.md`.
   - The cuRobo config plans to **stock-aggressive dynamics** (`g1_dex3_curobo.yml` cspace:
     `max_acceleration 10`, `max_jerk 500`, scales 1.0). The depth-ESDF collision-world APPROACH
     route (§3a) is dynamic enough that the controller can't track it at full-speed playback even in
@@ -161,7 +164,7 @@ tests/    test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/gra
     `time_dilation 1.0`, retuned together with real's dilation. Write-up:
     `docs/trajectory_speed_tracking.md`.
 
-### 3a. Depth-ESDF collision world (built; gated OFF; sim-validated, real PENDING)
+### 3a. Depth-ESDF collision world (built; gated OFF; real-validated end-to-end 2026-06-30)
 
 A new collision-world subsystem so the grasp `plan_grasp` **approach routes around** the
 object/table instead of barging through it. Head-camera depth → cuRobo `Mapper` → ESDF
@@ -205,7 +208,10 @@ and self-filters at the LIVE arm+hand q (matches the grasp path); `--no-dds` fil
 Flags: `--visualize` (viser ESDF/cloud/wrist overlay :8080), `--probe X Y Z` (is the object in the ESDF
 or erased by the self-filter?), `--margin` (sweep the filter margin), `--esdf-voxel`, `--no-self-filter`.
 
-**Status: built and sim-validated; gated OFF by default; the real grasp run is PENDING hardware.**
+**Status: built; gated OFF by default; real-validated end-to-end 2026-06-30** — the obstacle-aware
+approach + the LIVE robot self-filter (arm + finger hand-tracking) ran IN a full GraspGenX grasp on
+the real G1 with `09_graspgen --collision-world`, and `12_check_world` inspected the world on the
+real ZED depth. Still OFF by default; opt in with `--collision-world`.
 
 ---
 
@@ -240,17 +246,23 @@ finger collisions disabled during final approach — **now wired** as the `grasp
 2. ~~**Grasp-frame offset**~~ — **DONE**: the wrist→palm offset lives in `grasp/tool_transform.py`;
    grasp sources return wrist-yaw goals. The GraspGenX `wristyaw_grasp_rpy` + `palm_offset_xyz` are
    **DERIVED from kinematics** (`scripts/derive_graspgenx_tool_transform.py`) and **sim-validated
-   2026-06-28** (`[π/2,0,π]`, `[0.1142,−0.0286,0]`); closing-roll sign still pending one HW grasp.
+   2026-06-28** (`[π/2,0,π]`, `[0.1142,−0.0286,0]`) and now **HARDWARE-confirmed 2026-06-30** — the
+   real GraspGenX grasp picked + lifted the object, validating the transform incl. the closing-roll
+   sign (the last "needs one gated HW grasp" item). The planner's DEPLOYED-open thumb lock
+   (`thumb_1` ±0.7243 + the `thumb_1_link↔wrist_yaw_link` ignore patch) also executed cleanly from
+   the launch pose on real — no start-in-collision.
 3. ~~**Pick composite**~~ — **DONE**: `07_pick_place` (AprilTag) + `09_graspgen` (GraspSource),
    the latter on cuRobo's native `plan_grasp` (goalset pick + approach/grasp/lift).
 4. ~~**Grasp sources + perception**~~ — **DONE (offline)**: `GraspSource` seam (`apriltag` |
    `graspgenx` | `sim_cloud`); depth→`PointCloud` (`perception/depth`); SAM3 segmentation
    (`perception/segment`, `:5557`) → GraspGenX (`:5556`, **protocol v2**: `planner` topdown/graspmoe/
-   diffusion, obb/diff `branch_tags`) → 6-DoF grasps. Real grasp run pending hardware.
+   diffusion, obb/diff `branch_tags`) → 6-DoF grasps. **Real grasp run DONE 2026-06-30** — live ZED
+   depth → SAM3 → GraspGenX (`topdown`) → tool transform → cuRobo `plan_grasp` picked + lifted on real.
 5. **Rerun logging** — current q / target pose / state, on every primitive.
-6. ~~**World model**~~ — **DONE (built; sim-validated; gated OFF)**: the depth-ESDF collision world
-   (head depth → cuRobo Mapper → ESDF, with a LIVE-pose robot self-filter) so the grasp approach
-   routes around the object/table — see §3a. `enabled: false` by default; real grasp run PENDING.
+6. ~~**World model**~~ — **DONE (built; real-validated end-to-end 2026-06-30; gated OFF)**: the
+   depth-ESDF collision world (head depth → cuRobo Mapper → ESDF, with a LIVE-pose robot self-filter)
+   so the grasp approach routes around the object/table — see §3a. Ran IN a full real GraspGenX grasp
+   via `09_graspgen --collision-world`. `enabled: false` by default.
 7. **Hardware bring-up** — see `HARDWARE_TODO.md` (DDS, debug mode, tracking, gravity comp, the
    GraspGenX/SAM3 grasp run + `wristyaw_grasp_rpy` calibration).
 8. **Agent layer** — expose the primitives + grasp source as tools.

@@ -96,8 +96,9 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   depth along approach (now wrist +Y) = `graspgenx.palm_offset_xyz: [0.1142,−0.0286,0]` (so fingers
   land ON the object, not 7 cm short). Config stores the RIGHT hand; LEFT is mirrored across the
   wrist Y-plane in code. `09 --source sim_cloud` FK-verifies our fingers straddle the GT cube (the
-  check the viser gripper-mesh overlay can't do). Still verify the closing-roll sign on one gated
-  hardware grasp. (`07_pick_place`/`apriltag` keep their own `palm_offset` — the A-B reference —
+  check the viser gripper-mesh overlay can't do). The closing-roll sign is HARDWARE-CONFIRMED (the
+  first real grasp picked the object, 2026-06-30). (`07_pick_place`/`apriltag` keep their own
+  `palm_offset` — the A-B reference —
   untouched.)
 - **Grasp pipeline** (`grasp/` + `perception/{depth,segment,sam3_client,segment_gui}.py`,
   `spatial/pointcloud.py`): `robot.grasp_source` is a `GraspSource` (`grasp.yaml: grasp_source` =
@@ -124,7 +125,8 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   shims that do NOT import their service package (the multi-GB import trap); deps
   `msgpack`/`msgpack-numpy`. Scripts: `09_graspgen` (`--source`/`--segment`/`--visualize`),
   `10_segment` (SAM3 dev tool; `--image` static, `--save` writes a COLORED `.ply`), `10_graspgen_viz`
-  (offline cloud → GraspGenX → viser `:8080`). All offline-tested; the real grasp run is pending hardware.
+  (offline cloud → GraspGenX → viser `:8080`). **REAL-VALIDATED 2026-06-30**: graspgenx + SAM3 +
+  `planner: topdown` drove a full pick+lift on the physical G1.
 - **Depth-ESDF collision world** (`motion/collision_world.py`; gated OFF by default —
   `planner.yaml grasp.collision_world.enabled` or `09_graspgen --collision-world`): head depth →
   cuRobo `Mapper` → ESDF `VoxelGrid` (`EsdfMapper`) → the grasp planner, so the native `plan_grasp`
@@ -138,7 +140,8 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   starts inside a copy of itself ("Goalset planning returned None"). Hand q mapped BY NAME (the Dex3
   `get_q` right-hand order swaps index/middle vs left). `12_check_world` inspects the world in
   isolation (ESDF vs raw cloud + self-view probe). Sim depth = Isaac `front_camera` over ZMQ
-  `:55556`. Sim-validated; real grasp run pending. See `docs/depth_integration_handoff.md`,
+  `:55556`. **REAL-VALIDATED 2026-06-30**: ran with `09 --collision-world` in the real grasp
+  (self-filter + live hand-tracking; tracked clean at `time_dilation 0.5`). See `docs/depth_integration_handoff.md`,
   `docs/trajectory_speed_tracking.md`.
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp

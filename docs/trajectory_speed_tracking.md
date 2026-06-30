@@ -1,9 +1,12 @@
 # Trajectory speed vs. tracking — the `time_dilation` crutch and the `acceleration_scale` root fix
 
-**Status:** OPEN / deferred. Diagnosed in sim 2026-06-29 on the depth-ESDF collision-world
-grasp approach; **the workaround (`time_dilation`) is in place, the root fix (gentler plan via
-`acceleration_scale`) is not.** Revisit before/while testing on real hardware — see
-[[trajectory-speed-tracking]] in memory.
+**Status:** OPEN / deferred — now LOWER priority. Diagnosed in sim 2026-06-29 on the depth-ESDF
+collision-world grasp approach; **the workaround (`time_dilation`) is in place, the root fix
+(gentler plan via `acceleration_scale`) is not.** REAL data point (2026-06-30): the full
+GraspGenX grasp INCLUDING the `--collision-world` approach tracked CLEAN on the real robot at the
+default `time_dilation 0.5`, with NO tracking-error aborts — so this approach IS trackable on real
+at 0.5. The root fix STAYS DEFERRED but is de-risked/de-prioritised; the crutch still stands (the
+clean track was at 0.5, not 1.0). See [[trajectory-speed-tracking]] in memory.
 
 ## TL;DR
 - cuRobo plans to **stock-aggressive dynamics** — `g1_dex3_curobo.yml` cspace:
@@ -57,6 +60,15 @@ Read the table carefully — the naïve conclusion ("sim-only") is wrong:
 **Bottom line:** real is not guaranteed to pass just because it defaults to 0.5. Validate it, and
 prefer the model-level fix so neither target leans on the playback crutch.
 
+**REAL data point (2026-06-30, validated):** the full GraspGenX grasp — INCLUDING the
+`--collision-world` approach + the live self-filter — tracked CLEAN on the physical robot at the
+default `time_dilation 0.5`, with NO tracking-error aborts (against the tight 0.20 budget, clip
+active). So the "harder target" framing held up: real survived this approach *only* via the 0.5
+crutch (the clean track was at 0.5, NOT 1.0), exactly as predicted above. This de-risks the case —
+we now have a real data point that 0.5 works for this approach — so the `acceleration_scale` root
+fix is **lower priority**. It is NOT done and the crutch is NOT removed; this only de-prioritises
+it. Faster real motion (toward 1.0) and tighter routing (next two watch-list items) still need it.
+
 ## The two levers
 1. **`executor.time_dilation`** (workaround, in place). `planner.yaml: executor.time_dilation`;
    per-run `09_graspgen --speed` / `04_move --speed`. Slows playback of the *same* path. Sim is
@@ -78,7 +90,9 @@ hardware-validated config.
 
 ## When this becomes a problem again (watch list)
 - **On real hardware:** if planned grasps/approaches abort with `tracking error > 0.20` (the real
-  budget). First confirm with `--speed` (lower it); if that fixes it, it's this issue.
+  budget). First confirm with `--speed` (lower it); if that fixes it, it's this issue. (The
+  GraspGenX `--collision-world` approach already tracks clean at 0.5 on real — 2026-06-30 — so a
+  fresh abort here means a NEW/tighter trajectory, not the baseline.)
 - **Tighter obstacle routing:** a more contorted collision-world approach is more dynamic; even
   real's 0.5 may not be enough → the model fix becomes necessary, not optional.
 - **If you want faster real motion:** you can't just raise `time_dilation` toward 1.0 without
