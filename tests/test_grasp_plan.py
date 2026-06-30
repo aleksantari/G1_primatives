@@ -519,3 +519,24 @@ def test_grasp_motion_no_candidates():
                                         True, True, True, "ok"))
     res = P.grasp_motion(robot, RIGHT, [])
     assert not res.ok and "no candidates" in res.info
+
+
+def test_collision_world_points_accessor():
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    p._esdf_mapper = None
+    assert p.collision_world_points() is None                 # world off / not built -> None
+    pts = np.zeros((5, 3))
+    p._esdf_mapper = type("M", (), {"occupied_points": lambda self: pts})()
+    assert p.collision_world_points() is pts                   # delegates to the mapper
+
+
+def test_grasp_motion_fires_on_world_built_before_planning():
+    from g1_classical_manip import primitives as P
+    out = GraspPlanOutcome(True, 0, _Seg("approach"), None, None, True, False, False, "ok")
+    robot = FakeRobot2(out)
+    sentinel = np.zeros((3, 3))
+    robot.planner.collision_world_points = lambda: sentinel    # what grasp_motion should hand over
+    got = {}
+    P.grasp_motion(robot, RIGHT, _cands(1),
+                   on_world_built=lambda pts: got.__setitem__("pts", pts))
+    assert got["pts"] is sentinel                              # fired with the ESDF points

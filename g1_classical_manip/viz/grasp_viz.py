@@ -23,6 +23,8 @@ _BEST_COLOR = [0, 100, 255]      # blue   -- model's top-confidence grasp
 _CHOSEN_COLOR = [0, 255, 0]      # green  -- the grasp cuRobo actually selected
 _OBB_COLOR = [255, 150, 0]       # amber  -- OBB / top-down grasp (protocol-v2 branch_tag)
 _DIFF_COLOR = [180, 80, 220]     # purple -- diffusion grasp
+_ESDF_COLOR = [255, 40, 40]      # red    -- depth-ESDF collision-world occupied voxels
+_WRIST_COLOR = [40, 40, 255]     # blue   -- wrist@q markers (self-filter sanity: arm removed)
 
 
 class GraspViz:
@@ -145,6 +147,27 @@ class GraspViz:
                 color=_CHOSEN_COLOR, transform=T,
             )
         print(f"[GraspViz] chosen grasp marked at t={np.round(T[:3, 3], 3)}")
+
+    def show_collision_world(self, occupied_xyz, voxel_size: float = 0.01, wrists=None):
+        """Overlay the depth-ESDF collision world (the obstacles plan_grasp routes the APPROACH
+        around) on the CURRENT grasp scene: red occupied voxels + optional blue wrist@q markers
+        (so you can confirm the robot self-filter took the arm out of the world). ADDITIVE -- it
+        does NOT reset the scene, so call it AFTER show_candidates. No-op if there are no voxels
+        (collision world off / not built)."""
+        occ = (np.asarray(occupied_xyz, dtype=np.float32).reshape(-1, 3)
+               if occupied_xyz is not None else None)
+        if occ is None or len(occ) == 0:
+            print("[GraspViz] collision world: no occupied voxels to overlay.")
+            return
+        vp.visualize_pointcloud(self.vis, "esdf_occupied", occ, color=_ESDF_COLOR,
+                                size=float(voxel_size) * 0.9)
+        if wrists:
+            for side, wp in wrists.items():
+                self.vis.scene.add_icosphere(
+                    f"wrist_{side}", radius=0.04, color=tuple(_WRIST_COLOR),
+                    position=tuple(float(x) for x in wp))
+        print(f"[GraspViz] collision world: {len(occ)} ESDF voxels overlaid (red)"
+              + (f" + {len(wrists)} wrist marker(s) (blue)" if wrists else ""))
 
     def spin(self):
         """Block so the viser server stays up (for the standalone inspection tool)."""

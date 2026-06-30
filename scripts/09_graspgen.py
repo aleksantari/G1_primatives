@@ -243,6 +243,19 @@ def main():
             _rig.confirm(f"CLOSE hand to {args.close_frac:.2f}", auto)
             print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
 
+        def _show_world(points):
+            """Overlay the depth-ESDF collision world on the SAME viser scene as the grasps (red
+            voxels + blue wrist@q markers), so the operator sees the obstacles the approach routes
+            around -- and that the robot self-filter took the arm out. Fired after the world is
+            built (before planning), so it shows even if planning then fails."""
+            viz = getattr(robot.grasp_source, "viz", None)
+            if viz is None or points is None:
+                return
+            q = robot.arm.get_current_dual_arm_q()
+            wrists = {s: robot.planner.fk(s, q).translation for s in (LEFT, RIGHT)}
+            viz.show_collision_world(points, voxel_size=robot.planner._cw_params()["esdf_voxel_size"],
+                                     wrists=wrists)
+
         if args.legacy:                  # --- old sequential probe + manual offsets (A-B baseline) ---
             if args.select == "first":
                 chosen = cands[0]                        # confidence-sorted -> [0] = the viser best
@@ -280,7 +293,8 @@ def main():
                 robot, side, feed, close_cb=_do_close,
                 confirm_cb=lambda lbl: _rig.confirm(f"move to {lbl.upper()}", auto),
                 on_selected=lambda chosen, out: _report_choice(
-                    chosen, chosen.wrist_goal, note=f" (goalset idx {out.chosen_index})"))
+                    chosen, chosen.wrist_goal, note=f" (goalset idx {out.chosen_index})"),
+                on_world_built=(_show_world if (args.visualize and args.collision_world) else None))
             print(f"grasp_motion: {res.info}")
             if not res.ok:
                 raise RuntimeError(res.info)

@@ -432,6 +432,12 @@ class CuroboArmPlanner:
         self._grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
         return True
 
+    def collision_world_points(self):
+        """(N,3) pelvis-frame occupied-voxel centres of the current depth-ESDF collision world, or
+        None if the world is off / not built yet. For viz -- 09 overlays these (red) on the grasp
+        scene so the operator sees the obstacles the approach routes around."""
+        return self._esdf_mapper.occupied_points() if self._esdf_mapper is not None else None
+
     def _hold_idle(self, traj, side: str, hold_q_repo14):
         """Pin the IDLE (non-`side`) arm's 7 joints to `hold_q_repo14` across every waypoint of a
         planned grasp segment (and zero their vel/accel). The single-tool-frame grasp planner only

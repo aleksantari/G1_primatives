@@ -101,19 +101,23 @@ def _update_collision_world(robot, side: str, q0=None) -> None:
 
 
 def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
-                 on_selected=None) -> GraspResult:
+                 on_selected=None, on_world_built=None) -> GraspResult:
     """Native cuRobo plan_grasp over ranked grasp candidates: solve a K-goalset (cuRobo picks
     the feasible grasp) sweeping the configured approach/lift offsets, then execute
-    approach -> grasp -> [close_cb] -> lift. `on_selected(chosen_candidate, outcome)` fires AFTER
-    cuRobo picks but BEFORE any motion (so callers mark viz / FK-check / print the chosen grasp);
-    `close_cb()` is the operator-gated hand close, run after settling at the grasp pose; `confirm_cb
-    (label)` gates each segment. Reads the `planner.grasp` config block. Returns GraspResult."""
+    approach -> grasp -> [close_cb] -> lift. `on_world_built(occupied_points_or_None)` fires right
+    AFTER the depth-ESDF collision world is built (before planning), so callers can VISUALIZE the
+    world even if planning then fails. `on_selected(chosen_candidate, outcome)` fires AFTER cuRobo
+    picks but BEFORE any motion (so callers mark viz / FK-check / print the chosen grasp); `close_cb()`
+    is the operator-gated hand close, run after settling at the grasp pose; `confirm_cb(label)` gates
+    each segment. Reads the `planner.grasp` config block. Returns GraspResult."""
     cands = list(candidates)
     if not cands:
         return GraspResult(False, "no candidates")
     gp = (robot.cfg["planner"].get("grasp") or {})
     q0 = robot.arm.get_current_dual_arm_q()
     _update_collision_world(robot, side, q0)    # depth-ESDF world (gated), self-filtered at q0
+    if on_world_built is not None:              # let callers overlay the ESDF (even if planning fails)
+        on_world_built(robot.planner.collision_world_points())
     out = robot.planner.plan_grasp_set_sweep(
         q0, side, [c.wrist_goal for c in cands],
         strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),
