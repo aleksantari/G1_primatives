@@ -17,6 +17,8 @@ import msgpack_numpy
 import numpy as np
 import zmq
 
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
+
 msgpack_numpy.patch()                      # numpy arrays serialize natively
 
 logger = logging.getLogger(__name__)
@@ -126,7 +128,8 @@ class GraspGenXClient:
             payload["obb_density"] = str(obb_density)
         if skip_obb_rule is not None:
             payload["skip_obb_rule"] = str(skip_obb_rule)
-        response = self._request(payload)
+        with LOG.span("graspgenx"):            # cloud -> server inference -> candidates round-trip
+            response = self._request(payload)
         grasps = np.asarray(response["grasps"], dtype=np.float32)
         confidences = np.asarray(response["confidences"], dtype=np.float32)
         tags = list(response.get("branch_tags", []))

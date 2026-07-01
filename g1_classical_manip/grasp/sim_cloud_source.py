@@ -19,6 +19,7 @@ from g1_classical_manip.spatial.pointcloud import PointCloud
 from g1_classical_manip.perception.depth import colorize_from_image
 from g1_classical_manip.grasp.base import GraspSource, GraspCandidate
 from g1_classical_manip.grasp.tool_transform import candidates_from_grasps
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 
 def sample_cube(edge_m: float, n_points: int):
@@ -74,15 +75,16 @@ class SimCloudGraspSource(GraspSource):
         pose = self.pose_source.block_pose(target)      # pelvis-frame object pose (live), or None
         if pose is None:
             return []
-        pts, normals = sample_cube(self.edge_m, self.n_points)
-        R, t = pose.rotation, pose.translation
-        pts_pelvis = pts @ R.T + t                       # object -> pelvis
-        T_pc = self.frames.T_pelvis_camera(None)         # head cam optical pose in pelvis
-        if self.camera_facing_cull:                      # keep only faces visible to the head cam
-            cam = np.asarray(T_pc.translation, float)
-            facing = np.einsum("ij,ij->i", normals @ R.T, cam[None, :] - pts_pelvis) > 0.0
-            if facing.any():
-                pts_pelvis = pts_pelvis[facing]
+        with LOG.span("cloud_build"):                    # synthetic GT-cube cloud (no depth/SAM3)
+            pts, normals = sample_cube(self.edge_m, self.n_points)
+            R, t = pose.rotation, pose.translation
+            pts_pelvis = pts @ R.T + t                   # object -> pelvis
+            T_pc = self.frames.T_pelvis_camera(None)     # head cam optical pose in pelvis
+            if self.camera_facing_cull:                  # keep only faces visible to the head cam
+                cam = np.asarray(T_pc.translation, float)
+                facing = np.einsum("ij,ij->i", normals @ R.T, cam[None, :] - pts_pelvis) > 0.0
+                if facing.any():
+                    pts_pelvis = pts_pelvis[facing]
         # color the cube from the live sim RGB (viz-only; XYZ unaffected). Best-effort: a cold
         # SUB or off-image points fall back to color_fallback rather than blocking.
         colors = None

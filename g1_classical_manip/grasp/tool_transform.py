@@ -26,6 +26,7 @@ import numpy as np
 from g1_classical_manip.spatial.pose import Pose
 from g1_classical_manip.ee.hand_base import LEFT
 from g1_classical_manip.grasp.base import GraspCandidate
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 _MIRROR_Y = np.diag([1.0, -1.0, 1.0])      # reflect a wrist-frame transform R/t across Y (R<->L)
 
@@ -72,13 +73,14 @@ def candidates_from_grasps(grasps, conf, side: str, palm_offset_xyz,
         return []
     grasps, conf = grasps[:k], conf[:k]
     tags = list(branch_tags) if branch_tags is not None else None
-    T_wg = build_T_wristyaw_grasp(palm_offset_xyz, side, R_wristyaw_grasp)
-    out: List[GraspCandidate] = []
-    for i in np.argsort(-conf):                        # confidence descending
-        T_pelvis_grasp = Pose.from_homogeneous(grasps[i])
-        cand = GraspCandidate(wrist_goal=wrist_goal_from_grasp(T_pelvis_grasp, T_wg),
-                              confidence=float(conf[i]), grasp_pose=T_pelvis_grasp)
-        if tags is not None and i < len(tags):
-            cand.extra["branch_tag"] = tags[i]
-        out.append(cand)
+    with LOG.span("tool_transform"):                   # grasp -> wrist-yaw goal (+ left mirror)
+        T_wg = build_T_wristyaw_grasp(palm_offset_xyz, side, R_wristyaw_grasp)
+        out: List[GraspCandidate] = []
+        for i in np.argsort(-conf):                    # confidence descending
+            T_pelvis_grasp = Pose.from_homogeneous(grasps[i])
+            cand = GraspCandidate(wrist_goal=wrist_goal_from_grasp(T_pelvis_grasp, T_wg),
+                                  confidence=float(conf[i]), grasp_pose=T_pelvis_grasp)
+            if tags is not None and i < len(tags):
+                cand.extra["branch_tag"] = tags[i]
+            out.append(cand)
     return out

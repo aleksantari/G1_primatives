@@ -33,6 +33,7 @@ remote first. Watch the e-stop.
   real: bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target real --source graspgenx --segment interactive'
 """
 import argparse
+import os
 import sys
 import time
 
@@ -41,6 +42,7 @@ import _rig
 from g1_classical_manip import primitives as P
 from g1_classical_manip.ee.hand_base import LEFT, RIGHT
 from g1_classical_manip.motion.curobo_planner import PlanningError
+from g1_classical_manip.latency import LOG
 
 
 def _shift_z(pose, dz: float):
@@ -148,7 +150,21 @@ def main():
                     help="trajectory playback time-dilation (<1 = slower)")
     ap.add_argument("--no-confirm", action="store_true", help="skip the per-step prompt")
     ap.add_argument("--close-frac", type=float, default=0.65, help="hand close fraction")
+    ap.add_argument("--latency", action="store_true",
+                    help="record per-component latency (depth/SAM3/GraspGenX/collision-world/"
+                         "plan_grasp/exec/hand) and, at the end, print a table + save a "
+                         "timeline+bar graph. Isolates real compute from the human GUI/keyboard gates.")
+    ap.add_argument("--latency-out", default="latency.png",
+                    help="path for the latency graph PNG (a sibling .json of raw spans is also "
+                         "written). Default ./latency.png")
+    ap.add_argument("--show-spheres", action="store_true",
+                    help="overlay the cuRobo collision spheres (green) at the start/home config on "
+                         "the grasp viser scene (needs --visualize) -- to SEE why a 'Start or End "
+                         "state in collision' fires: a sphere inside the red ESDF voxels = world "
+                         "collision; two spheres overlapping = self-collision")
     args = ap.parse_args()
+    if args.latency:
+        LOG.enable()
 
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
                          camera_config=_rig.camera_config_for(args.target))
@@ -183,13 +199,15 @@ def main():
     side, auto, rc = args.side, args.no_confirm, 0
     try:
         _rig.confirm("home (planned)", auto)
-        r = P.home(robot)
+        with LOG.span("home:start", LOG.EXEC):
+            r = P.home(robot)
         print("home  :", r)
         if not r.ok:
             raise RuntimeError(f"home failed: {r.info}")
 
         _rig.confirm("open hand", auto)
-        print("open  :", P.open_hand(robot, side))
+        with LOG.span("hand:open", LOG.EXEC):
+            print("open  :", P.open_hand(robot, side))
 
         _rig.confirm(f"generate grasps via '{src_kind}' (segment={seg_mode}) -- object in view",
                      auto)
@@ -212,6 +230,11 @@ def main():
         if not cands:
             raise RuntimeError(f"grasp source '{src_kind}' produced no candidates "
                                f"(no detection / no depth / no mask / no grasps)")
+        if args.show_spheres and args.visualize:   # cuRobo collision spheres @ the start/home config
+            viz = getattr(robot.grasp_source, "viz", None)
+            if viz is not None:
+                c, r = robot.planner.collision_spheres(robot.arm.get_current_dual_arm_q())
+                viz.show_collision_spheres(c, r)
         if args.grasp_roll_deg or args.grasp_pitch_deg or args.grasp_yaw_deg:
             from dataclasses import replace                    # post-rotate each wrist goal in
             from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix   # the WRIST frame:
@@ -241,7 +264,8 @@ def main():
 
         def _do_close():
             _rig.confirm(f"CLOSE hand to {args.close_frac:.2f}", auto)
-            print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
+            with LOG.span("hand:close", LOG.EXEC):
+                print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
 
         def _show_world(points):
             """Overlay the depth-ESDF collision world on the SAME viser scene as the grasps (red
@@ -300,7 +324,8 @@ def main():
                 raise RuntimeError(res.info)
 
         _rig.confirm("home (return)", auto)
-        print("home  :", P.home(robot))
+        with LOG.span("home:return", LOG.EXEC):
+            print("home  :", P.home(robot))
         print("DONE")
     except KeyboardInterrupt as e:
         print(f"\nABORTED by operator ({e}) -- holding position; no recovery motion.")
@@ -314,6 +339,16 @@ def main():
         except Exception as e2:                  # noqa: BLE001 - best-effort recovery
             print(f"  recovery best-effort failed: {e2}")
         rc = 1
+    if args.latency:                             # emit even on abort -- partial timings are useful
+        print(LOG.summary())
+        try:
+            png = LOG.plot(args.latency_out, title="09_graspgen latency")
+            jsn = LOG.dump_json(os.path.splitext(args.latency_out)[0] + ".json")
+            if png:
+                print(f"latency graph -> {os.path.abspath(png)}")
+            print(f"latency spans -> {os.path.abspath(jsn)}")
+        except Exception as e:                   # noqa: BLE001 - reporting must never crash the run
+            print(f"latency graph failed: {e}")
     sys.exit(rc)
 
 

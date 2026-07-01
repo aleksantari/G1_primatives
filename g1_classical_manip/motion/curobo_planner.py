@@ -108,7 +108,7 @@ class CuroboArmPlanner:
         # goalset path at this size. Default 1 in cuRobo would forbid multi-candidate solves.
         self._max_goalset = int((self.planner_cfg.get("grasp") or {}).get("max_goalset", 128))
         self._mp = MotionPlanner(MotionPlannerCfg.create(
-            robot=robot_cfg_path, max_goalset=self._max_goalset))
+            robot=robot_cfg_path, max_goalset=self._max_goalset, **self._solver_kwargs()))
         self._mp.warmup(enable_graph=True, num_warmup_iterations=5)
         self._grasp_mp = {}       # lazy per-side single-tool-frame planners for plan_grasp
         # Depth-ESDF collision world (planner.yaml grasp.collision_world). OFF by default: when on,
@@ -126,6 +126,28 @@ class CuroboArmPlanner:
         self._dyn = None          # lazy cuRobo RNEA Dynamics (gravity-comp; built on 1st use)
 
     # --- helpers ---
+    def _solver_kwargs(self) -> dict:
+        """Extra MotionPlannerCfg.create() kwargs from planner.yaml `solver` -- solver seed counts +
+        collision margin/tolerances. Empty -> cuRobo defaults (num_ik_seeds 32, num_trajopt_seeds 4,
+        optimizer_collision_activation_distance 0.01). MORE seeds explore the arm's 7-DoF redundancy
+        (and the K-goal set) for a collision-free grasp IK -- the real lever for 'No grasp in goal set
+        was reachable' with the collision world on (plan_grasp has no max_attempts and a FIXED random
+        seed, so re-tries are deterministic; seeds are how you 'try harder' in one solve). Applied to
+        BOTH the main planner and every per-side grasp planner."""
+        s = self.planner_cfg.get("solver") or {}
+        kw = {}
+        if s.get("num_ik_seeds") is not None:
+            kw["num_ik_seeds"] = int(s["num_ik_seeds"])
+        if s.get("num_trajopt_seeds") is not None:
+            kw["num_trajopt_seeds"] = int(s["num_trajopt_seeds"])
+        if s.get("collision_activation_distance") is not None:
+            kw["optimizer_collision_activation_distance"] = float(s["collision_activation_distance"])
+        if s.get("position_tolerance") is not None:
+            kw["position_tolerance"] = float(s["position_tolerance"])
+        if s.get("orientation_tolerance") is not None:
+            kw["orientation_tolerance"] = float(s["orientation_tolerance"])
+        return kw
+
     def _joint_state(self, q_repo14):
         """repo-order (14,) config -> cuRobo JointState in active (cuRobo) order."""
         from curobo.types import JointState
@@ -200,6 +222,22 @@ class CuroboArmPlanner:
     def fk(self, side: str, q_repo14) -> Pose:
         """Wrist-yaw pose (pelvis frame) of `side` at the given dual-arm config."""
         return self.fk_link(WRIST_FRAME[side], q_repo14)
+
+    def collision_spheres(self, q_repo14=None):
+        """The cuRobo collision spheres -- the geometry cuRobo ACTUALLY collision-checks (self-
+        collision + vs the world) -- at the given dual-arm config, in the PELVIS frame. Returns
+        ``(centers (N,3), radii (N,))`` float32 for the ACTIVE spheres (radius > 0). Defaults to
+        home (zeros). Visualize these to see WHY a 'Start or End state in collision' fires: a sphere
+        sitting inside the ESDF voxels (world collision) or two links' spheres overlapping (self-
+        collision). NOTE these come from the MAIN 14-DoF model (both arms, hands locked open), which
+        is the same sphere set the self-collision check uses."""
+        q = np.zeros(DOF) if q_repo14 is None else q_repo14
+        ks = self._mp.compute_kinematics(self._joint_state(q))
+        sph = ks.robot_spheres
+        arr = (sph.detach().cpu().numpy() if hasattr(sph, "detach") else np.asarray(sph))
+        arr = arr.reshape(-1, 4)
+        keep = arr[:, 3] > 0.0                       # cuRobo marks disabled spheres with radius <= 0
+        return arr[keep, :3].astype(np.float32), arr[keep, 3].astype(np.float32)
 
     # --- dynamics: gravity-comp feed-forward (see docs/gravity_comp.md) ---
     def _ensure_dynamics(self):
@@ -319,7 +357,8 @@ class CuroboArmPlanner:
                 scene_model = SceneCfg(voxel=[empty_esdf_grid(
                     p["grid_center"], p["extent_m"], p["esdf_voxel_size"])])
             mp = MotionPlanner(MotionPlannerCfg.create(
-                robot=rcfg, max_goalset=self._max_goalset, scene_model=scene_model))
+                robot=rcfg, max_goalset=self._max_goalset, scene_model=scene_model,
+                **self._solver_kwargs()))
             mp.warmup(enable_graph=False, num_warmup_iterations=1)
             self._grasp_mp[side] = mp
         return mp
@@ -507,6 +546,15 @@ class CuroboArmPlanner:
             disable_collision_links = [active]
             if self._cw_enabled:                          # let the open hand sit in the object ESDF
                 disable_collision_links = disable_collision_links + HAND_LINKS[side]
+        # LEFT-hand approach mirror: the grasp->wrist transform reflects the left hand across the
+        # wrist Y-plane (tool_transform._MIRROR_Y), so the grasp APPROACH direction (grasp +Z into
+        # the object) lands on the OPPOSITE tool-frame Y for the left hand (+Y right, -Y left). A
+        # tool-frame approach along "y" therefore points the wrong way for the left -> flip the
+        # offset so the pre-grasp backs off on the correct side. (Without this the left approach
+        # drives INTO the object: it fails under --collision-world and comes from the wrong side
+        # without it.) x/z tool axes and the world-frame lift are unaffected by the Y-mirror.
+        if side == LEFT and approach_in_tool_frame and approach_axis == "y":
+            approach_offset = -approach_offset
         res = mp.plan_grasp(
             goal, start,
             grasp_approach_axis=approach_axis, grasp_approach_offset=float(approach_offset),

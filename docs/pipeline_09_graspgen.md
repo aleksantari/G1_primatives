@@ -139,6 +139,22 @@ GraspResult(ok, info, chosen_index)   → on failure: 09 recovers (open_hand + h
 - Executor (`g1_classical_manip/motion/executor.py`): `run` :112 (`prime` → stream ×`time_dilation`
   → abort-to-hold), `_tauff` = gravity-comp `G(q)`.
 
+## Latency profiling (`--latency`)
+`09_graspgen --latency` records a timing span at each stage of the call map above and, at the end,
+prints a table + saves a **timeline (Gantt) + per-component bar chart** (`--latency-out`, default
+`latency.png`; a sibling `.json` of raw spans too). Off by default (zero overhead). Spans, by
+category:
+- **compute** (the inference we care about): `depth_grab`, `sam3`, `deproject`, `graspgenx`,
+  `tool_transform` (subsystem A); `collision_world`, `plan_grasp` (subsystem B). `sam3`/`graspgenx`
+  are timed at their **ZMQ round-trips** (`perception/sam3_client.py:segment`,
+  `grasp/graspgenx_client.py:infer`) — so SAM3's cv2-GUI refinement is NOT counted (it falls into the
+  untimed gap). `sim_cloud` swaps `depth_grab`+`sam3`+`deproject` for one `cloud_build` span.
+- **exec** (motion): `exec:approach|grasp|lift` (executor.run in `grasp_motion`), `home:*`, `hand:*`.
+- **wait** (human): `wait: <step>` from each `_rig.confirm` keyboard gate.
+The summary footer splits total **compute** vs **exec** vs **wait** vs **untimed gap (GUI/idle)** vs
+**wall-clock** — i.e. true pipeline speed separated from the human-in-the-loop overhead. The recorder
+is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enabled).
+
 ## External services / buses
 - ZMQ services (separate repos/envs): **GraspGenX** `:5556`, **SAM3** `:5557`, **viser** `:8080`.
 - DDS topics: arm `rt/lowcmd` (cmd) + `rt/lowstate` (state); hands `rt/dex3/{side}/cmd` + `state`;

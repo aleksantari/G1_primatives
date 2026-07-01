@@ -64,7 +64,8 @@ g1_classical_manip/
   viz/             GraspViz (viser) — point cloud + ranked grasps + gripper mesh (offline)
 configs/           robot, planner, hands, camera, perception, grasp (+ curobo/, cyclonedds_loopback.xml)
 assets/grippers/   <gripper>/{config.json, coll_mesh.obj} for the grasp viz (unitree_g1)
-scripts/           01_check_dds → 12_check_world ladder + 10_graspgen_viz (offline grasp viz) + hand_diag.py
+scripts/           01_check_dds → 12_check_world ladder + 10_graspgen_viz (offline grasp viz) +
+                   10_grasp_preview (online SAM3+GraspGenX viser, no motion) + hand_diag.py
 tests/             test_pose/grasp/detect + pointcloud/depth_deproject/tool_transform/ graspgenx_client/
                    grasp_source/sam3_client/segment/viz   (pure-math, no robot)
 ```
@@ -110,14 +111,17 @@ python scripts/07_pick_place.py  --target sim    # pick+lift: home→open→dete
 python scripts/08_check_depth.py  --target sim    # head-cam DEPTH feed (sim ZMQ :55556 / real ZED): mm stats + colorized view
 python scripts/09_graspgen.py    --target real --source graspgenx --segment interactive  # GraspGenX pick+lift
 python scripts/10_segment.py     --frame captures/scene1.npz --mode interactive --save   # SAM3 segment + save colored .ply
-python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.ply                         # GraspGenX grasps in viser
+python scripts/10_graspgen_viz.py --pcd captures/scene1_cloud.ply                         # GraspGenX grasps in viser (offline, from a saved cloud)
+python scripts/10_grasp_preview.py --target sim  # ONLINE SAM3 + GraspGenX in viser (live camera, no motion, loops)
 python scripts/11_capture_frame.py --target real --out captures/scene1.npz               # save a frame (offline demo)
 python scripts/12_check_world.py --target sim --visualize  # inspect the depth-ESDF collision world (no motion): geometry + self-filter
 ```
 Run them in order — `01`/`02` are read-only/no-motion (safe first contact), `03`–`05`/`07`/`09`
 command the arms/hands, `06`/`08`/`10`/`11`/`12` are camera/inspection-only (`08` = head **depth** feed;
 `10` = SAM3 **segmentation**; `11` = capture a frame for the offline demo; `12` = inspect the
-**depth-ESDF collision world** with no planning/motion; `10_graspgen_viz` = no robot at all).
+**depth-ESDF collision world** with no planning/motion; `10_graspgen_viz` = no robot at all;
+`10_grasp_preview` = the ONLINE segment+GraspGenX loop — live camera → SAM3 → GraspGenX → viser,
+no motion, sim or real).
 `02`/`06`/`07` work on both targets; `08`/`12` work on both (sim depth over ZMQ `:55556`, real over the
 ZED); `09 --source graspgenx`/`11` need the real ZED; `10` segments either the live ZED (`--target
 real`), a captured frame (`--frame`), or a static image (`--image`, no robot). The **grasp servers +
@@ -184,7 +188,17 @@ approach/grasp/lift); `--legacy` restores the old sequential path. Useful flags:
 {reachable,first}` (all candidates vs the single top-confidence one), `--grasp-only` (one move
 straight to the grasp, no approach/lift — a frame sanity check), `--collision-world` (route the
 approach around the object/table via the depth-ESDF world — see below), `--speed 0.5` (slower
-playback if the dynamic approach trips the tracking-error abort).
+playback if the dynamic approach trips the tracking-error abort), `--latency` (profile each
+component — see below).
+
+**Latency profiling (`--latency`)** — records per-component timings (`depth_grab`, `sam3`,
+`graspgenx`, `deproject`, `tool_transform`, `collision_world`, `plan_grasp`, `exec:*`, `hand:*`)
+and, at the end, prints a table + saves a **timeline (Gantt) + per-component bar chart** to
+`latency.png` (`--latency-out PATH`; a sibling `.json` of raw spans too). SAM3 and GraspGenX are
+timed at their **ZMQ round-trips**, so SAM3's cv2-GUI refinement and the keyboard confirm gates are
+NOT counted as inference — they show up as `wait` / an "untimed gap" in the summary. This is how you
+read true pipeline speed separately from the human-in-the-loop overhead. Off by default (zero
+overhead). Instrumentation lives in `g1_classical_manip/latency.py` (`LOG.span(...)`).
 
 **In the Isaac sim (de-risk before the robot)** — `--source sim_cloud` builds a ground-truth cube
 cloud from the live `rt/sim_state` block pose → GraspGenX → the same tool transform + gated motion,
@@ -195,6 +209,16 @@ that our Dex3 fingers straddle the GT cube). Needs `perception.yaml: detector: s
 CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
   bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target sim --source sim_cloud --visualize'
 ```
+
+**Multi-prop robustness scene** — for testing the pipeline beyond the cube, the sim has a clutter
+task `Isaac-PickPlace-Props-G129-Dex3-Joint`: a 3-column × 2-row grid of 6 props (red cube `object`
++ cylinder, sphere + mug USD, toy-truck USD + brick). Launch with
+`TASK=Isaac-PickPlace-Props-G129-Dex3-Joint ./launch_sim.sh`, then run `09 --source graspgenx
+--segment` (the `graspgenx` path generalizes to any shape — pick a prop in the SAM3 GUI; `sim_cloud`
+stays cube-only). Toggle which row spawns with **`PROPS_ROW=front|back|both`** (default `both`),
+e.g. `PROPS_ROW=front TASK=Isaac-PickPlace-Props-G129-Dex3-Joint ./launch_sim.sh` — the red cube
+`object` is always present, the toggle adds/removes the rest. See SIM_NOTES.md "Multi-prop clutter
+scene".
 
 **Depth-ESDF collision world (`--collision-world`)** — head-camera depth → cuRobo `Mapper` →
 an ESDF `VoxelGrid` (`motion/collision_world.EsdfMapper`) handed to the grasp planner, so the

@@ -30,6 +30,23 @@ executor:
   # Override per-run via 04_move --speed. Dial toward 1.0 to find the fastest that tracks.
   time_dilation: 0.5
 
+# cuRobo solver effort (MotionPlannerCfg.create); applies to BOTH the main planner and every
+# per-side grasp planner. These are the "make planning try harder" knobs: more seeds search the
+# arm's 7-DoF redundancy + the K-goal set for a reachable, collision-free solution -- the fix for
+# "No grasp in goal set was reachable" once the collision world is on (an easy pose that plans fine
+# WITHOUT the world but fails WITH it usually just needs more seeds to find a non-colliding arm
+# config). NOTE plan_grasp has no max_attempts and a FIXED random seed, so re-tries are deterministic
+# -- SEEDS, not retries, are how you spend more effort in one solve. Higher = more VRAM + slower
+# warmup/solve (negligible on the 5090). Omit a key to use the cuRobo default (shown in []).
+solver:
+  num_ik_seeds: 64                     # [32] parallel IK seeds for the goal/goalset pose
+  num_trajopt_seeds: 8                 # [4]  parallel trajectory-optimization seeds
+  collision_activation_distance: 0.01  # [0.01] m clearance the optimizer demands from obstacles;
+                                       #   LOWER (e.g. 0.005) lets a tighter grasp/approach pass
+                                       #   (less margin, trades safety) -- try if more seeds don't clear it
+  # position_tolerance: 0.005          # [0.005] m goal position tolerance (loosen if barely unreachable)
+  # orientation_tolerance: 0.05        # [0.05] rad goal orientation tolerance
+
 # Native cuRobo plan_grasp (goalset selection + approach/grasp/lift). Feeds the K ranked grasp
 # candidates as ONE goalset; cuRobo returns the feasible one (goalset_index) and plans
 # approach->grasp->lift as native segments, sweeping the (approach, lift) offsets below until one

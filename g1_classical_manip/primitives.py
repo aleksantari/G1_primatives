@@ -22,6 +22,7 @@ import numpy as np
 from g1_classical_manip.spatial.pose import Pose
 from g1_classical_manip.ee.hand_base import LEFT, RIGHT  # noqa: F401 (re-export sides)
 from g1_classical_manip.perception.base import Detection  # noqa: F401 (re-export)
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 
 @dataclass
@@ -115,17 +116,19 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
         return GraspResult(False, "no candidates")
     gp = (robot.cfg["planner"].get("grasp") or {})
     q0 = robot.arm.get_current_dual_arm_q()
-    _update_collision_world(robot, side, q0)    # depth-ESDF world (gated), self-filtered at q0
+    with LOG.span("collision_world"):           # depth-ESDF world (gated), self-filtered at q0
+        _update_collision_world(robot, side, q0)
     if on_world_built is not None:              # let callers overlay the ESDF (even if planning fails)
         on_world_built(robot.planner.collision_world_points())
-    out = robot.planner.plan_grasp_set_sweep(
-        q0, side, [c.wrist_goal for c in cands],
-        strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),
-        approach_axis=gp.get("approach_axis", "y"), lift_axis=gp.get("lift_axis", "z"),
-        approach_in_tool_frame=gp.get("approach_in_tool_frame", True),
-        lift_in_tool_frame=gp.get("lift_in_tool_frame", False),
-        hold_idle=gp.get("hold_idle_arm", True),
-        disable_collision_links=gp.get("disable_collision_links"))
+    with LOG.span("plan_grasp"):                # cuRobo native goalset + approach/grasp/lift solve
+        out = robot.planner.plan_grasp_set_sweep(
+            q0, side, [c.wrist_goal for c in cands],
+            strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),
+            approach_axis=gp.get("approach_axis", "y"), lift_axis=gp.get("lift_axis", "z"),
+            approach_in_tool_frame=gp.get("approach_in_tool_frame", True),
+            lift_in_tool_frame=gp.get("lift_in_tool_frame", False),
+            hold_idle=gp.get("hold_idle_arm", True),
+            disable_collision_links=gp.get("disable_collision_links"))
     if not out.success:
         return GraspResult(False, f"plan_grasp failed: {out.status}", out.chosen_index, out)
 
@@ -138,7 +141,8 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
             continue
         if confirm_cb is not None:
             confirm_cb(label)
-        r = robot.executor.run(traj)
+        with LOG.span(f"exec:{label}", LOG.EXEC):
+            r = robot.executor.run(traj)
         if not r.success:
             return GraspResult(False, f"{label}: {r.reason}", out.chosen_index, out)
 
@@ -153,7 +157,8 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
     if out.lift is not None:
         if confirm_cb is not None:
             confirm_cb("lift")
-        r = robot.executor.run(out.lift)
+        with LOG.span("exec:lift", LOG.EXEC):
+            r = robot.executor.run(out.lift)
         if not r.success:
             return GraspResult(False, f"lift: {r.reason}", out.chosen_index, out)
 

@@ -18,6 +18,7 @@ from g1_classical_manip.perception.depth import deproject_depth
 from g1_classical_manip.perception.segment import SegmentationAborted
 from g1_classical_manip.grasp.base import GraspSource, GraspCandidate
 from g1_classical_manip.grasp.tool_transform import candidates_from_grasps
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 
 class GraspGenXGraspSource(GraspSource):
@@ -36,8 +37,9 @@ class GraspGenXGraspSource(GraspSource):
         cam = getattr(robot, "camera", None)
         if cam is None:
             return []
-        rgb = cam.get_rgb_frame()                      # same-instant pair (rgb then depth)
-        depth = cam.get_depth_frame()
+        with LOG.span("depth_grab"):                   # head-camera rgb+depth capture
+            rgb = cam.get_rgb_frame()                  # same-instant pair (rgb then depth)
+            depth = cam.get_depth_frame()
         if depth is None or rgb is None:
             return []                                  # no depth (sim/off) -> caller fails loudly
         arm = getattr(robot, "arm", None)
@@ -49,8 +51,9 @@ class GraspGenXGraspSource(GraspSource):
         except SegmentationAborted:
             return []                                  # operator aborted -> no grasps (loud)
 
-        cloud = deproject_depth(depth, self.intrinsics, T_pc,
-                                voxel_m=self.gcfg.get("voxel_m"), mask=mask, rgb=rgb)
+        with LOG.span("deproject"):                    # masked depth -> pelvis-frame point cloud
+            cloud = deproject_depth(depth, self.intrinsics, T_pc,
+                                    voxel_m=self.gcfg.get("voxel_m"), mask=mask, rgb=rgb)
         if cloud.is_empty():
             return []
         assert cloud.frame == "pelvis", f"cloud must be pelvis-frame, got {cloud.frame!r}"

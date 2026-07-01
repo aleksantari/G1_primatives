@@ -16,6 +16,8 @@ import msgpack_numpy
 import numpy as np
 import zmq
 
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
+
 msgpack_numpy.patch()                      # numpy arrays serialize natively
 
 logger = logging.getLogger(__name__)
@@ -112,9 +114,10 @@ class Sam3Client:
             raise ValueError("provide exactly one prompt: box, points (+optional "
                              f"point_labels), or text (got keys {sorted(prompt)})")
 
-        response = self._request({
-            "action": "segment", "image": rgb, "prompt": prompt,
-            "top_k": int(top_k), "return_scores": bool(return_scores)})
+        with LOG.span("sam3"):                 # pure SAM3 server round-trip (excludes the cv2 GUI)
+            response = self._request({
+                "action": "segment", "image": rgb, "prompt": prompt,
+                "top_k": int(top_k), "return_scores": bool(return_scores)})
         masks = np.asarray(response["masks"], dtype=np.uint8)        # (M,H,W); M may be 0
         scores = np.asarray(response.get("scores", []), dtype=np.float32).reshape(-1)
         labels = list(response.get("labels", []))

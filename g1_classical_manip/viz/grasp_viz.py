@@ -25,6 +25,7 @@ _OBB_COLOR = [255, 150, 0]       # amber  -- OBB / top-down grasp (protocol-v2 b
 _DIFF_COLOR = [180, 80, 220]     # purple -- diffusion grasp
 _ESDF_COLOR = [255, 40, 40]      # red    -- depth-ESDF collision-world occupied voxels
 _WRIST_COLOR = [40, 40, 255]     # blue   -- wrist@q markers (self-filter sanity: arm removed)
+_SPHERE_COLOR = [60, 200, 90]    # green  -- cuRobo collision spheres (the geometry it checks)
 
 
 class GraspViz:
@@ -168,6 +169,18 @@ class GraspViz:
                     position=tuple(float(x) for x in wp))
         print(f"[GraspViz] collision world: {len(occ)} ESDF voxels overlaid (red)"
               + (f" + {len(wrists)} wrist marker(s) (blue)" if wrists else ""))
+
+    def show_collision_spheres(self, centers, radii, color=None, opacity: float = 0.4,
+                               name: str = "collision_spheres"):
+        """Overlay the cuRobo collision spheres (the geometry cuRobo actually collision-checks) at a
+        config on the CURRENT scene, as one green semi-transparent mesh. A 'Start or End state in
+        collision' then becomes visible: a green sphere sitting inside the red ESDF voxels (WORLD
+        collision) or two spheres overlapping (SELF collision). ADDITIVE -- call AFTER
+        show_candidates. centers (N,3) + radii (N,) in the pelvis frame (planner.collision_spheres)."""
+        n = vp.add_collision_spheres(self.vis, centers, radii, color=(color or _SPHERE_COLOR),
+                                     opacity=opacity, name=name)
+        print(f"[GraspViz] {n} collision spheres overlaid (green) at the current config."
+              if n else "[GraspViz] collision spheres: none to overlay.")
 
     def spin(self):
         """Block so the viser server stays up (for the standalone inspection tool)."""

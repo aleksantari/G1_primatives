@@ -85,7 +85,46 @@ Expected (05_mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`
 ## Tasks available (G1-29dof + Dex3)
 `Isaac-PickPlace-RedBlock-G129-Dex3-Joint`, `Isaac-AprilTag-Calibration-G129-Dex3-Joint`,
 `Isaac-PickPlace-Cylinder-G129-Dex3-Joint`, `Isaac-Stack-RgyBlock-G129-Dex3-Joint`,
-`Isaac-Pick-Redblock-Into-Drawer-G129-Dex3-Joint`. Set via `TASK=...` for `launch_sim.sh`.
+`Isaac-Pick-Redblock-Into-Drawer-G129-Dex3-Joint`,
+`Isaac-PickPlace-Props-G129-Dex3-Joint` (multi-prop clutter — below). Set via `TASK=...` for `launch_sim.sh`.
+
+### Multi-prop "clutter" scene (`Isaac-PickPlace-Props-G129-Dex3-Joint`)
+A robustness-testing scene: instead of only the single red cube it puts several
+geometrically-distinct props on the table (world x/y):
+
+| x \ y | −4.03 (front) | −4.15 (back) |
+|---|---|---|
+| **−3.90** (robot's left) | sphere | mug (USD, 0.7×) |
+| **−4.20** (middle) | cylinder `object` | — |
+| **−4.50** (robot's right) | toy_truck (USD, 90°, 1.2×) | brick (90°) |
+
+The middle-front prop keeps the name `object` (so `rt/sim_state`/the redblock termination+reward,
+all keyed to "object", keep working) and is **always spawned** — the env's managers reference it by
+name, so removing it crashes env build. It's currently a **cylinder** (was the red cube); note
+`sim_cloud` is cube-only so it no longer matches `object`'s true shape — use the `graspgenx` path,
+which is shape-agnostic.
+
+**Row toggle:** `PROPS_ROW=front|back|both` (default `both`) picks which row spawns —
+`PROPS_ROW=front TASK=Isaac-PickPlace-Props-G129-Dex3-Joint ./launch_sim.sh`. `object` stays put in
+every mode; the toggle adds/removes the other 5. (front → object+sphere+toy_truck; back →
+object+cylinder+mug+brick.) It's an env var read in `base_scene_pickplace_props.py`.
+
+Drives the full `graspgenx` path on non-box geometry + distractors (SAM3 segments whichever prop you
+click; the depth-ESDF collision world sees all active props). The redblock task is untouched. Files
+in `unitree_sim_isaaclab`: `tasks/common_scene/base_scene_pickplace_props.py` (scene + `PROP_NAMES`,
+which follows `PROPS_ROW`), `tasks/g1_tasks/pick_place_props_g1_29dof_dex3/` (task, in
+`tasks/g1_tasks/__init__.py`). USD props are in `assets/objects/{mug,toy_truck}/` (IsaacLab props are
+Nucleus/S3-only — not local by default). Run it:
+```bash
+TASK=Isaac-PickPlace-Props-G129-Dex3-Joint ./launch_sim.sh          # add PROPS_ROW=front|back
+# then, from this repo:
+bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target sim \
+    --source graspgenx --segment --collision-world --visualize --grasp-only'
+```
+Notes: `--source sim_cloud` still works but only grasps the `object` cube (cube-only; point it at
+another prop via `perception.sim_state.object_key`). Prop poses are a first cut — eyeball/tune
+`pos`/`z` (and USD `scale`) in the viewport. If PhysX warns about contact-pair buffers, the env cfg
+already bumps `gpu_*_aggregate_pairs_capacity`; raise further if needed.
 
 ## Perception in sim (now wired)
 Head **color** (JPEG, `:55555`) and **depth** (raw float32 mm, `:55556`) both stream over ZMQ

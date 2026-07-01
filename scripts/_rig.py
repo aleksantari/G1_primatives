@@ -10,6 +10,7 @@ import numpy as np
 
 from g1_classical_manip.factory import make_robot, load_configs
 from g1_classical_manip import primitives as P
+from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 SIM_DOMAIN, SIM_IFACE = 1, "lo"
 
@@ -63,7 +64,8 @@ def confirm(step: str, auto: bool):
     if auto:
         return
     try:
-        ans = input(f"  >> next: {step} -- Enter to run, 'q' to abort: ").strip().lower()
+        with LOG.span(f"wait: {step}", LOG.WAIT):   # human keyboard gate -- NOT pipeline speed
+            ans = input(f"  >> next: {step} -- Enter to run, 'q' to abort: ").strip().lower()
     except EOFError:
         raise KeyboardInterrupt("stdin closed")
     if ans in ("q", "quit", "n", "no", "abort"):

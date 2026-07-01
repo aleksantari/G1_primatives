@@ -18,8 +18,8 @@ graspgenx:
   host: "127.0.0.1"       # GraspGenX server (runs on the workstation GPU). USER-PROVIDED.
   port: 5556
   gripper_name: "unitree_g1"
-  num_grasps: 200
-  topk: 100
+  num_grasps: 300
+  topk: 200
   grasp_threshold: -1.0   # -1 = take the top-K ranked (no hard confidence threshold)
   timeout_ms: 60000
   voxel_m: 0.003          # ~3 mm voxel downsample of the cloud before infer

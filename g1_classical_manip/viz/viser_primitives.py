@@ -110,6 +110,39 @@ def visualize_mesh(
     )
 
 
+def add_collision_spheres(vis, centers, radii, color=(60, 200, 90), opacity: float = 0.4,
+                          name: str = "collision_spheres") -> int:
+    """Add cuRobo collision spheres -- ``centers (N,3)`` + ``radii (N,)`` in the pelvis frame -- to a
+    viser server as ONE semi-transparent mesh (all spheres concatenated into a single scene node, so
+    it stays cheap). Returns the count drawn (0 = nothing). Shared by GraspViz.show_collision_spheres
+    and 12_check_world so a 'Start or End state in collision' is visible: a sphere inside the red ESDF
+    voxels (world collision) or two spheres overlapping (self-collision)."""
+    if vis is None:
+        return 0
+    c = np.asarray(centers, dtype=np.float32).reshape(-1, 3)
+    r = np.asarray(radii, dtype=np.float32).reshape(-1)
+    unit = trimesh.creation.icosphere(subdivisions=1, radius=1.0)      # low-poly; one per sphere
+    parts = []
+    for ci, ri in zip(c, r):
+        if ri <= 0:
+            continue
+        m = unit.copy()
+        m.apply_scale(float(ri))
+        m.apply_translation(ci.astype(float))
+        parts.append(m)
+    if not parts:
+        return 0
+    mesh = trimesh.util.concatenate(parts)
+    col = tuple(int(x) for x in color)
+    try:                                   # transparent when the viser build supports opacity
+        vis.scene.add_mesh_simple(
+            name, vertices=mesh.vertices.astype(np.float32), faces=mesh.faces.astype(np.uint32),
+            color=col, opacity=float(opacity), wxyz=(1.0, 0.0, 0.0, 0.0), position=(0.0, 0.0, 0.0))
+    except TypeError:                      # older viser: no opacity kwarg -> opaque fallback
+        visualize_mesh(vis, name, mesh, color=list(col))
+    return len(parts)
+
+
 def visualize_bbox(
     vis: viser.ViserServer,
     name: str,

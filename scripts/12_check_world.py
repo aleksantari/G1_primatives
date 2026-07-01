@@ -100,6 +100,11 @@ def main():
     ap.add_argument("--frame", default=None,
                     help="OFFLINE: inspect an 11_capture_frame .npz (no robot/camera/DDS). Uses the "
                          "frame's depth + intrinsics + T_pelvis_camera + recorded q (else home)")
+    ap.add_argument("--show-spheres", action="store_true",
+                    help="overlay the cuRobo collision spheres (green) at the self-filter config on "
+                         "the viser scene (needs --visualize) -- a sphere INSIDE the red ESDF voxels "
+                         "= that config collides with the world (start-in-collision); two spheres "
+                         "overlapping = self-collision")
     args = ap.parse_args()
 
     # --- source the depth + camera pose + robot config: a captured .npz (offline) OR live ---
@@ -235,7 +240,15 @@ def main():
         if args.probe is not None:
             srv.scene.add_icosphere("/probe", radius=0.03, color=(0, 220, 0),
                                     position=tuple(float(x) for x in args.probe))
-        print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@q)")
+        n_sph = 0
+        if args.show_spheres:               # the cuRobo collision spheres at the self-filter config
+            from g1_classical_manip.viz import viser_primitives as vp
+            c, r = robot.planner.collision_spheres(q_arm)
+            n_sph = vp.add_collision_spheres(srv, c, r, name="/collision_spheres")
+            print(f"collision spheres: {n_sph} overlaid (green) at the self-filter q "
+                  f"[{src}] -- any green sphere inside the RED voxels = in collision with the world")
+        print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@q"
+              + (", GREEN=collision spheres@q" if n_sph else "") + ")")
         print("Ctrl-C to exit.")
         try:
             while True:
