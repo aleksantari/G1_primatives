@@ -194,7 +194,15 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
   - **SINGULARITY** — `sigma_min` / condition number / Yoshikawa manipulability of the side's 6×7
     wrist Jacobian (FD — cuRobo's `tool_jacobians` is a zero placeholder unless built with
     `compute_jacobian=True`). `sigma_min < 0.01` flags near-singular (healthy configs run ~0.02–0.08).
-  With `--visualize`, the offending spheres are overlaid in **magenta** on the grasp scene.
+  It runs at TWO configs: the **START** (current/home) — `diagnose(q_fail, …)`, magenta overlay —
+  and, for the top candidate, the **END** pre-grasp — `diagnose_pose(side, approach_pose, …)`, orange
+  overlay. "Start or End state in collision" is generic, so this splits it: the END path re-solves a
+  **world-ignoring** config for the pre-grasp on the main planner (which has no ESDF) and checks *that*
+  against the world — because `plan_grasp` rejects the pre-grasp but never returns its config.
+  Read the END result as: reachable + WORLD hits → the pre-grasp genuinely drives an arm link into the
+  ESDF (real clutter collision, blocked approach); reachable + WORLD empty → a free pre-grasp config
+  exists and `plan_grasp` just didn't find it (raise `solver.num_ik_seeds`/`num_trajopt_seeds`);
+  unreachable → the candidate pose itself is infeasible (bad grasp), not a world issue.
   **Because self-collision is world-independent** (`disable_collision_links` only disables links vs
   the WORLD): a config that is self-collision-free with `--collision-world` off stays so with it on —
   so a failure that appears only with the world is a WORLD collision, and a genuine self-collision

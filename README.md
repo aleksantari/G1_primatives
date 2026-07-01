@@ -196,9 +196,12 @@ generic *"Start or End state in collision"* / *"No grasp in goal set was reachab
 `--debug-planner` turns up cuRobo's own logger so it prints *which phase* rejected; `--diagnose`
 runs `planner.diagnose(q, side)` on abort for the *per-element* reason — the self-collision link
 pairs (ignore-matrix faithful), which spheres penetrate the ESDF, joint-limit margins, and wrist
-singularity (`sigma_min`/manipulability) — overlaying the offending spheres in **magenta** (with
-`--visualize`). `12_check_world --diagnose [--side]` runs the same report against a built ESDF in
-isolation. It's the tool to decide whether a finer sphere model would help *before* rebuilding it
+singularity (`sigma_min`/manipulability). It checks the **START** config (magenta overlay) *and* the
+**END** pre-grasp of the top candidate (`diagnose_pose` re-solves a world-ignoring config for the
+pose and checks it against the ESDF; orange overlay) — so a generic "Start or End state in collision"
+is split into which one, and whether a collision-free pre-grasp merely wasn't found (→ more seeds)
+vs the approach genuinely hitting clutter. `12_check_world --diagnose [--side]` runs the START report
+against a built ESDF in isolation. It's the tool to decide whether a finer sphere model would help *before* rebuilding it
 (real hand-sphere overlaps → yes; joint-limit / near-singular / ESDF penetration → no). See
 `docs/pipeline_09_graspgen.md`.
 

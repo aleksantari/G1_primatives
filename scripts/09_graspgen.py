@@ -209,6 +209,7 @@ def main():
         print("collision world: ON (head depth -> cuRobo ESDF; approach is obstacle-aware)")
 
     side, auto, rc = args.side, args.no_confirm, 0
+    cands = []                                   # so the --diagnose except handler can reference it
     try:
         _rig.confirm("home (planned)", auto)
         with LOG.span("home:start", LOG.EXEC):
@@ -347,12 +348,25 @@ def main():
         if args.diagnose:                        # explain the failure config BEFORE recovery moves it
             try:
                 q_fail = robot.arm.get_current_dual_arm_q()
-                out = robot.planner.diagnose(
-                    q_fail, side, world_points=robot.planner.collision_world_points())
+                wpts = robot.planner.collision_world_points()
                 viz = getattr(robot.grasp_source, "viz", None)
-                if viz is not None and len(out["offending_centers"]):   # magenta = the offenders
+                print("--- diagnose: START config (current) ---")
+                out = robot.planner.diagnose(q_fail, side, world_points=wpts)
+                if viz is not None and len(out["offending_centers"]):   # magenta = start offenders
                     viz.show_collision_spheres(out["offending_centers"], out["offending_radii"],
                                                color=[255, 0, 255], name="diag_offenders")
+                if cands:                        # END config: IK+diagnose the top candidate's pre-grasp
+                    print("--- diagnose: END config (top candidate's pre-grasp) ---")
+                    gp = robot.cfg["planner"].get("grasp") or {}
+                    strat = (gp.get("strategies") or [{}])[0]
+                    dist = abs(float(strat.get("approach_offset", -0.10)))
+                    pre = _approach_pose(cands[0].wrist_goal, cands[0].grasp_pose, dist)
+                    po = robot.planner.diagnose_pose(
+                        side, pre, world_points=wpts, start_q_repo14=q_fail,
+                        label=f"pre-grasp @ -{dist:.2f}m")
+                    if viz is not None and len(po["offending_centers"]):  # orange = pre-grasp offenders
+                        viz.show_collision_spheres(po["offending_centers"], po["offending_radii"],
+                                                   color=[255, 120, 0], name="diag_pregrasp_offenders")
             except Exception as de:              # noqa: BLE001 - diagnostics must never mask the abort
                 print(f"diagnose failed: {de}")
         print("recovering -> open hand + home ...")

@@ -419,6 +419,42 @@ class CuroboArmPlanner:
         print(f"  SINGULARITY ({side} wrist 6x7): sigma_min={s['sigma_min']:.4f}  "
               f"cond={s['cond']:.1f}  manip={s['manip']:.4f}{near}")
 
+    def diagnose_pose(self, side: str, wrist_pose, world_points=None, start_q_repo14=None,
+                      label: str = "pose", **kw):
+        """Diagnose the CONFIG that reaches a target wrist pose (e.g. a pre-grasp) -- the END-state
+        counterpart to diagnose() for 'Planning to approach pose failed'. plan_grasp rejects the
+        pre-grasp but does NOT return its config, so we re-solve one on the MAIN planner, which has
+        NO world (only the grasp planners are voxel-capable) -> a WORLD-IGNORING config for the pose,
+        then diagnose() it against `world_points` (the ESDF). Interpreting the result:
+          * reachable + WORLD non-empty -> the pre-grasp genuinely puts arm spheres in the ESDF
+            (real clutter collision; that grasp's approach is blocked -- not a sphere-model issue).
+          * reachable + WORLD empty     -> a collision-free pre-grasp config EXISTS; plan_grasp's
+            goalset/seeds just didn't find it -> more num_ik_seeds/num_trajopt_seeds may fix it.
+          * unreachable                 -> the pose is infeasible even ignoring the world (self-
+            collision / no IK) -> the grasp candidate itself is bad, not the world.
+        NOTE plan_to_pose returns ONE IK branch (elbow up/down); a WORLD hit doesn't prove EVERY
+        branch collides, but a WORLD miss proves a free one exists. Returns the diagnose() dict
+        (empty sections if unreachable) + {'reachable', 'config'}."""
+        start = np.zeros(DOF) if start_q_repo14 is None else start_q_repo14
+        empty = {"self": [], "world": [], "limits": [], "singularity": {},
+                 "offending_centers": np.zeros((0, 3), np.float32),
+                 "offending_radii": np.zeros((0,), np.float32)}
+        try:
+            traj = self.plan_to_pose(start, side, wrist_pose)      # main planner: self-only, NO world
+            cfg = traj.q[-1]
+        except PlanningError as e:
+            print(f"[diagnose_pose] '{label}' ({side}) UNREACHABLE ignoring the world "
+                  f"(self-collision / no IK) -> the POSE itself is infeasible, not a world issue\n"
+                  f"    {e}")
+            return {**empty, "reachable": False, "config": None}
+        print(f"[diagnose_pose] '{label}' ({side}) reached at "
+              f"{np.round(np.asarray(wrist_pose.translation), 3)} (world-free IK); "
+              f"checking that config vs the ESDF:")
+        out = self.diagnose(cfg, side, world_points=world_points, **kw)
+        out["reachable"] = True
+        out["config"] = np.asarray(cfg, float)
+        return out
+
     # --- dynamics: gravity-comp feed-forward (see docs/gravity_comp.md) ---
     def _ensure_dynamics(self):
         """Lazily build cuRobo's RNEA Dynamics from the warm planner's own
