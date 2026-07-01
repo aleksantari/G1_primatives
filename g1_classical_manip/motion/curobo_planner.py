@@ -74,6 +74,20 @@ def _seg_positions(seg_names, q_repo14, hand_q=None):
     return [vals[n] for n in seg_names]
 
 
+def set_curobo_log_level(level: str = "debug") -> None:
+    """Turn up cuRobo's OWN logger so plan_grasp's internal failure reasons get printed instead of
+    swallowed: the graph planner's 'Start or End state in collision' (graph_planner_prm), the IK
+    stage's 'No grasp in goal set was reachable' (motion_planner), and per-stage trajopt warnings.
+    `level` in {debug, info, warning, error}; cuRobo defaults to 'warning'. Call once before planning
+    (09/12 expose it as --debug-planner). Best-effort: never blocks if the logging API moves."""
+    try:
+        from curobo.logging import setup_logger
+        setup_logger(level)
+        print(f"[curobo] log level -> {level}")
+    except Exception as e:                       # noqa: BLE001 - diagnostics only, never block a run
+        print(f"set_curobo_log_level: could not set cuRobo log level ({e})")
+
+
 class PlanningError(RuntimeError):
     pass
 
@@ -238,6 +252,172 @@ class CuroboArmPlanner:
         arr = arr.reshape(-1, 4)
         keep = arr[:, 3] > 0.0                       # cuRobo marks disabled spheres with radius <= 0
         return arr[keep, :3].astype(np.float32), arr[keep, 3].astype(np.float32)
+
+    def _sphere_link_names(self):
+        """(443,) list: the link NAME each collision sphere belongs to, so a self-collision pair
+        can be labelled by link (right_hand_thumb_2_link <-> right_wrist_yaw_link) rather than raw
+        sphere index. From the cuRobo kinematics (link_sphere_idx_map + link_name_to_idx_map)."""
+        if getattr(self, "_sphere_links", None) is None:
+            kc = self._mp.kinematics.kinematics_config
+            idx_map = kc.link_sphere_idx_map.detach().cpu().numpy().reshape(-1).astype(int)
+            name_of = {int(v): k for k, v in kc.link_name_to_idx_map.items()}
+            self._sphere_links = [name_of.get(int(li), f"link_{int(li)}") for li in idx_map]
+        return self._sphere_links
+
+    def _self_collision_pairs(self):
+        """(P,2) int sphere-index pairs cuRobo ACTUALLY self-collision-checks -- adjacent links and
+        every self_collision_ignore entry (incl. build_g1_dex3.patch()'s torso<->shoulder and
+        thumb_1<->wrist_yaw) are ALREADY removed by cuRobo, so iterating these is ignore-matrix
+        faithful for free. Also returns cuRobo's PER-SPHERE (443,) sphere_padding (the activation
+        buffer it adds to each radius) so the overlap test matches what the solver rejects on."""
+        if getattr(self, "_self_pairs", None) is None:
+            scc = self._mp.kinematics.get_self_collision_config()
+            self._self_pairs = scc.collision_pairs.detach().cpu().numpy().astype(int).reshape(-1, 2)
+            pad = getattr(scc, "sphere_padding", None)
+            if pad is None:
+                self._self_pad = np.zeros(self._mp.kinematics.kinematics_config.total_spheres)
+            else:
+                pad = pad.detach().cpu().numpy() if hasattr(pad, "detach") else np.asarray(pad)
+                self._self_pad = pad.reshape(-1).astype(float)
+        return self._self_pairs, self._self_pad
+
+    @staticmethod
+    def _quat_to_R(wxyz):
+        w, x, y, z = [float(v) for v in wxyz]
+        return np.array([
+            [1 - 2*(y*y+z*z), 2*(x*y-z*w),     2*(x*z+y*w)],
+            [2*(x*y+z*w),     1 - 2*(x*x+z*z), 2*(y*z-x*w)],
+            [2*(x*z-y*w),     2*(y*z+x*w),     1 - 2*(x*x+y*y)]])
+
+    def _wrist_jacobian_fd(self, q_repo14, side: str, eps: float = 1e-5):
+        """The 6x7 geometric Jacobian (linear 3 + angular 3, pelvis frame) of `side`'s wrist w.r.t.
+        that arm's 7 joints, by FINITE DIFFERENCE over cuRobo FK. cuRobo's KinematicsState.tool_jacobians
+        is a zero placeholder unless the model is built with compute_jacobian=True, so we FD it off the
+        reliable tool_poses (validated stable for eps 1e-3..1e-6). Used for the singularity measure."""
+        q = np.asarray(q_repo14, float).reshape(DOF)
+        cols = [REPO_ARM.index(n) for n in (REPO_ARM[0:7] if side == LEFT else REPO_ARM[7:DOF])]
+        p0 = self.fk(side, q)
+        R0 = self._quat_to_R(p0.quaternion_wxyz())
+        J = np.zeros((6, 7))
+        for n, k in enumerate(cols):
+            qp = q.copy(); qp[k] += eps
+            pp = self.fk(side, qp)
+            J[0:3, n] = (pp.translation - p0.translation) / eps
+            Rrel = self._quat_to_R(pp.quaternion_wxyz()) @ R0.T
+            v = np.array([Rrel[2, 1]-Rrel[1, 2], Rrel[0, 2]-Rrel[2, 0], Rrel[1, 0]-Rrel[0, 1]])
+            ang = np.arccos(np.clip((np.trace(Rrel) - 1) / 2, -1, 1))
+            J[3:6, n] = (v / 2 if ang < 1e-9 else (ang / (2*np.sin(ang))) * v) / eps
+        return J
+
+    def diagnose(self, q_repo14, side: str, world_points=None, voxel_size: float = 0.01,
+                 near_limit_deg: float = 5.0, sing_eps: float = 0.01, top: int = 8, show: bool = True):
+        """Explain WHY a config is rejected by cuRobo -- the per-element breakdown behind a generic
+        'Start or End state in collision' / 'No grasp in goal set was reachable'. At `q_repo14` (repo
+        14-vector) for arm `side`, reports:
+          * SELF-collision: which link/sphere PAIRS overlap + penetration mm (ignore-matrix faithful).
+          * WORLD/ESDF: which spheres sit inside the depth voxels + depth mm (uses the SAME occupied
+            points 09/12 overlay in red; pass `world_points` or defaults to collision_world_points()).
+          * JOINT LIMITS: the side arm's joints closest to a limit (deg), flags any within near_limit_deg.
+          * SINGULARITY: condition number + Yoshikawa manipulability of the side's 6x7 wrist Jacobian
+            (flags cond > cond_warn) -- the near-singular configs seen at the task-space edges.
+        Returns a dict (incl. offending sphere centers/radii for a red overlay). `show` prints a report.
+        Runs on the MAIN 14-DoF model (self._mp) -- the same sphere set + limits the grasp solve uses."""
+        q = np.asarray(q_repo14, float).reshape(DOF)
+        ks = self._mp.compute_kinematics(self._joint_state(q))
+        sph = ks.robot_spheres.detach().cpu().numpy().reshape(-1, 4)   # (443, 4): xyz + radius
+        links = self._sphere_link_names()
+        c, r = sph[:, :3], sph[:, 3]
+
+        # --- (a) self-collision: pairwise overlap over cuRobo's checked pairs (ignores pre-removed)
+        pairs, pad = self._self_collision_pairs()
+        pi, pj = pairs[:, 0], pairs[:, 1]
+        valid = (r[pi] > 0) & (r[pj] > 0)
+        dist = np.linalg.norm(c[pi] - c[pj], axis=1)
+        # padded overlap (>0 => cuRobo's self-collision would fire): radii + per-sphere padding - gap
+        overlap = (r[pi] + r[pj] + pad[pi] + pad[pj]) - dist
+        hit = valid & (overlap > 0) & (np.asarray(links)[pi] != np.asarray(links)[pj])
+        self_rows = [{"i": int(pi[k]), "j": int(pj[k]), "link_i": links[pi[k]], "link_j": links[pj[k]],
+                      "penetration_mm": float(overlap[k] * 1000.0)} for k in np.nonzero(hit)[0]]
+        self_rows.sort(key=lambda d: -d["penetration_mm"])
+
+        # --- (b) world/ESDF: robot spheres inside the occupied voxels (sphere-vs-nearest-voxel)
+        wp = world_points if world_points is not None else self.collision_world_points()
+        world_rows = []
+        if wp is not None and len(wp):
+            wp = np.asarray(wp, float).reshape(-1, 3)
+            act = np.nonzero(r > 0)[0]
+            for s in act:
+                d = np.linalg.norm(wp - c[s], axis=1).min()           # nearest occupied voxel centre
+                depth = (r[s] + 0.5 * voxel_size) - d                 # >0 => sphere overlaps a voxel
+                if depth > 0:
+                    world_rows.append({"i": int(s), "link": links[s], "depth_mm": float(depth * 1000.0)})
+            world_rows.sort(key=lambda d: -d["depth_mm"])
+
+        # --- (c) joint limits: this side's 7 joints, closest to a bound first
+        jl = self._mp.kinematics.get_joint_limits()
+        lo = jl.position[0].detach().cpu().numpy(); hi = jl.position[1].detach().cpu().numpy()
+        side_names = set(REPO_ARM[0:7]) if side == LEFT else set(REPO_ARM[7:DOF])
+        cols = [k for k, n in enumerate(self.active) if n in side_names]
+        deg = 180.0 / np.pi
+        qa = q[[REPO_ARM.index(self.active[k]) for k in cols]]
+        limit_rows = []
+        for k, qk in zip(cols, qa):
+            m = min(qk - lo[k], hi[k] - qk)                            # rad to nearest bound
+            limit_rows.append({"joint": self.active[k], "q_deg": float(qk * deg),
+                               "margin_deg": float(m * deg), "lo_deg": float(lo[k] * deg),
+                               "hi_deg": float(hi[k] * deg)})
+        limit_rows.sort(key=lambda d: d["margin_deg"])
+
+        # --- (d) singularity: side's 6x7 wrist Jacobian (FD -- cuRobo tool_jacobians is a zero
+        # placeholder). sigma_min = distance-to-rank-loss (the flag; healthy configs run ~0.02-0.08),
+        # + condition number + Yoshikawa manipulability sqrt(det(J J^T)).
+        J = self._wrist_jacobian_fd(q, side)
+        sv = np.linalg.svd(J, compute_uv=False)
+        smin = float(sv.min()); smax = float(sv.max())
+        cond = float(smax / smin) if smin > 1e-9 else float("inf")
+        manip = float(np.sqrt(max(np.linalg.det(J @ J.T), 0.0)))
+        sing = {"cond": cond, "manip": manip, "sigma_min": smin}
+
+        off_idx = sorted({d["i"] for d in self_rows} | {d["j"] for d in self_rows}
+                         | {d["i"] for d in world_rows})
+        out = {"self": self_rows, "world": world_rows, "limits": limit_rows, "singularity": sing,
+               "offending_centers": c[off_idx].astype(np.float32) if off_idx else np.zeros((0, 3), np.float32),
+               "offending_radii": r[off_idx].astype(np.float32) if off_idx else np.zeros((0,), np.float32)}
+        if show:
+            self._print_diagnose(out, side, near_limit_deg, sing_eps, top)
+        return out
+
+    @staticmethod
+    def _print_diagnose(out, side, near_limit_deg, sing_eps, top):
+        print(f"[diagnose] side={side}  (self-collision faithful to the ignore matrix; "
+              f"world = sphere vs the red ESDF voxels)")
+        sr = out["self"]
+        print(f"  SELF-COLLISION: {len(sr)} overlapping pair(s)"
+              + (":" if sr else "  -- none (start/end self-collision-free)"))
+        for d in sr[:top]:
+            print(f"    {d['link_i']}[{d['i']}] <-> {d['link_j']}[{d['j']}]  overlap {d['penetration_mm']:.1f} mm")
+        if len(sr) > top:
+            print(f"    ... +{len(sr) - top} more")
+        wr = out["world"]
+        if out["world"] is not None:
+            print(f"  WORLD/ESDF: {len(wr)} sphere(s) inside the depth voxels"
+                  + (":" if wr else "  -- none (or no collision world loaded)"))
+            for d in wr[:top]:
+                print(f"    {d['link']}[{d['i']}]  {d['depth_mm']:.1f} mm inside")
+            if len(wr) > top:
+                print(f"    ... +{len(wr) - top} more")
+        lr = out["limits"]
+        flagged = [d for d in lr if d["margin_deg"] < near_limit_deg]
+        print(f"  JOINT LIMITS ({side} arm): closest {min(3, len(lr))}"
+              + (f"  [{len(flagged)} within {near_limit_deg:g} deg!]" if flagged else ""))
+        for d in lr[:3]:
+            bang = "  <-- near limit" if d["margin_deg"] < near_limit_deg else ""
+            print(f"    {d['joint']}: {d['margin_deg']:.1f} deg to bound "
+                  f"(q={d['q_deg']:.1f}, [{d['lo_deg']:.0f}, {d['hi_deg']:.0f}]){bang}")
+        s = out["singularity"]
+        near = "  <-- NEAR-SINGULAR" if s["sigma_min"] < sing_eps else ""
+        print(f"  SINGULARITY ({side} wrist 6x7): sigma_min={s['sigma_min']:.4f}  "
+              f"cond={s['cond']:.1f}  manip={s['manip']:.4f}{near}")
 
     # --- dynamics: gravity-comp feed-forward (see docs/gravity_comp.md) ---
     def _ensure_dynamics(self):

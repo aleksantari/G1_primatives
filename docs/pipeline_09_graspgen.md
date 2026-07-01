@@ -174,3 +174,30 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
   duplicated into a 2-row goalset (cuRobo `warmup` only primes the goalset path).
 - `--source sim_cloud` skips the camera/SAM3 entirely (GT cube cloud from `rt/sim_state`) — the
   in-sim de-risk path; the real grasp run is pending hardware.
+
+## Debugging a rejected plan (`--debug-planner`, `--diagnose`)
+`plan_grasp` failures surface as a generic status string — **"Start or End state in collision"**
+(the *start*, i.e. current config, OR the *end* pre-grasp/grasp goal violates collision) or
+**"No grasp in goal set was reachable"** (no candidate solved IK). Two flags open it up:
+- **`--debug-planner`** — turns up cuRobo's *own* logger (`set_curobo_log_level("debug")` in
+  `motion/curobo_planner.py`) so the graph planner's "Start or End state in collision", the IK
+  stage's reachability message, and per-stage trajopt warnings are **printed** instead of swallowed.
+  Tells you *which phase* rejected.
+- **`--diagnose`** — on any plan/exec abort, runs `planner.diagnose(q_fail, side, world_points=…)`
+  for the *per-element* reason, all on the main 14-DoF model:
+  - **SELF-COLLISION** — the overlapping link/sphere pairs + penetration mm. Iterates cuRobo's own
+    `collision_pairs` (adjacent-link + `self_collision_ignore` entries — incl. `build_g1_dex3.patch()`
+    — already removed), so it is **ignore-matrix faithful**. Independent of `--collision-world`.
+  - **WORLD/ESDF** — which spheres sit inside the depth voxels + depth mm (sphere-vs-the-same red
+    occupied points the viz overlays). Empty when the collision world is off.
+  - **JOINT LIMITS** — the side arm's joints closest to a bound (deg); a negative margin = past it.
+  - **SINGULARITY** — `sigma_min` / condition number / Yoshikawa manipulability of the side's 6×7
+    wrist Jacobian (FD — cuRobo's `tool_jacobians` is a zero placeholder unless built with
+    `compute_jacobian=True`). `sigma_min < 0.01` flags near-singular (healthy configs run ~0.02–0.08).
+  With `--visualize`, the offending spheres are overlaid in **magenta** on the grasp scene.
+  **Because self-collision is world-independent** (`disable_collision_links` only disables links vs
+  the WORLD): a config that is self-collision-free with `--collision-world` off stays so with it on —
+  so a failure that appears only with the world is a WORLD collision, and a genuine self-collision
+  fails in both modes. `12_check_world --diagnose [--side]` runs the same report against a built ESDF
+  in isolation. Use this to decide whether a sphere-model rebuild would even help: real hand-sphere
+  overlaps → finer spheres help; joint-limit / near-singular / ESDF penetration → they won't.

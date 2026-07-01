@@ -105,6 +105,14 @@ def main():
                          "the viser scene (needs --visualize) -- a sphere INSIDE the red ESDF voxels "
                          "= that config collides with the world (start-in-collision); two spheres "
                          "overlapping = self-collision")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="print WHY the self-filter config is in collision -- self-collision link "
+                         "pairs, which spheres penetrate the ESDF (+ mm), joint-limit margins, and "
+                         "wrist singularity -- against the built world, and overlay the offending "
+                         "spheres in magenta (needs --visualize). Numeric backing for --show-spheres.")
+    ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT,
+                    help="arm for the --diagnose joint-limit + singularity report (default right); "
+                         "self/world-collision are whole-robot and side-independent")
     args = ap.parse_args()
 
     # --- source the depth + camera pose + robot config: a captured .npz (offline) OR live ---
@@ -247,6 +255,14 @@ def main():
             n_sph = vp.add_collision_spheres(srv, c, r, name="/collision_spheres")
             print(f"collision spheres: {n_sph} overlaid (green) at the self-filter q "
                   f"[{src}] -- any green sphere inside the RED voxels = in collision with the world")
+        if args.diagnose:                   # numeric backing: WHY q_arm is (self/world) in collision
+            from g1_classical_manip.viz import viser_primitives as vp
+            out = robot.planner.diagnose(q_arm, args.side, world_points=(occ if len(occ) else None),
+                                         voxel_size=float(p["esdf_voxel_size"]))
+            if len(out["offending_centers"]):
+                vp.add_collision_spheres(srv, out["offending_centers"], out["offending_radii"],
+                                         color=(255, 0, 255), name="/diag_offenders")
+                print(f"diagnose: {len(out['offending_centers'])} offending sphere(s) overlaid (magenta)")
         print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@q"
               + (", GREEN=collision spheres@q" if n_sph else "") + ")")
         print("Ctrl-C to exit.")

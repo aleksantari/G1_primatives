@@ -189,7 +189,18 @@ approach/grasp/lift); `--legacy` restores the old sequential path. Useful flags:
 straight to the grasp, no approach/lift — a frame sanity check), `--collision-world` (route the
 approach around the object/table via the depth-ESDF world — see below), `--speed 0.5` (slower
 playback if the dynamic approach trips the tracking-error abort), `--latency` (profile each
-component — see below).
+component — see below), `--debug-planner` / `--diagnose` (explain a rejected plan — see below).
+
+**Debugging a rejected plan (`--debug-planner`, `--diagnose`)** — when `plan_grasp` fails with a
+generic *"Start or End state in collision"* / *"No grasp in goal set was reachable"*:
+`--debug-planner` turns up cuRobo's own logger so it prints *which phase* rejected; `--diagnose`
+runs `planner.diagnose(q, side)` on abort for the *per-element* reason — the self-collision link
+pairs (ignore-matrix faithful), which spheres penetrate the ESDF, joint-limit margins, and wrist
+singularity (`sigma_min`/manipulability) — overlaying the offending spheres in **magenta** (with
+`--visualize`). `12_check_world --diagnose [--side]` runs the same report against a built ESDF in
+isolation. It's the tool to decide whether a finer sphere model would help *before* rebuilding it
+(real hand-sphere overlaps → yes; joint-limit / near-singular / ESDF penetration → no). See
+`docs/pipeline_09_graspgen.md`.
 
 **Latency profiling (`--latency`)** — records per-component timings (`depth_grab`, `sam3`,
 `graspgenx`, `deproject`, `tool_transform`, `collision_world`, `plan_grasp`, `exec:*`, `hand:*`)

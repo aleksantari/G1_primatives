@@ -130,6 +130,12 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
             hold_idle=gp.get("hold_idle_arm", True),
             disable_collision_links=gp.get("disable_collision_links"))
     if not out.success:
+        # Surface WHICH phase cuRobo rejected + its status string (the raw plan_grasp diagnostic,
+        # e.g. 'Start or End state in collision' / 'No grasp in goal set was reachable'). For the
+        # per-config breakdown (self vs world collision, joint-limit / singularity) run the planner's
+        # diagnose(q0, side); 09/12 expose it as --diagnose.
+        print(f"grasp_motion: plan_grasp FAILED -- approach={out.approach_success} "
+              f"grasp={out.grasp_success} lift={out.lift_success} | status: {out.status or '(none)'}")
         return GraspResult(False, f"plan_grasp failed: {out.status}", out.chosen_index, out)
 
     chosen = cands[out.chosen_index] if 0 <= out.chosen_index < len(cands) else None

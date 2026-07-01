@@ -162,12 +162,24 @@ def main():
                          "the grasp viser scene (needs --visualize) -- to SEE why a 'Start or End "
                          "state in collision' fires: a sphere inside the red ESDF voxels = world "
                          "collision; two spheres overlapping = self-collision")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="on a plan/exec failure, print WHY the config is rejected -- self-collision "
+                         "link pairs, ESDF-penetrating spheres, joint-limit margins, and wrist "
+                         "singularity (manipulability) -- and (with --visualize) overlay the "
+                         "offending spheres in magenta. The tool to decide if finer spheres would help.")
+    ap.add_argument("--debug-planner", action="store_true",
+                    help="turn up cuRobo's own logger so plan_grasp prints its internal failure "
+                         "reasons (graph-planner 'Start or End state in collision', IK 'No grasp in "
+                         "goal set was reachable', per-stage trajopt warnings) instead of swallowing them")
     args = ap.parse_args()
     if args.latency:
         LOG.enable()
 
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
                          camera_config=_rig.camera_config_for(args.target))
+    if args.debug_planner:
+        from g1_classical_manip.motion.curobo_planner import set_curobo_log_level
+        set_curobo_log_level("debug")
     if args.source or args.segment is not None or args.visualize:   # overrides of grasp.yaml
         from g1_classical_manip.factory import _build_grasp_source
         if args.source:
@@ -332,6 +344,17 @@ def main():
         rc = 1
     except Exception as e:                       # noqa: BLE001 - top-level task recovery
         print(f"\nGRASP-GEN ABORTED ({type(e).__name__}): {e}")
+        if args.diagnose:                        # explain the failure config BEFORE recovery moves it
+            try:
+                q_fail = robot.arm.get_current_dual_arm_q()
+                out = robot.planner.diagnose(
+                    q_fail, side, world_points=robot.planner.collision_world_points())
+                viz = getattr(robot.grasp_source, "viz", None)
+                if viz is not None and len(out["offending_centers"]):   # magenta = the offenders
+                    viz.show_collision_spheres(out["offending_centers"], out["offending_radii"],
+                                               color=[255, 0, 255], name="diag_offenders")
+            except Exception as de:              # noqa: BLE001 - diagnostics must never mask the abort
+                print(f"diagnose failed: {de}")
         print("recovering -> open hand + home ...")
         try:
             P.open_hand(robot, side)
