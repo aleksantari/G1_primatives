@@ -12,7 +12,7 @@ velocity/accel limits. Runs in the cuRobo env (numpy2/py3.11/CUDA); no pinocchio
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional
 
 import numpy as np
@@ -895,26 +895,49 @@ class CuroboArmPlanner:
                              approach_in_tool_frame: bool = True,
                              lift_in_tool_frame: bool = False,
                              hold_idle: bool = True,
-                             disable_collision_links: Optional[List[str]] = None) -> GraspPlanOutcome:
-        """Try each strategy dict ({approach_offset, lift_offset?, plan_approach?, plan_lift?})
-        in order via plan_grasp_set; return the first whose outcome.success, else the last
-        failing outcome (its status says why). Mirrors GraspGenX's approach/lift offset sweep.
-        `hold_idle` pins the idle arm to the start config in every segment (see _hold_idle)."""
-        if not list(wrist_goals):
+                             disable_collision_links: Optional[List[str]] = None,
+                             max_candidate_retries: int = 12) -> GraspPlanOutcome:
+        """Try each strategy dict ({approach_offset, lift_offset?, plan_approach?, plan_lift?}) in
+        order; return the first success, else the last failing outcome (its status says why). Mirrors
+        GraspGenX's approach/lift offset sweep. `hold_idle` pins the idle arm (see _hold_idle).
+
+        CANDIDATE RETRY: cuRobo's native plan_grasp commits to ONE goalset winner -- Step 1 goalset
+        IK picks goal_index[0] (by GRASP-pose IK only), Step 2 plans THAT grasp's approach alone
+        (num_goalset=1), and if it fails it returns 'Planning to approach pose failed' WITHOUT trying
+        any other candidate (motion_planner.py plan_grasp). So a scene with dozens of feasible grasps
+        still fails when the single goalset winner's pre-grasp is blocked -- and MORE SEEDS can't help
+        (the winner is chosen fine; only its lone approach fails). We overcome it here: on any failure
+        with a valid winner, EXCLUDE that candidate and re-call plan_grasp so cuRobo picks a different
+        grasp, up to `max_candidate_retries`. Diagnose the set first with diagnose_candidates."""
+        goals_all = list(wrist_goals)
+        if not goals_all:
             raise PlanningError("plan_grasp_set_sweep: no candidate goals")
         last = None
         for s in strategies:
-            out = self.plan_grasp_set(
-                start_q_repo14, side, wrist_goals,
-                approach_axis=approach_axis, approach_offset=s.get("approach_offset", -0.10),
-                lift_axis=lift_axis, lift_offset=s.get("lift_offset", 0.0),
-                approach_in_tool_frame=approach_in_tool_frame,
-                lift_in_tool_frame=lift_in_tool_frame,
-                plan_approach=s.get("plan_approach", True), plan_lift=s.get("plan_lift", True),
-                hold_idle=hold_idle,
-                disable_collision_links=disable_collision_links)
-            if out.success:
-                return out
-            last = out
+            excluded = set()
+            for _ in range(max(1, int(max_candidate_retries))):
+                active = [(i, g) for i, g in enumerate(goals_all) if i not in excluded]
+                if not active:
+                    break
+                active_idx = [i for i, _ in active]
+                out = self.plan_grasp_set(
+                    start_q_repo14, side, [g for _, g in active],
+                    approach_axis=approach_axis, approach_offset=s.get("approach_offset", -0.10),
+                    lift_axis=lift_axis, lift_offset=s.get("lift_offset", 0.0),
+                    approach_in_tool_frame=approach_in_tool_frame,
+                    lift_in_tool_frame=lift_in_tool_frame,
+                    plan_approach=s.get("plan_approach", True), plan_lift=s.get("plan_lift", True),
+                    hold_idle=hold_idle, disable_collision_links=disable_collision_links)
+                if out.success:                        # remap chosen_index into the ORIGINAL list
+                    if 0 <= out.chosen_index < len(active_idx):
+                        out = replace(out, chosen_index=active_idx[out.chosen_index])
+                    return out
+                last = out
+                if not (0 <= out.chosen_index < len(active_idx)):
+                    break                              # Step-1 goalset IK failed: no winner to exclude
+                orig = active_idx[out.chosen_index]    # the winner whose approach/grasp/lift failed
+                excluded.add(orig)
+                print(f"plan_grasp: cand {orig} failed ({out.status}); excluding + retrying a "
+                      f"different grasp ({len(excluded)}/{len(goals_all)} excluded)")
         return last if last is not None else GraspPlanOutcome(
             False, -1, None, None, None, False, False, False, "no strategies")

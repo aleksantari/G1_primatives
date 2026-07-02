@@ -39,8 +39,8 @@ executor:
 # -- SEEDS, not retries, are how you spend more effort in one solve. Higher = more VRAM + slower
 # warmup/solve (negligible on the 5090). Omit a key to use the cuRobo default (shown in []).
 solver:
-  num_ik_seeds: 64                     # [32] parallel IK seeds for the goal/goalset pose
-  num_trajopt_seeds: 8                 # [4]  parallel trajectory-optimization seeds
+  num_ik_seeds: 128                    # [32] parallel IK seeds for the goal/goalset pose
+  num_trajopt_seeds: 16                # [4]  parallel trajectory-optimization seeds
   collision_activation_distance: 0.01  # [0.01] m clearance the optimizer demands from obstacles;
                                        #   LOWER (e.g. 0.005) lets a tighter grasp/approach pass
                                        #   (less margin, trades safety) -- try if more seeds don't clear it

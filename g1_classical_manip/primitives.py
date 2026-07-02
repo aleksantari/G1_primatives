@@ -128,7 +128,8 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
             approach_in_tool_frame=gp.get("approach_in_tool_frame", True),
             lift_in_tool_frame=gp.get("lift_in_tool_frame", False),
             hold_idle=gp.get("hold_idle_arm", True),
-            disable_collision_links=gp.get("disable_collision_links"))
+            disable_collision_links=gp.get("disable_collision_links"),
+            max_candidate_retries=gp.get("max_candidate_retries", 12))
     if not out.success:
         # Surface WHICH phase cuRobo rejected + its status string (the raw plan_grasp diagnostic,
         # e.g. 'Start or End state in collision' / 'No grasp in goal set was reachable'). For the

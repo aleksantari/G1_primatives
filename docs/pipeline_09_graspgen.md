@@ -203,10 +203,13 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
   `plan_grasp` rejects the pre-grasp but never returns its config, so we re-solve one. The
   grasp-vs-pre-grasp comparison removes the trajopt-path confound (a grasp reachable from home but its
   short-back-off pre-grasp not = a genuine reach/geometry boundary). Read the summary:
-  some PRE-GRASP reachable + **world-free** → a collision-free approach EXISTS and `plan_grasp` didn't
-  converge to it → **raise `solver.num_ik_seeds`/`num_trajopt_seeds`** (more IK seeds can find a
-  pre-grasp IK branch that clears the ESDF — "Start or End state in collision" is the graph planner
-  rejecting the in-collision goal *config*); reachable but ALL **ESDF-blocked** → real clutter (adjust
+  some PRE-GRASP reachable + **world-free** → a collision-free approach EXISTS but `plan_grasp` picked
+  a *different*, blocked grasp: cuRobo's `plan_grasp` commits to ONE goalset winner (Step-1 grasp-IK)
+  and plans only *that* one's approach — if it fails it gives up, never trying the other candidates,
+  and more seeds don't change that. **The fix is the candidate-retry loop in `plan_grasp_set_sweep`**
+  (exclude the failed winner, re-call `plan_grasp` so cuRobo picks another; `grasp.max_candidate_retries`,
+  default 12); raising `solver.num_ik_seeds` only helps the *chosen* grasp's own approach IK. Reachable
+  but ALL **ESDF-blocked** → real clutter (adjust
   approach / crop or de-clutter the ESDF); grasp reachable but NO pre-grasp → the back-off leaves reach
   or hits a wrist limit (shrink `approach_dist` / change axis); no grasp reachable → candidates out of
   reach (bad grasps / wrong side).
