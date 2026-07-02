@@ -31,19 +31,25 @@ executor:
   time_dilation: 0.5
 
 # cuRobo solver effort (MotionPlannerCfg.create); applies to BOTH the main planner and every
-# per-side grasp planner. These are the "make planning try harder" knobs: more seeds search the
-# arm's 7-DoF redundancy + the K-goal set for a reachable, collision-free solution -- the fix for
-# "No grasp in goal set was reachable" once the collision world is on (an easy pose that plans fine
-# WITHOUT the world but fails WITH it usually just needs more seeds to find a non-colliding arm
-# config). NOTE plan_grasp has no max_attempts and a FIXED random seed, so re-tries are deterministic
-# -- SEEDS, not retries, are how you spend more effort in one solve. Higher = more VRAM + slower
-# warmup/solve (negligible on the 5090). Omit a key to use the cuRobo default (shown in []).
+# per-side grasp planner. DEFAULT = cuRobo's own (num_ik_seeds 32, num_trajopt_seeds 4) -- the
+# June-30 real-hardware grasp (collision world ON) ran these. Two hard-won cautions before
+# raising them:
+#   * seed overrides did NOT fix the LEFT+collision-world failures (128/16 failed identically):
+#     plan_grasp commits to ONE goalset winner and never retries others, so seeds only help the
+#     already-chosen grasp's own solve -- the candidate-retry loop in plan_grasp_set_sweep is the
+#     cross-candidate lever.
+#   * the GraspGenX end2end reference (e2e_grasp_demo.py) warns that non-default seeds/tolerances
+#     silently broke plan_grasp on public cuRobo ("every approach/grasp trajopt failed").
+# Omit a key to use the cuRobo default (shown in []). plan_grasp has a FIXED random seed, so
+# re-running is deterministic.
 solver:
-  num_ik_seeds: 128                    # [32] parallel IK seeds for the goal/goalset pose
-  num_trajopt_seeds: 16                # [4]  parallel trajectory-optimization seeds
-  collision_activation_distance: 0.01  # [0.01] m clearance the optimizer demands from obstacles;
-                                       #   LOWER (e.g. 0.005) lets a tighter grasp/approach pass
-                                       #   (less margin, trades safety) -- try if more seeds don't clear it
+  # num_ik_seeds: 128                  # [32] parallel IK seeds for the goal/goalset pose
+  # num_trajopt_seeds: 16              # [4]  parallel trajectory-optimization seeds
+  collision_activation_distance: 0.01  # [0.01] m clearance the OPTIMIZER demands from obstacles.
+                                       #   NOTE this shapes the optimizer COST only -- the hard
+                                       #   pass/fail gate ('Start or End state in collision', IK
+                                       #   feasibility) runs at activation 0.0 (cuRobo
+                                       #   metrics_base.yml); world_check reports both tiers.
   # position_tolerance: 0.005          # [0.005] m goal position tolerance (loosen if barely unreachable)
   # orientation_tolerance: 0.05        # [0.05] rad goal orientation tolerance
 
