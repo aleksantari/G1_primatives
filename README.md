@@ -197,11 +197,12 @@ generic *"Start or End state in collision"* / *"No grasp in goal set was reachab
 runs `planner.diagnose(q, side)` on abort for the *per-element* reason — the self-collision link
 pairs (ignore-matrix faithful), which spheres penetrate the ESDF, joint-limit margins, and wrist
 singularity (`sigma_min`/manipulability). It checks the **START** config (magenta overlay) *and* the
-**END** pre-grasp of the top candidate (`diagnose_pose` re-solves a world-ignoring config for the
-pose and checks it against the ESDF; orange overlay) — so a generic "Start or End state in collision"
-is split into which one, and whether a collision-free pre-grasp merely wasn't found (→ more seeds)
-vs the approach genuinely hitting clutter. `12_check_world --diagnose [--side]` runs the START report
-against a built ESDF in isolation. It's the tool to decide whether a finer sphere model would help *before* rebuilding it
+**END** — `diagnose_candidates` sweeps the top candidates (`--diagnose-k`, 0 = all) testing, on the
+world-free planner, whether each grasp + its pre-grasp is reachable and whether the pre-grasp config
+penetrates the ESDF — so a generic "Start or End state in collision" is split into which one, and
+whether a collision-free pre-grasp merely wasn't found (→ raise `solver.num_ik_seeds` — a different
+IK branch can clear the ESDF) vs the approach genuinely hitting clutter. `12_check_world --diagnose
+[--side]` runs the START report against a built ESDF in isolation. It's the tool to decide whether a finer sphere model would help *before* rebuilding it
 (real hand-sphere overlaps → yes; joint-limit / near-singular / ESDF penetration → no). See
 `docs/pipeline_09_graspgen.md`.
 

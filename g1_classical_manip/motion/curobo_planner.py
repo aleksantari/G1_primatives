@@ -455,6 +455,93 @@ class CuroboArmPlanner:
         out["config"] = np.asarray(cfg, float)
         return out
 
+    def _reach(self, side, pose, start_q):
+        """World-free config reaching `pose` (main planner, no ESDF), or None if plan_to_pose can't.
+        NOTE trajopt: None folds no-IK + no-collision-free-path; for a short home->pose move it is
+        IK-bound in practice."""
+        try:
+            return self.plan_to_pose(start_q, side, pose).q[-1]
+        except PlanningError:
+            return None
+
+    def diagnose_candidates(self, side, grasp_goals, pregrasp_goals, world_points=None,
+                            k: int = 0, start_q_repo14=None, show: bool = True):
+        """Sweep the top-`k` grasp candidates (k<=0 == ALL) to localize a plan_grasp approach failure
+        across the goalset (plan_grasp picks ONE of K -- the top-confidence one being bad doesn't mean
+        all are). Per candidate: is the GRASP pose reachable, is the PRE-GRASP reachable, and if so
+        does that config penetrate the world ESDF? All reachability on the world-free main planner.
+        The grasp-vs-pre-grasp comparison is the confound remover: a grasp reachable from home but its
+        pre-grasp (a short back-off) not is a genuine reach/geometry boundary, not a path artifact.
+        Reading the summary: some PRE-GRASP reachable AND world-free -> a collision-free approach
+        EXISTS and plan_grasp didn't converge to it (raise solver.num_ik_seeds / num_trajopt_seeds --
+        THE 'more resources' case); reachable pre-grasps ALL world-blocked -> real clutter (adjust
+        approach / crop-or-declutter the ESDF); grasp reachable but NO pre-grasp -> the back-off leaves
+        reach or hits a wrist limit (shrink approach_dist / change axis); no grasp reachable ->
+        candidates are out of reach for this arm (bad grasps / wrong side). ~2 world-free plan solves
+        per candidate (~0.4s each) -- a full sweep of a large goalset takes a minute+."""
+        start = np.zeros(DOF) if start_q_repo14 is None else start_q_repo14
+        n = min(len(grasp_goals), len(pregrasp_goals))
+        if int(k) > 0:
+            n = min(n, int(k))
+        print(f"[diagnose_candidates] sweeping {n} candidate(s) "
+              f"(~{n * 0.8:.0f}s; 2 world-free plan solves each) ...")
+        rows = []
+        for i in range(n):
+            gcfg = self._reach(side, grasp_goals[i], start)
+            pcfg = self._reach(side, pregrasp_goals[i], start)
+            wh = None
+            if pcfg is not None and world_points is not None and len(world_points):
+                wh = len(self.diagnose(pcfg, side, world_points=world_points, show=False)["world"])
+            rows.append({"i": i, "grasp": gcfg is not None, "pregrasp": pcfg is not None,
+                         "world_hits": wh})
+            if n > 20 and (i + 1) % 20 == 0:
+                print(f"    ... {i + 1}/{n}")
+        s = {"n": n, "rows": rows,
+             "grasp_reach": sum(r["grasp"] for r in rows),
+             "pregrasp_reach": sum(r["pregrasp"] for r in rows),
+             "pregrasp_free": sum(1 for r in rows if r["pregrasp"] and r["world_hits"] == 0),
+             "pregrasp_blocked": sum(1 for r in rows if r["pregrasp"] and (r["world_hits"] or 0) > 0)}
+        if show:
+            self._print_candidates(s, side)
+        return s
+
+    @staticmethod
+    def _print_candidates(s, side):
+        rows = s["rows"]
+        free = [r for r in rows if r["pregrasp"] and r["world_hits"] == 0]
+        print(f"[diagnose_candidates] {side}: swept {s['n']} candidate(s) "
+              f"(reachability on the world-free planner)")
+        print(f"  summary: grasp-reachable {s['grasp_reach']}/{s['n']}, "
+              f"pre-grasp-reachable {s['pregrasp_reach']}/{s['n']} "
+              f"(world-free {s['pregrasp_free']}, ESDF-blocked {s['pregrasp_blocked']})")
+        if free:                                      # the actionable ones: plan_grasp should hit these
+            idx = ", ".join(str(r["i"]) for r in free[:20])
+            print(f"  world-FREE reachable pre-grasp candidate idx: [{idx}"
+                  + (f", +{len(free) - 20} more" if len(free) > 20 else "") + "]")
+        show_rows = rows if s["n"] <= 20 else (       # full list when small; else free + a sample
+            free[:10] + [r for r in rows if not (r["pregrasp"] and r["world_hits"] == 0)][:10])
+        for r in show_rows:
+            wh = "n/a" if r["world_hits"] is None else (
+                f"{r['world_hits']} in ESDF" if r["world_hits"] else "world-free")
+            print(f"  cand {r['i']:3d}: grasp {'OK ' if r['grasp'] else 'NO '} | "
+                  f"pre-grasp {'OK ' if r['pregrasp'] else 'NO '} | {wh}")
+        if s["n"] > 20:
+            print(f"  (showing {len(show_rows)} of {s['n']}; summary above is the full count)")
+        if s["pregrasp_free"] > 0:
+            print("  => a reachable, world-FREE pre-grasp EXISTS -> plan_grasp didn't find it: "
+                  "raise solver.num_ik_seeds / num_trajopt_seeds (planner.yaml).")
+        elif s["pregrasp_reach"] > 0 and s["pregrasp_blocked"] == s["pregrasp_reach"]:
+            print("  => every reachable pre-grasp is INSIDE the ESDF -> real clutter collision: "
+                  "adjust the approach (offset/axis), crop the ESDF, or de-clutter.")
+        elif s["grasp_reach"] > 0 and s["pregrasp_reach"] == 0:
+            print("  => grasps reachable but NO pre-grasp is -> the back-off leaves the arm's reach "
+                  "or hits a wrist limit: shrink approach_dist or change approach axis. "
+                  "(If EVERY pre-grasp fails while grasps pass, also sanity-check the approach "
+                  "reconstruction direction.)")
+        elif s["grasp_reach"] == 0:
+            print("  => no grasp pose is even reachable for this arm -> candidates are out of reach "
+                  "(bad grasps / wrong side / object out of the arm's workspace).")
+
     # --- dynamics: gravity-comp feed-forward (see docs/gravity_comp.md) ---
     def _ensure_dynamics(self):
         """Lazily build cuRobo's RNEA Dynamics from the warm planner's own

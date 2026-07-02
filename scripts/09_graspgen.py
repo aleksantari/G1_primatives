@@ -171,6 +171,10 @@ def main():
                     help="turn up cuRobo's own logger so plan_grasp prints its internal failure "
                          "reasons (graph-planner 'Start or End state in collision', IK 'No grasp in "
                          "goal set was reachable', per-stage trajopt warnings) instead of swallowing them")
+    ap.add_argument("--diagnose-k", type=int, default=0,
+                    help="how many top candidates --diagnose sweeps for grasp/pre-grasp reachability "
+                         "on a failure (0 = ALL; each is ~2 world-free plan solves ~0.8s, so a big "
+                         "goalset takes a minute+)")
     args = ap.parse_args()
     if args.latency:
         LOG.enable()
@@ -355,18 +359,16 @@ def main():
                 if viz is not None and len(out["offending_centers"]):   # magenta = start offenders
                     viz.show_collision_spheres(out["offending_centers"], out["offending_radii"],
                                                color=[255, 0, 255], name="diag_offenders")
-                if cands:                        # END config: IK+diagnose the top candidate's pre-grasp
-                    print("--- diagnose: END config (top candidate's pre-grasp) ---")
+                if cands:                        # END: sweep the top-K candidates' grasp + pre-grasp
                     gp = robot.cfg["planner"].get("grasp") or {}
                     strat = (gp.get("strategies") or [{}])[0]
                     dist = abs(float(strat.get("approach_offset", -0.10)))
-                    pre = _approach_pose(cands[0].wrist_goal, cands[0].grasp_pose, dist)
-                    po = robot.planner.diagnose_pose(
-                        side, pre, world_points=wpts, start_q_repo14=q_fail,
-                        label=f"pre-grasp @ -{dist:.2f}m")
-                    if viz is not None and len(po["offending_centers"]):  # orange = pre-grasp offenders
-                        viz.show_collision_spheres(po["offending_centers"], po["offending_radii"],
-                                                   color=[255, 120, 0], name="diag_pregrasp_offenders")
+                    grasp_goals = [c.wrist_goal for c in cands]
+                    pregrasp_goals = [_approach_pose(c.wrist_goal, c.grasp_pose, dist) for c in cands]
+                    print(f"--- diagnose: END configs (top candidates, pre-grasp back-off {dist:.2f}m) ---")
+                    robot.planner.diagnose_candidates(
+                        side, grasp_goals, pregrasp_goals, world_points=wpts,
+                        k=args.diagnose_k, start_q_repo14=q_fail)
             except Exception as de:              # noqa: BLE001 - diagnostics must never mask the abort
                 print(f"diagnose failed: {de}")
         print("recovering -> open hand + home ...")

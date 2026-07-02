@@ -194,15 +194,22 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
   - **SINGULARITY** — `sigma_min` / condition number / Yoshikawa manipulability of the side's 6×7
     wrist Jacobian (FD — cuRobo's `tool_jacobians` is a zero placeholder unless built with
     `compute_jacobian=True`). `sigma_min < 0.01` flags near-singular (healthy configs run ~0.02–0.08).
-  It runs at TWO configs: the **START** (current/home) — `diagnose(q_fail, …)`, magenta overlay —
-  and, for the top candidate, the **END** pre-grasp — `diagnose_pose(side, approach_pose, …)`, orange
-  overlay. "Start or End state in collision" is generic, so this splits it: the END path re-solves a
-  **world-ignoring** config for the pre-grasp on the main planner (which has no ESDF) and checks *that*
-  against the world — because `plan_grasp` rejects the pre-grasp but never returns its config.
-  Read the END result as: reachable + WORLD hits → the pre-grasp genuinely drives an arm link into the
-  ESDF (real clutter collision, blocked approach); reachable + WORLD empty → a free pre-grasp config
-  exists and `plan_grasp` just didn't find it (raise `solver.num_ik_seeds`/`num_trajopt_seeds`);
-  unreachable → the candidate pose itself is infeasible (bad grasp), not a world issue.
+  It works at TWO scopes: the **START** (current/home) — `diagnose(q_fail, …)`, magenta overlay —
+  and the **END** — `diagnose_candidates(side, grasp_goals, pregrasp_goals, …)` which **sweeps the
+  top candidates** (`--diagnose-k`, 0 = all; ~0.8s each) because `plan_grasp` picks ONE of the K-goalset
+  and the top-confidence grasp being bad doesn't mean all are. Per candidate it tests, on the
+  **world-free** main planner (no ESDF), whether the GRASP pose is reachable, whether the PRE-GRASP
+  (backed off along the approach) is reachable, and if so whether that config penetrates the ESDF —
+  `plan_grasp` rejects the pre-grasp but never returns its config, so we re-solve one. The
+  grasp-vs-pre-grasp comparison removes the trajopt-path confound (a grasp reachable from home but its
+  short-back-off pre-grasp not = a genuine reach/geometry boundary). Read the summary:
+  some PRE-GRASP reachable + **world-free** → a collision-free approach EXISTS and `plan_grasp` didn't
+  converge to it → **raise `solver.num_ik_seeds`/`num_trajopt_seeds`** (more IK seeds can find a
+  pre-grasp IK branch that clears the ESDF — "Start or End state in collision" is the graph planner
+  rejecting the in-collision goal *config*); reachable but ALL **ESDF-blocked** → real clutter (adjust
+  approach / crop or de-clutter the ESDF); grasp reachable but NO pre-grasp → the back-off leaves reach
+  or hits a wrist limit (shrink `approach_dist` / change axis); no grasp reachable → candidates out of
+  reach (bad grasps / wrong side).
   **Because self-collision is world-independent** (`disable_collision_links` only disables links vs
   the WORLD): a config that is self-collision-free with `--collision-world` off stays so with it on —
   so a failure that appears only with the world is a WORLD collision, and a genuine self-collision
