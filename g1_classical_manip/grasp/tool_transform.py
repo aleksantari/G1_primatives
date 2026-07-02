@@ -56,6 +56,21 @@ def wrist_goal_from_grasp(T_pelvis_grasp: Pose, T_wristyaw_grasp: Pose) -> Pose:
     return T_pelvis_grasp * T_wristyaw_grasp.inverse()
 
 
+def approach_offset_for_side(side: str, approach_axis: str, approach_in_tool_frame: bool,
+                             offset: float) -> float:
+    """The plan_grasp approach offset, side-corrected for the LEFT mirror. The derived RIGHT-hand
+    map sends the grasp approach (+Z, into the object) to wrist **+Y**; ``build_T_wristyaw_grasp``
+    mirrors the LEFT hand across the wrist Y-plane (``S R S``), which sends the approach to wrist
+    **-Y**. cuRobo applies a tool-frame approach offset as ``wrist_goal * T(axis*offset)``, so the
+    same negative "y" offset that backs the RIGHT pre-grasp AWAY from the object drives the LEFT
+    one INTO it -> flip the sign for the LEFT. x/z tool axes and world-frame offsets are unaffected
+    by the Y-mirror. Numerically locked by tests/test_tool_transform.py (both sides back off along
+    -grasp+Z by |offset|)."""
+    if side == LEFT and approach_in_tool_frame and approach_axis == "y":
+        return -float(offset)
+    return float(offset)
+
+
 def candidates_from_grasps(grasps, conf, side: str, palm_offset_xyz,
                            R_wristyaw_grasp, branch_tags=None) -> List[GraspCandidate]:
     """``(K,4,4)`` pelvis-frame grasps + ``(K,)`` confidences -> ranked ``GraspCandidate``s

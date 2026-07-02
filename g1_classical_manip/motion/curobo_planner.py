@@ -966,15 +966,14 @@ class CuroboArmPlanner:
             disable_collision_links = [active]
             if self._cw_enabled:                          # let the open hand sit in the object ESDF
                 disable_collision_links = disable_collision_links + HAND_LINKS[side]
-        # LEFT-hand approach mirror: the grasp->wrist transform reflects the left hand across the
-        # wrist Y-plane (tool_transform._MIRROR_Y), so the grasp APPROACH direction (grasp +Z into
-        # the object) lands on the OPPOSITE tool-frame Y for the left hand (+Y right, -Y left). A
-        # tool-frame approach along "y" therefore points the wrong way for the left -> flip the
-        # offset so the pre-grasp backs off on the correct side. (Without this the left approach
-        # drives INTO the object: it fails under --collision-world and comes from the wrong side
-        # without it.) x/z tool axes and the world-frame lift are unaffected by the Y-mirror.
-        if side == LEFT and approach_in_tool_frame and approach_axis == "y":
-            approach_offset = -approach_offset
+        # LEFT-hand approach mirror: the derived transform maps the grasp approach to wrist +Y on
+        # the RIGHT but wrist -Y on the LEFT (tool_transform._MIRROR_Y), so the tool-frame "y"
+        # offset must flip sign for the left or the pre-grasp backs INTO the object. The policy
+        # lives with the mirror itself (tool_transform.approach_offset_for_side) and is numerically
+        # locked by tests/test_tool_transform.py.
+        from g1_classical_manip.grasp.tool_transform import approach_offset_for_side
+        approach_offset = approach_offset_for_side(
+            side, approach_axis, approach_in_tool_frame, approach_offset)
         res = mp.plan_grasp(
             goal, start,
             grasp_approach_axis=approach_axis, grasp_approach_offset=float(approach_offset),

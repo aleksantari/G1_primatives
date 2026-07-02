@@ -275,6 +275,25 @@ def test_plan_grasp_set_no_hand_links_when_cw_off(monkeypatch):
     assert mp.kw["disable_collision_links"] == ["right_wrist_yaw_link"]   # unchanged when world off
 
 
+def test_plan_grasp_set_left_mirror_flips_y_offset(monkeypatch):
+    # the LEFT-hand mirror (tool_transform.approach_offset_for_side): a tool-frame "y" approach
+    # offset must reach cuRobo SIGN-FLIPPED for the left arm (its approach axis is wrist -Y),
+    # and untouched for the right / other axes / world-frame offsets.
+    from g1_classical_manip.ee.hand_base import LEFT
+    _inject_curobo_types(monkeypatch)
+    for side, axis, tool_frame, cfg_off, expect in [
+            (LEFT, "y", True, -0.10, +0.10),      # THE flip
+            (RIGHT, "y", True, -0.10, -0.10),     # right unchanged
+            (LEFT, "x", True, -0.10, -0.10),      # other tool axes unchanged
+            (LEFT, "y", False, -0.10, -0.10)]:    # world-frame offset unchanged
+        mp = FakeMP(_grasp_result())
+        _planner(mp).plan_grasp_set(
+            np.zeros(14), side, [Pose(np.eye(3), [0.4, 0.2, 0.8])],
+            approach_axis=axis, approach_offset=cfg_off,
+            approach_in_tool_frame=tool_frame, lift_axis="z", lift_offset=0.1)
+        assert mp.kw["grasp_approach_offset"] == pytest.approx(expect), (side, axis, tool_frame)
+
+
 def test_hand_links_map():
     from g1_classical_manip.motion.curobo_planner import HAND_LINKS
     from g1_classical_manip.ee.hand_base import LEFT
@@ -395,7 +414,56 @@ def test_plan_grasp_set_sweep_first_success():
     strategies = [{"approach_offset": x} for x in (-0.15, -0.10, -0.07, -0.05)]
     out = p.plan_grasp_set_sweep(np.zeros(14), RIGHT, [Pose.Identity()], strategies,
                                  approach_axis="x", lift_axis="z")
-    assert out is good and seen == [-0.15, -0.10, -0.07]   # stopped at first success
+    # equality, not identity: on success the sweep remaps chosen_index into the ORIGINAL
+    # candidate list via dataclasses.replace (a new GraspPlanOutcome instance).
+    assert out == good and seen == [-0.15, -0.10, -0.07]   # stopped at first success
+
+
+def test_plan_grasp_set_sweep_candidate_retry_excludes_failed_winner():
+    # cuRobo's plan_grasp commits to ONE goalset winner and never retries others; the sweep
+    # overcomes that by excluding the failed winner and re-calling. Simulated: the fake picks
+    # index 0 of the subset it is given and only "g2" succeeds -> the sweep must walk g0, g1
+    # (excluding each) and land on g2, reporting its ORIGINAL index.
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    calls = []
+
+    def fake_set(q, side, active_goals, **kw):
+        calls.append(list(active_goals))
+        ok = active_goals[0] == "g2"
+        return GraspPlanOutcome(ok, 0, "a" if ok else None, None, None, ok, ok, ok,
+                                "ok" if ok else "Planning to approach pose failed.")
+
+    p.plan_grasp_set = fake_set
+    out = p.plan_grasp_set_sweep(np.zeros(14), RIGHT, [f"g{i}" for i in range(5)],
+                                 [{"approach_offset": -0.1}], approach_axis="y", lift_axis="z",
+                                 max_candidate_retries=12)
+    assert out.success and out.chosen_index == 2          # remapped to the ORIGINAL list
+    assert len(calls) == 3                                # g0 excluded, g1 excluded, g2 wins
+    assert calls[1][0] == "g1" and "g0" not in calls[1]
+    assert calls[2][0] == "g2" and "g1" not in calls[2]
+
+
+def test_plan_grasp_set_sweep_candidate_retry_cap_and_exhaustion():
+    # never-succeeding winners: the retry loop must stop at max_candidate_retries (or when the
+    # candidate list is exhausted) and return the last failing outcome, not loop forever.
+    p = CuroboArmPlanner.__new__(CuroboArmPlanner)
+    calls = []
+
+    def fake_set(q, side, active_goals, **kw):
+        calls.append(len(active_goals))
+        return GraspPlanOutcome(False, 0, None, None, None, False, False, False,
+                                "Planning to approach pose failed.")
+
+    p.plan_grasp_set = fake_set
+    out = p.plan_grasp_set_sweep(np.zeros(14), RIGHT, [f"g{i}" for i in range(3)],
+                                 [{"approach_offset": -0.1}], approach_axis="y", lift_axis="z",
+                                 max_candidate_retries=12)
+    assert not out.success and calls == [3, 2, 1]         # exhausted the 3 candidates, then stopped
+    calls.clear()
+    out = p.plan_grasp_set_sweep(np.zeros(14), RIGHT, [f"g{i}" for i in range(50)],
+                                 [{"approach_offset": -0.1}], approach_axis="y", lift_axis="z",
+                                 max_candidate_retries=4)
+    assert not out.success and len(calls) == 4            # capped at max_candidate_retries
 
 
 def test_plan_grasp_set_sweep_returns_last_failure():
