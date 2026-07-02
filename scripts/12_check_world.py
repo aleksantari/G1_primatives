@@ -113,6 +113,12 @@ def main():
     ap.add_argument("--side", choices=[LEFT, RIGHT], default=RIGHT,
                     help="arm for the --diagnose joint-limit + singularity report (default right); "
                          "self/world-collision are whole-robot and side-independent")
+    ap.add_argument("--exclude-mask", default=None,
+                    help="path to an (H,W) bool .npy object mask (10_segment --frame X --save "
+                         "writes <stem>_mask.npy): CUT the target object from the world like the "
+                         "live pipeline's collision_world.exclude_object does. Verify with "
+                         "--probe at the object: IN THE WORLD (without) -> ERASED (with), while "
+                         "the table/props remain.")
     args = ap.parse_args()
 
     # --- source the depth + camera pose + robot config: a captured .npz (offline) OR live ---
@@ -183,11 +189,19 @@ def main():
     tv = ev / 2 if args.esdf_voxel else p["tsdf_voxel_size"]
     if args.esdf_voxel:
         print(f"esdf voxel override: {ev} m (tsdf {tv} m)")
+    ex_mask = None
+    if args.exclude_mask:                          # cut the TARGET object (exclude_object offline)
+        from g1_classical_manip.motion.collision_world import dilate_mask
+        ex_mask = np.load(args.exclude_mask).astype(bool)
+        ex_mask = dilate_mask(ex_mask, p["exclude_object_dilate_px"])
+        print(f"exclude-mask: {args.exclude_mask} ({int(ex_mask.sum())} px after "
+              f"{p['exclude_object_dilate_px']}px dilation) -- target object CUT from the world")
     mapper = EsdfMapper(grid_center=p["grid_center"], extent_m=p["extent_m"],
                         esdf_voxel_size=ev, tsdf_voxel_size=tv,
                         image_hw=depth.shape, depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
     t0 = time.time()
-    mapper.esdf_from_depth(depth, K, T_pc, robot_filter=rf)         # first call JIT-compiles kernels
+    mapper.esdf_from_depth(depth, K, T_pc, robot_filter=rf,         # first call JIT-compiles kernels
+                           exclude_mask=ex_mask)
     occ = mapper.occupied_points()
     sf = "off" if args.no_self_filter else "on"
     print(f"ESDF      : {len(occ):6d} occupied voxels  AABB(pelvis) {_aabb(occ)}  "
@@ -239,7 +253,9 @@ def main():
         if args.margin is not None:
             cw["robot_mask_margin"] = float(args.margin)
         robot.planner.set_collision_world(True, cw)
-        if robot.planner.update_grasp_world(args.side, depth, K, T_pc, q_arm, hand_q=hand_q):
+        raw_mask = np.load(args.exclude_mask).astype(bool) if args.exclude_mask else None
+        if robot.planner.update_grasp_world(args.side, depth, K, T_pc, q_arm, hand_q=hand_q,
+                                            object_mask=raw_mask):   # planner dilates per config
             print(f"--- truth-test: the grasp planner's OWN ESDF gate at the self-filter q [{src}] ---")
             wc = robot.planner.world_check(args.side, q_arm)
         else:

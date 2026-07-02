@@ -95,7 +95,11 @@ def _update_collision_world(robot, side: str, q0=None) -> None:
         T_pc = robot.frames.T_pelvis_camera(None)          # head cam is q-independent (locked torso)
         hand = getattr(robot, "hand", None)                # live finger angles -> self-filter the hand
         hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hasattr(hand, "get_q") else None
-        if planner.update_grasp_world(side, depth, K, T_pc, q0, hand_q=hand_q):
+        # The TARGET's SAM3 mask (graspgenx source; None elsewhere) -> cut the object out of the
+        # ESDF so the approach can reach it (gated by collision_world.exclude_object).
+        object_mask = getattr(getattr(robot, "grasp_source", None), "last_mask", None)
+        if planner.update_grasp_world(side, depth, K, T_pc, q0, hand_q=hand_q,
+                                      object_mask=object_mask):
             print("grasp_motion: collision world updated from head depth (ESDF, robot self-filtered)")
     except Exception as e:                        # noqa: BLE001 - best-effort; never block the grasp
         print(f"grasp_motion: collision world skipped: {e}")

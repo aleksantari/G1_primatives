@@ -169,6 +169,21 @@ def test_graspgenx_source_empty_on_missing_inputs():
     assert src2.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block") == []
 
 
+def test_graspgenx_source_retains_last_mask_for_exclude_object():
+    # the segmenter's mask must be RETAINED on the source (collision_world.exclude_object reads
+    # it to cut the target out of the ESDF), and RESET at every grasps() call so an early
+    # return (e.g. camera gone) can never leave a stale mask behind.
+    m = np.zeros((3, 3), bool)
+    m[1, 1] = True
+    client = FakeClient(np.eye(4, dtype=np.float32)[None], np.array([1.0], np.float32))
+    src = GraspGenXGraspSource(FakeFrames(), FakeSeg(m), lambda: client, GCFG, CAM_CFG)
+    assert src.last_mask is None                            # nothing segmented yet
+    src.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block")
+    assert src.last_mask is not None and (src.last_mask == m).all()
+    src.grasps(FakeRobot(camera=None), RIGHT, "block")      # early return BEFORE segmentation
+    assert src.last_mask is None                            # stale mask cleared
+
+
 # ----------------------------------------------------------------- plan_to_pose_set
 def test_plan_to_pose_set_returns_first_success():
     from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner, PlanningError

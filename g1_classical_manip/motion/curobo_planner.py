@@ -813,6 +813,8 @@ class CuroboArmPlanner:
             depth_max_m=float(c.get("depth_max_m", 2.0)),
             self_filter=bool(c.get("self_filter", True)),
             robot_mask_margin=float(c.get("robot_mask_margin", 0.02)),
+            exclude_object=bool(c.get("exclude_object", True)),
+            exclude_object_dilate_px=int(c.get("exclude_object_dilate_px", 4)),
         )
 
     def _build_hand_segmenter(self, margin: float):
@@ -864,14 +866,18 @@ class CuroboArmPlanner:
         return _filter
 
     def update_grasp_world(self, side: str, depth_mm, intrinsics: dict, T_pelvis_camera,
-                           q_repo14=None, hand_q=None) -> bool:
+                           q_repo14=None, hand_q=None, object_mask=None) -> bool:
         """Build a fresh ESDF from the head depth and load it into `side`'s grasp planner, so the
-        next plan_grasp avoids the object/table. No-op (returns False) when the collision world is
+        next plan_grasp avoids the table/clutter. No-op (returns False) when the collision world is
         disabled or there is no depth. `depth_mm` (H,W float32 mm), `intrinsics` {fx,fy,cx,cy},
         `T_pelvis_camera` = the camera optical pose in pelvis. `q_repo14` = the arm config at which
         the depth was captured + `hand_q` ({LEFT:(7,),RIGHT:(7,)} live finger angles) -> the robot
         (arm AND fingers) is self-filtered out of the depth (essential: else the arm/hand is fused
-        into the world and plan_grasp starts the arm inside a copy of itself)."""
+        into the world and plan_grasp starts the arm inside a copy of itself). `object_mask`
+        ((H,W) bool, depth-aligned -- the TARGET's SAM3 mask) cuts the object OUT of the world
+        (gated by collision_world.exclude_object, dilated exclude_object_dilate_px): the reference
+        end2end design -- the gripper has to REACH the object, and plan_grasp's Step-2 approach
+        plans with ALL links enabled (hand included), so an in-world target blocks its own grasp."""
         if not self._cw_enabled or depth_mm is None:
             return False
         import numpy as _np
@@ -885,8 +891,20 @@ class CuroboArmPlanner:
                 esdf_voxel_size=p["esdf_voxel_size"], tsdf_voxel_size=p["tsdf_voxel_size"],
                 image_hw=(int(hw[0]), int(hw[1])),
                 depth_min_m=p["depth_min_m"], depth_max_m=p["depth_max_m"])
+        ex = None
+        if object_mask is not None and p["exclude_object"]:
+            from g1_classical_manip.motion.collision_world import dilate_mask
+            m = _np.asarray(object_mask, bool)
+            if m.shape != _np.asarray(depth_mm).shape:
+                print(f"update_grasp_world: object_mask {m.shape} != depth "
+                      f"{_np.asarray(depth_mm).shape} -- object NOT excluded")
+            elif m.any():
+                ex = dilate_mask(m, p["exclude_object_dilate_px"])
+                print(f"update_grasp_world: target object CUT from the world "
+                      f"({int(m.sum())} px, dilated {p['exclude_object_dilate_px']}px)")
         rf = self.robot_depth_filter(q_repo14, hand_q=hand_q) if p["self_filter"] else None
-        grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera, robot_filter=rf)
+        grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera,
+                                                 robot_filter=rf, exclude_mask=ex)
         self._grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
         self._cw_loaded.add(side)              # this side now queries the LIVE ESDF, not the build grid
         return True

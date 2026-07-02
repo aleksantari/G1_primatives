@@ -38,6 +38,29 @@ def esdf_grid_shape(extent_m, esdf_voxel_size: float) -> Tuple[int, int, int]:
     return tuple(int(math.ceil(float(e) / v)) for e in extent_m)
 
 
+def dilate_mask(mask: np.ndarray, px: int) -> np.ndarray:
+    """Binary-dilate an (H,W) bool mask by ``px`` pixels (Chebyshev/square kernel) -- pure numpy
+    (max over shifted views), no cv2/scipy dependency. Used to grow the SAM3 object mask a few
+    pixels before cutting the object out of the depth, so mask-edge depth bleed doesn't leave an
+    occupied rind around the erased object. px <= 0 returns the input unchanged."""
+    m = np.asarray(mask, bool)
+    if px <= 0 or not m.any():
+        return m
+    out = m.copy()
+    for _ in range(int(px)):                 # one 3x3 (8-neighbour) dilation per iteration
+        d = out.copy()
+        d[1:, :] |= out[:-1, :]
+        d[:-1, :] |= out[1:, :]
+        d[:, 1:] |= out[:, :-1]
+        d[:, :-1] |= out[:, 1:]
+        d[1:, 1:] |= out[:-1, :-1]
+        d[1:, :-1] |= out[:-1, 1:]
+        d[:-1, 1:] |= out[1:, :-1]
+        d[:-1, :-1] |= out[1:, 1:]
+        out = d
+    return out
+
+
 def empty_esdf_grid(grid_center, extent_m, esdf_voxel_size: float, device: str = "cuda:0"):
     """A free-space ESDF ``VoxelGrid`` (all distances large-positive). Built once at planner
     creation so cuRobo allocates the voxel collision channel + its capacity; ``update_world``
@@ -97,7 +120,7 @@ class EsdfMapper:
         return self._mapper
 
     def esdf_from_depth(self, depth_mm: np.ndarray, intrinsics: dict, T_pelvis_camera: Pose,
-                        robot_filter=None):
+                        robot_filter=None, exclude_mask=None):
         """Head depth (H,W float32 MILLIMETERS) -> a cuRobo ESDF ``VoxelGrid`` (pelvis frame).
 
         ``intrinsics``: {fx,fy,cx,cy} (the depth map's pinhole). ``T_pelvis_camera``: our
@@ -105,7 +128,11 @@ class EsdfMapper:
         ``robot_filter``: optional ``CameraObservation -> filtered_depth_tensor`` callback that
         REMOVES the robot's own geometry from the depth before fusing (else the head camera fuses
         the arm into the world and the grasp starts inside a copy of itself). See
-        CuroboArmPlanner.robot_depth_filter (cuRobo RobotSegmenter)."""
+        CuroboArmPlanner.robot_depth_filter (cuRobo RobotSegmenter).
+        ``exclude_mask``: optional (H,W) bool, True = pixels to CUT from the depth before fusion
+        (the TARGET object's SAM3 mask, pre-dilated) -- zeroed like invalid depth, so the object
+        never enters the world and the gripper can reach it (the GraspGenX end2end reference's
+        object-out design). Independent of and composable with ``robot_filter``."""
         torch = self._torch
         from curobo.types import CameraObservation, Pose as CuPose
         mapper = self._ensure()
@@ -121,6 +148,12 @@ class EsdfMapper:
 
         d = np.asarray(depth_mm, np.float32) / 1000.0                 # mm -> meters
         d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)         # invalid -> 0 (< depth_min -> rejected)
+        if exclude_mask is not None:
+            m = np.asarray(exclude_mask, bool)
+            if m.shape == d.shape:
+                d[m] = 0.0                                            # cut the object: 0 < depth_min
+            else:
+                print(f"[EsdfMapper] exclude_mask shape {m.shape} != depth {d.shape} -- ignored")
         depth_t = torch.as_tensor(d, dtype=torch.float32, device=self._device).unsqueeze(0)  # (1,H,W)
         # The TSDF integrator REQUIRES rgb (num_cameras,H,W,3) uint8 even though colour is
         # irrelevant to the ESDF -- feed zeros (matching the camera's H,W = the Mapper's image_hw).

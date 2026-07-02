@@ -32,8 +32,14 @@ class GraspGenXGraspSource(GraspSource):
         self.palm_offset_xyz = np.asarray(gcfg["palm_offset_xyz"], float)
         self.R_wristyaw_grasp = rpy_to_matrix(*gcfg["wristyaw_grasp_rpy"])
         self.viz = viz                                  # optional viz.GraspViz (None = off)
+        # The most recent SAM3 object mask (H,W bool, depth-aligned), retained so the collision
+        # world can EXCLUDE the target object from the ESDF (collision_world.exclude_object --
+        # the GraspGenX end2end reference's design: the gripper has to reach it). None until a
+        # grasps() call segments; reset at every call so a failed capture can't leave a stale mask.
+        self.last_mask = None
 
     def grasps(self, robot, side: str, target: str) -> List[GraspCandidate]:
+        self.last_mask = None                          # stale-mask guard (see __init__)
         cam = getattr(robot, "camera", None)
         if cam is None:
             return []
@@ -50,6 +56,7 @@ class GraspGenXGraspSource(GraspSource):
             mask = self.segmenter.mask(rgb)            # (H,W) bool / all-False / None (whole frame)
         except SegmentationAborted:
             return []                                  # operator aborted -> no grasps (loud)
+        self.last_mask = mask                          # retained for collision_world.exclude_object
 
         with LOG.span("deproject"):                    # masked depth -> pelvis-frame point cloud
             cloud = deproject_depth(depth, self.intrinsics, T_pc,
