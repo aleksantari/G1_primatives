@@ -125,6 +125,8 @@ class CuroboArmPlanner:
             robot=robot_cfg_path, max_goalset=self._max_goalset, **self._solver_kwargs()))
         self._mp.warmup(enable_graph=True, num_warmup_iterations=5)
         self._grasp_mp = {}       # lazy per-side single-tool-frame planners for plan_grasp
+        self._cw_loaded = set()   # sides whose grasp planner has a LIVE ESDF loaded (vs the empty
+                                  # build grid) -- world_check refuses to "pass" an unloaded world
         # Depth-ESDF collision world (planner.yaml grasp.collision_world). OFF by default: when on,
         # the grasp planner is built voxel-capable and the head depth ESDF is loaded before plan_grasp
         # so the approach routes around the object/table. See motion/collision_world.py.
@@ -162,13 +164,16 @@ class CuroboArmPlanner:
             kw["orientation_tolerance"] = float(s["orientation_tolerance"])
         return kw
 
-    def _joint_state(self, q_repo14):
-        """repo-order (14,) config -> cuRobo JointState in active (cuRobo) order."""
+    def _joint_state(self, q_repo14, names: Optional[List[str]] = None):
+        """repo-order (14,) config -> cuRobo JointState in `names` order (default: the MAIN planner's
+        active order). Pass a specific planner's ``mp.joint_names`` when feeding ITS low-level
+        compute_kinematics -- cuRobo does NOT reorder by name there (plan-level entry points do)."""
         from curobo.types import JointState
+        names = list(self.active if names is None else names)
         q = np.asarray(q_repo14, float).reshape(DOF)
-        q_active = q[[REPO_ARM.index(j) for j in self.active]]   # repo -> cuRobo order
+        q_active = q[[REPO_ARM.index(j) for j in names]]         # repo -> cuRobo order
         t = self._torch.tensor(q_active, dtype=self._torch.float32, device="cuda").unsqueeze(0)
-        return JointState.from_position(t, joint_names=self.active)
+        return JointState.from_position(t, joint_names=names)
 
     def _tensor(self, arr):
         return self._torch.tensor(np.asarray(arr, float), dtype=self._torch.float32,
@@ -253,10 +258,17 @@ class CuroboArmPlanner:
         keep = arr[:, 3] > 0.0                       # cuRobo marks disabled spheres with radius <= 0
         return arr[keep, :3].astype(np.float32), arr[keep, 3].astype(np.float32)
 
-    def _sphere_link_names(self):
+    def _sphere_link_names(self, mp=None):
         """(443,) list: the link NAME each collision sphere belongs to, so a self-collision pair
         can be labelled by link (right_hand_thumb_2_link <-> right_wrist_yaw_link) rather than raw
-        sphere index. From the cuRobo kinematics (link_sphere_idx_map + link_name_to_idx_map)."""
+        sphere index. From the cuRobo kinematics (link_sphere_idx_map + link_name_to_idx_map).
+        Default: the MAIN planner; pass a grasp planner to label ITS sphere layout (its joint --
+        and possibly sphere -- ordering differs; only the main-planner result is cached)."""
+        if mp is not None and mp is not self._mp:
+            kc = mp.kinematics.kinematics_config
+            idx_map = kc.link_sphere_idx_map.detach().cpu().numpy().reshape(-1).astype(int)
+            name_of = {int(v): k for k, v in kc.link_name_to_idx_map.items()}
+            return [name_of.get(int(li), f"link_{int(li)}") for li in idx_map]
         if getattr(self, "_sphere_links", None) is None:
             kc = self._mp.kinematics.kinematics_config
             idx_map = kc.link_sphere_idx_map.detach().cpu().numpy().reshape(-1).astype(int)
@@ -483,15 +495,23 @@ class CuroboArmPlanner:
         n = min(len(grasp_goals), len(pregrasp_goals))
         if int(k) > 0:
             n = min(n, int(k))
+        # world predicate: prefer the TRUTH-TEST (the grasp planner's own ESDF checker -- the exact
+        # 'Start or End state in collision' gate) over the legacy geometric voxel-centre test, which
+        # under-counts (no eta semantics) and produced the unverified '74/200 free' readings.
+        truth = self._cw_enabled and side in self._cw_loaded
         print(f"[diagnose_candidates] sweeping {n} candidate(s) "
-              f"(~{n * 0.8:.0f}s; 2 world-free plan solves each) ...")
+              f"(~{n * 0.8:.0f}s; 2 world-free plan solves each; world predicate: "
+              f"{'cuRobo ESDF gate (truth)' if truth else 'geometric (no live ESDF loaded)'}) ...")
         rows = []
         for i in range(n):
             gcfg = self._reach(side, grasp_goals[i], start)
             pcfg = self._reach(side, pregrasp_goals[i], start)
             wh = None
-            if pcfg is not None and world_points is not None and len(world_points):
-                wh = len(self.diagnose(pcfg, side, world_points=world_points, show=False)["world"])
+            if pcfg is not None:
+                if truth:
+                    wh = len(self.world_check(side, pcfg, show=False)["violations"])
+                elif world_points is not None and len(world_points):
+                    wh = len(self.diagnose(pcfg, side, world_points=world_points, show=False)["world"])
             rows.append({"i": i, "grasp": gcfg is not None, "pregrasp": pcfg is not None,
                          "world_hits": wh})
             if n > 20 and (i + 1) % 20 == 0:
@@ -528,8 +548,10 @@ class CuroboArmPlanner:
         if s["n"] > 20:
             print(f"  (showing {len(show_rows)} of {s['n']}; summary above is the full count)")
         if s["pregrasp_free"] > 0:
-            print("  => a reachable, world-FREE pre-grasp EXISTS -> plan_grasp didn't find it: "
-                  "raise solver.num_ik_seeds / num_trajopt_seeds (planner.yaml).")
+            print("  => a reachable, world-FREE pre-grasp EXISTS. plan_grasp commits to ONE goalset "
+                  "winner (no internal retry) -> the candidate-retry loop should reach these; if it "
+                  "still fails, world_check the START config (a start in the ESDF fails EVERY plan) "
+                  "and check collision_world.exclude_object.")
         elif s["pregrasp_reach"] > 0 and s["pregrasp_blocked"] == s["pregrasp_reach"]:
             print("  => every reachable pre-grasp is INSIDE the ESDF -> real clutter collision: "
                   "adjust the approach (offset/axis), crop the ESDF, or de-clutter.")
@@ -541,6 +563,99 @@ class CuroboArmPlanner:
         elif s["grasp_reach"] == 0:
             print("  => no grasp pose is even reachable for this arm -> candidates are out of reach "
                   "(bad grasps / wrong side / object out of the arm's workspace).")
+
+    def world_check(self, side: str, q_repo14, activation_distance: float = 0.0,
+                    near_distance: Optional[float] = None, disable_links: Optional[List[str]] = None,
+                    top: int = 8, show: bool = True):
+        """TRUTH-TEST a config against the GRASP PLANNER'S OWN loaded ESDF world -- the exact same
+        checker + predicate that rejects plan_grasp with 'Start or End state in collision'. Unlike
+        diagnose()'s geometric sphere-vs-occupied-voxel-centre approximation, this queries cuRobo's
+        scene_collision_checker: per-sphere cost = (radius + eta) - esdf(center), > 0 == collision.
+        The graph-planner/IK feasibility gate runs at eta = ``activation_distance`` = 0.0 (cuRobo
+        curobo/content/configs/task/metrics_base.yml: scene_collision activation_distance 0.0) --
+        planner.yaml's solver.collision_activation_distance shapes only the OPTIMIZER cost. A second
+        query at ``near_distance`` (default: that optimizer eta) reports the spheres the optimizer is
+        actively pushing on. ``disable_links`` mimics plan_grasp Step-1/3 (spheres zeroed for those
+        links); Step-2 (the approach plan -- where the failures happen) runs with ALL links enabled,
+        the default here. Returns {violations, near, in_collision, max_penetration_mm,
+        offending_centers/radii, world_loaded, n_spheres}; empty + world_loaded=False when this
+        side's grasp planner has no LIVE ESDF loaded (never trust the empty build grid)."""
+        mp = self._grasp_planner(side)
+        out = {"violations": [], "near": [], "in_collision": False, "max_penetration_mm": 0.0,
+               "offending_centers": np.zeros((0, 3), np.float32),
+               "offending_radii": np.zeros((0,), np.float32),
+               "world_loaded": side in self._cw_loaded, "n_spheres": 0}
+        if mp.scene_collision_checker is None or not out["world_loaded"]:
+            if show:
+                print(f"[world_check] {side}: NO live ESDF loaded in this side's grasp planner "
+                      f"(collision world {'enabled but not built yet' if self._cw_enabled else 'OFF'})"
+                      f" -- nothing to check against.")
+            return out
+        assert set(mp.joint_names) == set(self.active), "grasp planner joints != main planner set"
+        from curobo._src.geom.collision.buffer_collision import CollisionBuffer
+        if disable_links:
+            mp.disable_link_collision(list(disable_links))
+        try:
+            # NOTE: the grasp planner's joint ORDER differs from the main planner's, and low-level
+            # compute_kinematics does NOT reorder by name -> build the state in ITS order.
+            ks = mp.compute_kinematics(self._joint_state(q_repo14, names=mp.joint_names))
+        finally:
+            if disable_links:
+                mp.enable_link_collision(list(disable_links))
+        sph = ks.robot_spheres
+        out["n_spheres"] = int(sph.shape[-2])
+
+        def _query(eta: float):
+            buf = CollisionBuffer.from_shape(sph.shape, mp.device_cfg)
+            d = mp.scene_collision_checker.get_sphere_distance(
+                ks, buf, mp.device_cfg.to_device([1.0]), mp.device_cfg.to_device([float(eta)]))
+            return d.detach().float().cpu().numpy().reshape(-1)      # (N,) cost; >0 == collision
+
+        links = self._sphere_link_names(mp)                          # THIS planner's sphere layout
+        arr = sph.detach().float().cpu().numpy().reshape(-1, 4)
+        radii = arr[:, 3]
+        cost0 = _query(activation_distance)                          # the FAILURE predicate (eta 0)
+        near_eta = (float((self.planner_cfg.get("solver") or {}).get(
+            "collision_activation_distance", 0.01)) if near_distance is None else float(near_distance))
+        cost_n = _query(near_eta) if near_eta > activation_distance else cost0
+
+        def _rows(cost):
+            idx = np.nonzero((cost > 0.0) & (radii > 0.0))[0]        # r<=0 = disabled spheres
+            rows = [{"i": int(i), "link": links[i], "penetration_mm": float(cost[i] * 1000.0)}
+                    for i in idx]
+            rows.sort(key=lambda r: -r["penetration_mm"])
+            return rows
+
+        out["violations"] = _rows(cost0)
+        hit = {r["i"] for r in out["violations"]}
+        out["near"] = [r for r in _rows(cost_n) if r["i"] not in hit]
+        out["in_collision"] = bool(out["violations"])
+        out["max_penetration_mm"] = out["violations"][0]["penetration_mm"] if out["violations"] else 0.0
+        off = sorted(hit)
+        out["offending_centers"] = arr[off, :3].astype(np.float32) if off else out["offending_centers"]
+        out["offending_radii"] = radii[off].astype(np.float32) if off else out["offending_radii"]
+        if show:
+            self._print_world_check(out, side, activation_distance, near_eta, top)
+        return out
+
+    @staticmethod
+    def _print_world_check(out, side, eta, near_eta, top):
+        v, n = out["violations"], out["near"]
+        print(f"[world_check] {side}: cuRobo's OWN ESDF query ({out['n_spheres']} spheres, "
+              f"gate eta={eta:g})")
+        print(f"  IN COLLISION (the 'Start or End state in collision' predicate): {len(v)} sphere(s)"
+              + (":" if v else "  -- config PASSES the real gate"))
+        for r in v[:top]:
+            print(f"    {r['link']}[{r['i']}]  {r['penetration_mm']:.1f} mm inside")
+        if len(v) > top:
+            print(f"    ... +{len(v) - top} more")
+        if n:
+            print(f"  NEAR (within optimizer eta={near_eta:g}, pushed but not gate-failing): "
+                  f"{len(n)} sphere(s)")
+            for r in n[:min(top, 4)]:
+                print(f"    {r['link']}[{r['i']}]  {r['penetration_mm']:.1f} mm into the margin")
+            if len(n) > min(top, 4):
+                print(f"    ... +{len(n) - min(top, 4)} more")
 
     # --- dynamics: gravity-comp feed-forward (see docs/gravity_comp.md) ---
     def _ensure_dynamics(self):
@@ -679,6 +794,7 @@ class CuroboArmPlanner:
         if cfg is not None:
             self._cw_cfg = cfg
         self._grasp_mp = {}        # force rebuild with/without the voxel channel
+        self._cw_loaded = set()    # rebuilt planners start with the EMPTY grid until update_grasp_world
         self._esdf_mapper = None
         self._segmenter = None
         self._seg_names = None
@@ -772,6 +888,7 @@ class CuroboArmPlanner:
         rf = self.robot_depth_filter(q_repo14, hand_q=hand_q) if p["self_filter"] else None
         grid = self._esdf_mapper.esdf_from_depth(depth_mm, intrinsics, T_pelvis_camera, robot_filter=rf)
         self._grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
+        self._cw_loaded.add(side)              # this side now queries the LIVE ESDF, not the build grid
         return True
 
     def collision_world_points(self):

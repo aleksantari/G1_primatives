@@ -359,6 +359,11 @@ def main():
                 if viz is not None and len(out["offending_centers"]):   # magenta = start offenders
                     viz.show_collision_spheres(out["offending_centers"], out["offending_radii"],
                                                color=[255, 0, 255], name="diag_offenders")
+                if args.collision_world:         # TRUTH-TEST: the planner's OWN ESDF gate at start --
+                    wc = robot.planner.world_check(side, q_fail)   # the real 'Start or End' predicate
+                    if viz is not None and len(wc["offending_centers"]):   # red = gate-failing spheres
+                        viz.show_collision_spheres(wc["offending_centers"], wc["offending_radii"],
+                                                   color=[255, 60, 60], name="diag_world_gate")
                 if cands:                        # END: sweep the top-K candidates' grasp + pre-grasp
                     gp = robot.cfg["planner"].get("grasp") or {}
                     strat = (gp.get("strategies") or [{}])[0]

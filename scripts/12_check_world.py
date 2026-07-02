@@ -228,6 +228,23 @@ def main():
         print(f"probe {np.round(pt,3)}: ESDF nearest {d_occ*1000:.0f} mm, {n_occ} within 5cm | "
               f"raw cloud nearest {d_raw*1000:.0f} mm, {n_raw} within 5cm -> {verdict}")
 
+    # --- TRUTH-TEST (--diagnose): load the SAME depth into the grasp planner and query ITS checker.
+    # This is the exact predicate that fails plan_grasp ('Start or End state in collision'), incl.
+    # cuRobo's ESDF semantics -- unlike the geometric occupied-voxel-centre checks above. Any CLI
+    # overrides (--esdf-voxel/--margin/--no-self-filter) are folded in so both worlds match.
+    wc = None
+    if args.diagnose:
+        cw = dict(p, enabled=True, esdf_voxel_size=ev, tsdf_voxel_size=tv,
+                  self_filter=(not args.no_self_filter))
+        if args.margin is not None:
+            cw["robot_mask_margin"] = float(args.margin)
+        robot.planner.set_collision_world(True, cw)
+        if robot.planner.update_grasp_world(args.side, depth, K, T_pc, q_arm, hand_q=hand_q):
+            print(f"--- truth-test: the grasp planner's OWN ESDF gate at the self-filter q [{src}] ---")
+            wc = robot.planner.world_check(args.side, q_arm)
+        else:
+            print("truth-test skipped (planner world update failed)")
+
     if args.visualize:
         try:
             import viser
@@ -257,12 +274,18 @@ def main():
                   f"[{src}] -- any green sphere inside the RED voxels = in collision with the world")
         if args.diagnose:                   # numeric backing: WHY q_arm is (self/world) in collision
             from g1_classical_manip.viz import viser_primitives as vp
+            # geometric predicate (legacy, side-by-side with the truth-test above)
             out = robot.planner.diagnose(q_arm, args.side, world_points=(occ if len(occ) else None),
                                          voxel_size=float(p["esdf_voxel_size"]))
             if len(out["offending_centers"]):
                 vp.add_collision_spheres(srv, out["offending_centers"], out["offending_radii"],
                                          color=(255, 0, 255), name="/diag_offenders")
                 print(f"diagnose: {len(out['offending_centers'])} offending sphere(s) overlaid (magenta)")
+            if wc is not None and len(wc["offending_centers"]):   # the REAL gate's offenders (orange)
+                vp.add_collision_spheres(srv, wc["offending_centers"], wc["offending_radii"],
+                                         color=(255, 140, 0), name="/world_gate_offenders")
+                print(f"world_check: {len(wc['offending_centers'])} gate-failing sphere(s) overlaid "
+                      f"(orange) -- these are what cuRobo itself rejects")
         print(f"viser: http://localhost:{args.port}  (gray=raw cloud, RED=ESDF occupied, blue=wrist@q"
               + (", GREEN=collision spheres@q" if n_sph else "") + ")")
         print("Ctrl-C to exit.")
