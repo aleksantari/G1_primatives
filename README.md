@@ -199,12 +199,17 @@ pairs (ignore-matrix faithful), which spheres penetrate the ESDF, joint-limit ma
 singularity (`sigma_min`/manipulability). It checks the **START** config (magenta overlay) *and* the
 **END** — `diagnose_candidates` sweeps the top candidates (`--diagnose-k`, 0 = all) testing, on the
 world-free planner, whether each grasp + its pre-grasp is reachable and whether the pre-grasp config
-penetrates the ESDF — so a generic "Start or End state in collision" is split into which one, and
-whether a collision-free pre-grasp merely wasn't found (→ raise `solver.num_ik_seeds` — a different
-IK branch can clear the ESDF) vs the approach genuinely hitting clutter. `12_check_world --diagnose
-[--side]` runs the START report against a built ESDF in isolation. It's the tool to decide whether a finer sphere model would help *before* rebuilding it
-(real hand-sphere overlaps → yes; joint-limit / near-singular / ESDF penetration → no). See
-`docs/pipeline_09_graspgen.md`.
+violates the world — so a generic "Start or End state in collision" is split into which one.
+**`planner.world_check(side, q)` is the truth predicate**: it queries the grasp planner's OWN loaded
+ESDF exactly as the failing gate does (cost `= radius − esdf` at activation **0** — cuRobo
+`metrics_base.yml`; the geometric voxel-centre test is only an approximation), labels offending
+spheres by link, and backs both the START check (with `--collision-world`) and the candidate sweep.
+`12_check_world --diagnose [--side] [--exclude-mask m.npy]` runs it against a built ESDF in
+isolation (live or `--frame` offline). Also the tool to decide whether a finer sphere model would
+help *before* rebuilding it (real hand-sphere overlaps → yes; joint-limit / near-singular / ESDF
+penetration → no). See `docs/pipeline_09_graspgen.md` for the corrected `plan_grasp` mental model
+(single goalset winner + candidate retry; hand links NOT disabled during the approach segment;
+`collision_world.exclude_object` cuts the target from the world so the gripper can reach it).
 
 **Latency profiling (`--latency`)** — records per-component timings (`depth_grab`, `sam3`,
 `graspgenx`, `deproject`, `tool_transform`, `collision_world`, `plan_grasp`, `exec:*`, `hand:*`)
@@ -237,14 +242,17 @@ scene".
 
 **Depth-ESDF collision world (`--collision-world`)** — head-camera depth → cuRobo `Mapper` →
 an ESDF `VoxelGrid` (`motion/collision_world.EsdfMapper`) handed to the grasp planner, so the
-native `plan_grasp` **approach** routes *around* the object/table instead of barging through it.
+native `plan_grasp` **approach** routes *around* the table/clutter instead of barging through it.
 The **same path works in sim and real** and is **source-independent** (it uses head depth, so any
 grasp source — apriltag / graspgenx / sim_cloud — benefits). A cuRobo `RobotSegmenter` **self-filters**
 the robot out of the depth (zeroing pixels within `robot_mask_margin` of the collision spheres at
 the **LIVE** measured config — arm q from DDS *and* finger q from the Dex3, via a hand-active
 segmenter kinematics); without it the grasp starts inside a baked-in copy of its own arm
-("Goalset planning returned None"). The active hand links are collision-disabled during the grasp
-(the open hand may sit in the object ESDF — the grasp is meant to *contact*). **OFF by default**;
+("Goalset planning returned None"). The **TARGET object is cut from the world** too
+(`collision_world.exclude_object`, default ON — its SAM3 mask zeroed in the depth pre-fusion, the
+GraspGenX end2end reference design): cuRobo disables the hand links only for the goalset pick and
+the grasp/lift segments (Steps 1/3) — the **approach segment plans with ALL links enabled**, so an
+in-world target would block its own pre-grasp. **OFF by default**;
 opt in with `09_graspgen.py --collision-world` or `planner.yaml: grasp.collision_world.enabled`
 (that block tunes `grid_center` / `extent_m` / `esdf_voxel_size` / `robot_mask_margin` / depth
 crop). The approach route is dynamic enough that full-speed playback can trip the tracking-error

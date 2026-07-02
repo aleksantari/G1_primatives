@@ -130,10 +130,15 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
 - **Depth-ESDF collision world** (`motion/collision_world.py`; gated OFF by default —
   `planner.yaml grasp.collision_world.enabled` or `09_graspgen --collision-world`): head depth →
   cuRobo `Mapper` → ESDF `VoxelGrid` (`EsdfMapper`) → the grasp planner, so the native `plan_grasp`
-  **approach** routes around the object/table. SAME path sim + real, **source-independent** (head
-  depth, any grasp source). The grasp planner is built voxel-capable (`update_grasp_world`); the
-  active hand links are collision-disabled during the grasp (the open hand may sit in the object
-  ESDF — the grasp is meant to CONTACT). A cuRobo `RobotSegmenter` **self-filter** zeros the robot's
+  **approach** routes around the table/clutter. SAME path sim + real, **source-independent** (head
+  depth, any grasp source). The grasp planner is built voxel-capable (`update_grasp_world`). The
+  **TARGET object is CUT from the world** (`collision_world.exclude_object`, default ON: its SAM3
+  mask zeroed in the depth pre-fusion, dilated `exclude_object_dilate_px`; graspgenx source only —
+  the reference end2end design) because cuRobo's `disable_collision_links` applies to plan_grasp
+  Steps 1/3 ONLY — the Step-2 APPROACH plans with ALL links enabled (hand included), so an in-world
+  target blocks its own pre-grasp; `world_check(side, q)` truth-tests any config on the grasp
+  planner's own ESDF at the real gate (activation 0, metrics_base.yml — NOT the optimizer's 0.01).
+  A cuRobo `RobotSegmenter` **self-filter** zeros the robot's
   own pixels from the depth at its **LIVE measured config** — arm q + live finger q via a dedicated
   **hand-active** segmenter kinematics (the arms-only planning model locks fingers open, so a bent
   thumb would otherwise survive into the world); without it the arm/hand fuses in and the grasp

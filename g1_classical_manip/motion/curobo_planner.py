@@ -1042,7 +1042,16 @@ class CuroboArmPlanner:
         still fails when the single goalset winner's pre-grasp is blocked -- and MORE SEEDS can't help
         (the winner is chosen fine; only its lone approach fails). We overcome it here: on any failure
         with a valid winner, EXCLUDE that candidate and re-call plan_grasp so cuRobo picks a different
-        grasp, up to `max_candidate_retries`. Diagnose the set first with diagnose_candidates."""
+        grasp, up to `max_candidate_retries`.
+
+        LIMITS OF THE RETRY (audit 2026-07-02): it only helps once START/GOAL validity holds --
+        Step 2 plans the approach with ALL collision links RE-ENABLED (hand included;
+        disable_collision_links applies to Steps 1/3 only), and its graph/IK gate checks the start
+        AND goal configs against the world at activation 0. A start config inside the ESDF, or a
+        target object fused into the world blocking its own pre-grasp region, fails EVERY retry
+        identically. world_check(side, q) tests the exact gate; collision_world.exclude_object cuts
+        the target from the world (the end2end reference design). Diagnose the set with
+        diagnose_candidates."""
         goals_all = list(wrist_goals)
         if not goals_all:
             raise PlanningError("plan_grasp_set_sweep: no candidate goals")
