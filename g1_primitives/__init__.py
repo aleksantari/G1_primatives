@@ -22,7 +22,7 @@ from g1_primitives.spatial.pose import Pose
 from g1_primitives.spatial.pointcloud import PointCloud
 from g1_primitives.ee.hand_base import LEFT, RIGHT
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "connect", "Robot",

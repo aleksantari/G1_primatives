@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "g1_primitives"
-version = "0.1.0"
-description = "cuRobo-native action-primitive motion library for the suspended Unitree G1 (29-DoF, Dex3-1)."
+version = "0.2.0"
+description = "cuRobo-native action + perception primitives for the suspended Unitree G1 (29-DoF, Dex3-1) — the LLM-agent tool surface."
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -27,8 +27,8 @@ dependencies = [
     "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git",
 ]
 
-[tool.setuptools]
-packages = ["g1_primitives"]
+[tool.setuptools.packages.find]
+include = ["g1_primitives*"]   # top-level package + all subpackages (api/motion/...)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

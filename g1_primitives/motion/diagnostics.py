@@ -406,7 +406,7 @@ def _print_world_check(out, side, eta, near_eta, top):
 
 def explain_failure(planner, side: str, q_fail, candidates=None, grasp_cfg=None,
                     viz=None, k: int = 0, collision_world: bool = False):
-    """The full grasp-failure post-mortem (the old 09_graspgen --diagnose except-block,
+    """The full grasp-failure post-mortem (behind ``examples/02_pick --diagnose``,
     reusable): diagnose the START config, TRUTH-TEST it against the live ESDF gate when the
     collision world is on, then sweep every candidate's grasp/pre-grasp reachability.
 

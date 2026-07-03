@@ -115,7 +115,7 @@ def add_collision_spheres(vis, centers, radii, color=(60, 200, 90), opacity: flo
     """Add cuRobo collision spheres -- ``centers (N,3)`` + ``radii (N,)`` in the pelvis frame -- to a
     viser server as ONE semi-transparent mesh (all spheres concatenated into a single scene node, so
     it stays cheap). Returns the count drawn (0 = nothing). Shared by GraspViz.show_collision_spheres
-    and 12_check_world so a 'Start or End state in collision' is visible: a sphere inside the red ESDF
+    and tools/check_world so a 'Start or End state in collision' is visible: a sphere inside the red ESDF
     voxels (world collision) or two spheres overlapping (self-collision)."""
     if vis is None:
         return 0

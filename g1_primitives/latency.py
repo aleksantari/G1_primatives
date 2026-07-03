@@ -1,6 +1,6 @@
 """Lightweight latency instrumentation for the grasp pipeline.
 
-A process-global ``LOG`` records named timing spans so a run of ``09_graspgen`` can report how
+A process-global ``LOG`` records named timing spans so a grasp run (``tools/grasp_preview``) can report how
 long each component ACTUALLY takes -- isolating real inference/compute (depth grab, SAM3,
 GraspGenX, cuRobo ``plan_grasp``, collision-world) from motion execution and from the human
 GUI/keyboard gates, which otherwise dominate wall-clock but are not part of the pipeline speed.
