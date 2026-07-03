@@ -61,6 +61,22 @@ def dilate_mask(mask: np.ndarray, px: int) -> np.ndarray:
     return out
 
 
+def kernel_safe_dims(dims, voxel_size: float):
+    """Re-author a VoxelGrid's ``dims`` so cuRobo's collision kernel recovers the TRUE voxel
+    counts. cuRobo BUG (V2 ``VoxelData.load_batch`` + the warp collision kernel): the kernel's
+    grid shape is ``wp.int32(float32(dims) / float32(voxel_size))`` -- a TRUNCATING cast. The
+    Mapper emits ``dims = grid_shape * float32(voxel_size)`` (e.g. 120 * 0.00999999977 ->
+    1.1999999), whose float32 ratio lands just BELOW the integer (119.99999 -> 119). The wrong
+    dims corrupt the kernel's flat-index STRIDES (119*99 vs the buffer's 120*100), so every
+    sphere-vs-voxel query above the first x-slab samples a skewed location: phantom collisions
+    in free space AND real obstacles reading free (verified live 2026-07-02: the left palm 'hit'
+    the blue ball's cells at half its y; the ball itself read free). Fix: place dims a QUARTER
+    VOXEL high -- ``round()`` (cuRobo's python-side ``get_grid_shape``) still recovers k, while
+    the kernel's float32 ratio (k + 0.25) truncates to k. Idempotent."""
+    v = float(voxel_size)
+    return [(round(float(d) / v) + 0.25) * v for d in dims]
+
+
 def empty_esdf_grid(grid_center, extent_m, esdf_voxel_size: float, device: str = "cuda:0"):
     """A free-space ESDF ``VoxelGrid`` (all distances large-positive). Built once at planner
     creation so cuRobo allocates the voxel collision channel + its capacity; ``update_world``
@@ -71,7 +87,7 @@ def empty_esdf_grid(grid_center, extent_m, esdf_voxel_size: float, device: str =
     from curobo.scene import VoxelGrid
     nx, ny, nz = esdf_grid_shape(extent_m, esdf_voxel_size)
     v = float(esdf_voxel_size)
-    dims = [nx * v, ny * v, nz * v]
+    dims = kernel_safe_dims([nx * v, ny * v, nz * v], v)
     feat = torch.full((nx, ny, nz), 1.0, dtype=torch.float16, device=device)  # +1 m = free space
     pose = [float(grid_center[0]), float(grid_center[1]), float(grid_center[2]), 1.0, 0.0, 0.0, 0.0]
     return VoxelGrid(name="head_esdf", pose=pose, dims=dims, voxel_size=v,
@@ -175,6 +191,9 @@ class EsdfMapper:
         grid = mapper.compute_esdf()
         if not getattr(grid, "name", None):
             grid.name = "head_esdf"
+        # the Mapper authors dims in float32 (grid_shape * float32(voxel_size)) -- exactly the
+        # form that trips the cuRobo kernel's truncating int cast. See kernel_safe_dims.
+        grid.dims = kernel_safe_dims(grid.dims, grid.voxel_size)
         return grid
 
     def occupied_points(self) -> np.ndarray:
