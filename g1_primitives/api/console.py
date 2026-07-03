@@ -1,61 +1,38 @@
-"""Shared helpers for the scripts/ ladder: sim/real target selection + a cv2 live
-viewer with a headless fallback. (Run scripts as `python scripts/NN_*.py`; the
-script's dir is on sys.path so `import _rig` resolves.)"""
+"""Operator-console helpers for the scripts/ ladder (checks / examples / tools).
+
+Not part of the agent surface -- these are the human-in-the-loop conveniences the
+bring-up scripts share: an argparse ``--target`` flag, the per-step Enter/q gate,
+a cv2 live viewer with a headless fallback, a move-and-report helper, and raw DDS
+params for READ-ONLY subscriber scripts. Agent hosts use the Robot facade
+(``g1_primitives.connect``) directly and never need this module.
+"""
 from __future__ import annotations
 
 import argparse
-import os
 
 import numpy as np
 
-from g1_primitives.factory import make_robot, load_configs
+from g1_primitives.config import load_configs
 from g1_primitives.api import primitives as P
+from g1_primitives.api.robot import SIM_DDS
 from g1_primitives.latency import LOG   # latency instrumentation (no-op unless enabled)
-
-SIM_DOMAIN, SIM_IFACE = 1, "lo"
 
 
 def add_target_arg(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
     ap.add_argument("--target", choices=["sim", "real"], default="sim",
                     help="sim = unitree_sim_isaaclab loopback (domain 1/lo, mode=sim); "
-                         "real = robot.yaml DDS + mode=debug (operator sets debug via the remote).")
+                         "real = robot.yaml DDS + debug mode (checked/entered via the SDK "
+                         "on connect).")
     return ap
 
 
 def dds_for(target: str):
-    """(domain, interface) for a raw DDS connection (read-only scripts)."""
+    """(domain, interface) for a RAW read-only DDS subscription (scripts that don't
+    build a Robot, e.g. checks/01_dds). Connected scripts get this via g1.connect."""
     if target == "sim":
-        return SIM_DOMAIN, SIM_IFACE
+        return SIM_DDS
     dds = load_configs()["robot"]["dds"]
     return dds["domain_id"], (dds.get("interface") or None)
-
-
-def camera_config_for(target: str) -> str:
-    """Camera yaml for the target: real -> ZED stereo (camera_real.yaml), else sim mono."""
-    return "camera_real.yaml" if target == "real" else "camera_sim.yaml"
-
-
-def _warn_sim_uri(target: str):
-    if target == "sim" and not os.environ.get("CYCLONEDDS_URI"):
-        print("WARNING: CYCLONEDDS_URI is unset -- sim loopback DDS discovery will likely "
-              "fail. Prefix the command with\n  CYCLONEDDS_URI=file://$PWD/configs/"
-              "cyclonedds_loopback.xml")
-
-
-def connect(target: str, **kwargs):
-    """make_robot for the target: sim -> loopback DDS + mode=sim; real -> robot.yaml
-    DDS + mode=debug (debug mode is set by the OPERATOR via the physical remote; we do
-    NOT call MotionSwitcher by default). NOTE: any
-    connect_dds=True build homes the arms with DIRECT (un-planned, velocity-capped)
-    position control and waits for convergence BEFORE returning -- so the robot starts
-    at a known collision-free home, and the planned home()/move() primitives plan from
-    there. This physically moves the arms on connect and is NOT collision-avoided en
-    route, so ensure the path to home is clear (pass home_on_connect=False to skip)."""
-    _warn_sim_uri(target)
-    if target == "sim":
-        return make_robot(connect_dds=True, dds_domain=SIM_DOMAIN,
-                          dds_interface=SIM_IFACE, mode="sim", **kwargs)
-    return make_robot(connect_dds=True, mode="debug", **kwargs)
 
 
 def confirm(step: str, auto: bool):
@@ -76,7 +53,7 @@ def do_move(robot, side, goal, label):
     """move() to a wrist goal, then -- after letting the PD CONVERGE -- print the
     achieved-vs-target error (wrist FK vs the commanded goal, pos mm + orientation deg).
     run() returns when the trajectory clock ends, BEFORE the arm finishes settling, so
-    settle to the final commanded config first or the error reads high. Shared by 07/09."""
+    settle to the final commanded config first or the error reads high."""
     r = P.move(robot, side, goal)
     robot.executor.settle(robot.arm.q_target, tol=0.02, timeout=1.5)
     ach = robot.planner.fk(side, robot.arm.get_current_dual_arm_q())

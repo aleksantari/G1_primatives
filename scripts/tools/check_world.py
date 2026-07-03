@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""12 - Inspect the depth-ESDF collision world IN ISOLATION (no planning, no motion).
+"""tools/check_world - Inspect the depth-ESDF collision world IN ISOLATION (no planning,
+no motion).
 
 Builds the cuRobo Mapper world from ONE head depth frame and reports/visualises it, so we can
 answer the two questions that decide whether plan_grasp can use it:
@@ -13,30 +14,32 @@ answer the two questions that decide whether plan_grasp can use it:
      + the viser overlay reveal this.
 
 Three sources for the depth frame + the robot pose:
-  * LIVE (default): connects DDS read-only via _rig.connect (sim -> domain 1/lo, home_on_connect=
+  * LIVE (default): connects DDS read-only via g1.connect (sim -> domain 1/lo, home_on_connect=
     False -> NOTHING moves) so the self-filter runs at the LIVE measured arm+finger q -- exactly
     like the real grasp path (primitives._update_collision_world passes the current q). The filter
     masks the robot at the config IN the depth frame, so it MUST match where the arm actually is;
     if no live state arrives it falls back to home.
   * --no-dds: camera/ZMQ depth only (no DDS); self-filter at home.
-  * --frame <capture.npz>: OFFLINE replay of an 11_capture_frame capture -- NO robot/camera/DDS at
-    all (planner-only on the GPU). Uses the frame's depth + intrinsics + T_pelvis_camera, and the
+  * --frame <capture.npz>: OFFLINE replay of a tools/capture_frame capture -- NO robot/camera/DDS
+    at all (planner-only on the GPU). Uses the frame's depth + intrinsics + T_pelvis_camera, and the
     arm/hand q recorded at capture time if present (older captures lack them -> self-filter at home).
 World params come from planner.yaml grasp.collision_world (edit there to tune grid_center/extent/voxel).
 
-  sim:   bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --target sim --visualize'
-         (DDS uses domain 1/lo directly like 01_check_dds -- no CYCLONEDDS_URI needed. Depth over
+  sim:   bash -ic 'use_conda g1_curobo && python scripts/tools/check_world.py --target sim --visualize'
+         (DDS uses domain 1/lo directly like checks/01_dds -- no CYCLONEDDS_URI needed. Depth over
           ZMQ :55556; the sim must be up for both the depth stream AND the live arm q.)
-  demo:  bash -ic 'use_conda g1_curobo && python scripts/12_check_world.py --frame captures/scene1.npz --visualize'
-         (no robot -- inspect a captured world offline; the 11 -> 12 demo chain)
+  demo:  bash -ic 'use_conda g1_curobo && python scripts/tools/check_world.py --frame captures/scene1.npz --visualize'
+         (no robot -- inspect a captured world offline; the capture_frame -> check_world demo chain)
 """
 import argparse
 import sys
 import time
 
 import numpy as np
-import _rig
-from g1_primitives.factory import make_robot
+
+import g1_primitives as g1
+from g1_primitives import Robot
+from g1_primitives.api import console
 from g1_primitives.ee.hand_base import LEFT, RIGHT
 from g1_primitives.motion.trajectory import DOF
 from g1_primitives.motion.collision_world import EsdfMapper
@@ -48,7 +51,7 @@ def _aabb(p):
 
 
 def _load_capture(path):
-    """An 11_capture_frame .npz -> (depth, K{fx,fy,cx,cy}, T_pelvis_camera Pose, q14|None,
+    """A tools/capture_frame .npz -> (depth, K{fx,fy,cx,cy}, T_pelvis_camera Pose, q14|None,
     hand_q{LEFT,RIGHT}|None). q14 / hand_q are present only if the capture recorded them (older
     captures predate that -> None -> the self-filter falls back to home)."""
     from g1_primitives.spatial.pose import Pose
@@ -81,7 +84,7 @@ def _live_q(robot):
 
 
 def main():
-    ap = _rig.add_target_arg(argparse.ArgumentParser())
+    ap = console.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--visualize", action="store_true", help="viser overlay (occupied vs cloud vs wrists)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--no-self-filter", action="store_true",
@@ -98,7 +101,7 @@ def main():
                     help="don't connect DDS (offline: camera/ZMQ depth only); self-filter at home "
                          "instead of the live measured arm q")
     ap.add_argument("--frame", default=None,
-                    help="OFFLINE: inspect an 11_capture_frame .npz (no robot/camera/DDS). Uses the "
+                    help="OFFLINE: inspect a tools/capture_frame .npz (no robot/camera/DDS). Uses the "
                          "frame's depth + intrinsics + T_pelvis_camera + recorded q (else home)")
     ap.add_argument("--show-spheres", action="store_true",
                     help="overlay the cuRobo collision spheres (green) at the self-filter config on "
@@ -114,7 +117,7 @@ def main():
                     help="arm for the --diagnose joint-limit + singularity report (default right); "
                          "self/world-collision are whole-robot and side-independent")
     ap.add_argument("--exclude-mask", default=None,
-                    help="path to an (H,W) bool .npy object mask (10_segment --frame X --save "
+                    help="path to an (H,W) bool .npy object mask (tools/segment --frame X --save "
                          "writes <stem>_mask.npy): CUT the target object from the world like the "
                          "live pipeline's collision_world.exclude_object does. Verify with "
                          "--probe at the object: IN THE WORLD (without) -> ERASED (with), while "
@@ -124,20 +127,17 @@ def main():
     # --- source the depth + camera pose + robot config: a captured .npz (offline) OR live ---
     q14 = hand_q = None
     if args.frame:                                                   # OFFLINE replay -- no robot at all
-        robot = make_robot(connect_dds=False, connect_camera=False,  # planner only (GPU for the ESDF)
-                           camera_config=_rig.camera_config_for(args.target))
+        robot = Robot.offline(args.target)                           # planner only (GPU for the ESDF)
         depth, K, T_pc, q14, hand_q = _load_capture(args.frame)
         print(f"frame: {args.frame}  depth {depth.shape}  (offline replay, no robot)")
     else:
         if args.no_dds:                                              # camera/ZMQ only, no DDS
-            robot = make_robot(connect_dds=False, connect_camera=True,
-                               camera_config=_rig.camera_config_for(args.target))
+            robot = Robot.offline(args.target, camera=True)
         else:                                                        # live q; home_on_connect=False -> no motion
-            robot = _rig.connect(args.target, home_on_connect=False, connect_camera=True,
-                                 camera_config=_rig.camera_config_for(args.target))
+            robot = g1.connect(args.target, home_on_connect=False)
         cam = robot.camera
         if not cam.has_depth:
-            print(f"[{args.target}] no head depth stream -- run 08_check_depth first."); return
+            print(f"[{args.target}] no head depth stream -- run checks/03_depth first."); return
         depth = None                                                 # prime the conflate socket
         for _ in range(40):
             depth = cam.get_depth_frame()

@@ -1,12 +1,13 @@
 #!/usr/bin/env python
-"""Diagnose the dex3 hand command->state loop against the Isaac sim.
+"""tools/hand_loop_diag - Diagnose the dex3 hand command->state loop against the Isaac sim.
 
 Answers two questions directly:
   1. Is hand STATE streaming?  (we read q/dq/tau/press for both hands)
   2. Do our COMMANDS update that state? (command close, dwell, watch q move)
 
-Unlike mvp_demo, this dwells between close and open so motion is actually
-observable (mvp_demo runs both with verify=False -> instant, no time to move).
+Unlike the hello_motion example, this dwells between close and open so motion is
+actually observable, and works at the raw preset/command level (per-finger tau/press).
+For the primitive-level check use scripts/checks/04_hands.py.
 
 The sim's apply path gates on BOTH hands having a command (action_provider_dds
 :234). Our Dex3Controller publishes both continuously, but --both forces an
@@ -15,15 +16,15 @@ explicit close on both hands to rule that gate out.
 Run (sim up, loopback):
   CYCLONEDDS_HOME=/opt/cyclonedds \
   CYCLONEDDS_URI=file://$HOME/repos/G1_classical_manip/configs/cyclonedds_loopback.xml \
-  bash -ic 'use_conda g1_curobo && python scripts/hand_diag.py --side right'
+  bash -ic 'use_conda g1_curobo && python scripts/tools/hand_loop_diag.py --side right'
 """
 import argparse
 import time
 
 import numpy as np
 
-from g1_primitives.factory import make_robot
-from g1_primitives.ee.hand_base import LEFT, RIGHT
+import g1_primitives as g1
+from g1_primitives import LEFT, RIGHT
 
 
 def snap(hand, side):
@@ -53,10 +54,9 @@ def main():
     args = ap.parse_args()
 
     try:
-        robot = make_robot(connect_dds=True, connect_hand=True,
-                           dds_domain=1, dds_interface="lo", mode="sim")
+        robot = g1.connect("sim", camera=False)
     except Exception as e:
-        print(f"make_robot failed (is the sim up on domain 1 / lo with --enable_dex3_dds?): {e}")
+        print(f"connect failed (is the sim up on domain 1 / lo with --enable_dex3_dds?): {e}")
         return
 
     hand = robot.hand
@@ -102,8 +102,7 @@ def main():
         print("  => COMMANDS DO NOT MOVE THE HAND. Topic publishes but sim isn't "
               "applying it (check --enable_dex3_dds, or the both-hands apply gate).")
     else:
-        print("  => COMMANDS MOVE THE HAND. The loop works; mvp_demo just lacked "
-              "dwell between close/open (verify=False returns instantly).")
+        print("  => COMMANDS MOVE THE HAND. The loop works.")
 
 
 if __name__ == "__main__":

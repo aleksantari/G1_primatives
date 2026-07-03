@@ -1,19 +1,19 @@
 #!/usr/bin/env python
-"""01 - READ-ONLY DDS state check: arms (rt/lowstate) + dex3 hands (rt/dex3/*/state).
+"""checks/01 - READ-ONLY DDS state check: arms (rt/lowstate) + dex3 hands (rt/dex3/*/state).
 
 No controllers, no publishers -> NOTHING is commanded, NOTHING moves. The safe first
 contact with a real robot: confirms live state streams before any motion script.
 
   sim : CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
-        bash -ic 'use_conda g1_curobo && python scripts/01_check_dds.py --target sim'
-  real: bash -ic 'use_conda g1_curobo && python scripts/01_check_dds.py --target real'
+        bash -ic 'use_conda g1_curobo && python scripts/checks/01_dds.py --target sim'
+  real: bash -ic 'use_conda g1_curobo && python scripts/checks/01_dds.py --target real'
 """
 import argparse
 import time
 
 import numpy as np
-import _rig
 
+from g1_primitives.api import console
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_, HandState_
 
@@ -27,11 +27,11 @@ def _hand_q(sub):
 
 def main():
     ap = argparse.ArgumentParser()
-    _rig.add_target_arg(ap)
+    console.add_target_arg(ap)
     ap.add_argument("--secs", type=float, default=10.0)
     args = ap.parse_args()
 
-    domain, iface = _rig.dds_for(args.target)
+    domain, iface = console.dds_for(args.target)
     if iface:
         ChannelFactoryInitialize(domain, iface)
     else:

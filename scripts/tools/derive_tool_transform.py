@@ -28,7 +28,7 @@ The translation is the grasp-frame origin in wrist_yaw coords. We anchor it FUNC
 our power_close contact midpoint `c` (FK) must sit at the object = grasp origin + depth*approach,
 so  t = c - R @ [0,0,depth]  (= c - depth*y_hat now, since approach maps to wrist +Y).
 
-  bash -ic 'use_conda g1_curobo && python scripts/derive_graspgenx_tool_transform.py'
+  bash -ic 'use_conda g1_curobo && python scripts/tools/derive_tool_transform.py'
 """
 import json
 import os

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""08 - Head-camera DEPTH feed check. Pulls depth frames from the head camera, prints
+"""checks/03 - Head-camera DEPTH feed check. Pulls depth frames from the head camera, prints
 per-frame stats (shape, % finite, min/median/max mm), and shows a colorized live window
 ('q' to quit; no display -> saves to /tmp/head_depth.png).
 
@@ -8,17 +8,17 @@ stream (720x1280, single left eye, MILLIMETERS, NaN/inf = invalid) -- see
 docs/depth_integration_handoff.md.
 
   --target real  ZED head depth (configs/camera_real.yaml; port from the server cam_config)
-  --target sim   no depth stream -> clean exit (configs/camera_sim.yaml is color-only)
+  --target sim   Isaac front_camera depth PUB on :55556 (configs/camera_sim.yaml)
 
-  bash -ic 'use_conda g1_curobo && python scripts/08_check_depth.py --target real'
+  bash -ic 'use_conda g1_curobo && python scripts/checks/03_depth.py --target real'
 """
 import argparse
 import time
 
 import numpy as np
 
-import _rig
-from g1_primitives.factory import make_robot
+from g1_primitives import Robot
+from g1_primitives.api import console
 
 try:
     import cv2
@@ -54,20 +54,19 @@ def _colorize(depth: np.ndarray):
 
 
 def main():
-    ap = _rig.add_target_arg(argparse.ArgumentParser())
+    ap = console.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--secs", type=float, default=30.0)
     ap.add_argument("--every", type=float, default=1.0, help="seconds between stat prints")
     args = ap.parse_args()
 
-    robot = make_robot(connect_dds=False, connect_camera=True,   # camera only -> no motion
-                       camera_config=_rig.camera_config_for(args.target))
+    robot = Robot.offline(args.target, camera=True)   # camera only -> no motion
     if not robot.camera.has_depth:
         print(f"[{args.target}] no head depth stream on this target. Real = the ZED; sim = the "
               "Isaac front_camera depth PUB (needs a depth_port in camera_*.yaml + a sim built "
               "with the distance_to_image_plane annotator). Nothing to do.")
         return
 
-    view = _rig.Viewer("head depth", save_path="/tmp/head_depth.png")
+    view = console.Viewer("head depth", save_path="/tmp/head_depth.png")
     print(f"[{args.target}] reading head depth (mm). 'q' to quit.")
 
     t0, t_last, n, got = time.time(), 0.0, 0, 0

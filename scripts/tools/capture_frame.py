@@ -1,15 +1,16 @@
 #!/usr/bin/env python
-"""11 - Capture a head-cam RGB+depth frame for OFFLINE pipeline testing (NO motion).
+"""tools/capture_frame - Capture a head-cam RGB+depth frame for OFFLINE pipeline testing
+(NO motion).
 
-Grabs one same-instant (rgb, depth) pair from the real ZED and saves it -- together with
-the camera intrinsics, the `T_pelvis_camera` extrinsic, and a READ-ONLY snapshot of the arm +
-hand q at capture time -- to a self-contained `.npz`, so the deproject -> segment -> cloud
-(-> GraspGenX) pipeline AND the depth-ESDF collision world can be re-run with no robot. Replay
-with `10_segment.py --frame <file>.npz` (grasp pipeline) or `12_check_world.py --frame <file>.npz`
-(collision world; the recorded q lets the self-filter mask the robot offline). Also writes
-`_rgb.png` / `_depth.png` previews next to the npz.
+Grabs one same-instant (rgb, depth) pair and saves it -- together with the camera intrinsics,
+the `T_pelvis_camera` extrinsic, and a READ-ONLY snapshot of the arm + hand q at capture time
+-- to a self-contained `.npz`, so the deproject -> segment -> cloud (-> GraspGenX) pipeline AND
+the depth-ESDF collision world can be re-run with no robot. Replay with
+`tools/segment.py --frame <file>.npz` (grasp pipeline) or `tools/check_world.py --frame
+<file>.npz` (collision world; the recorded q lets the self-filter mask the robot offline).
+Also writes `_rgb.png` / `_depth.png` previews next to the npz.
 
-  bash -ic 'use_conda g1_curobo && python scripts/11_capture_frame.py --target real --out captures/scene1.npz'
+  bash -ic 'use_conda g1_curobo && python scripts/tools/capture_frame.py --target real --out captures/scene1.npz'
 """
 import argparse
 import os
@@ -17,8 +18,9 @@ import sys
 import time
 
 import numpy as np
-import _rig
-from g1_primitives.factory import make_robot
+
+from g1_primitives import Robot
+from g1_primitives.api import console
 
 try:
     import cv2
@@ -26,27 +28,16 @@ except Exception:
     cv2 = None
 
 
-def _grab_pair(cam, timeout_s: float = 6.0):
-    """Warm up both streams (SUB sockets start cold; depth subscribes lazily), then grab
-    a same-instant (rgb, depth) pair. Either may be None at timeout."""
-    t0 = time.time()
-    while time.time() - t0 < timeout_s:
-        if cam.get_rgb_frame() is not None and cam.get_depth_frame() is not None:
-            break
-        time.sleep(0.05)
-    return cam.get_rgb_frame(), cam.get_depth_frame()
-
-
 def _grab_state(target, timeout_s: float = 2.0):
     """Best-effort READ-ONLY DDS snapshot of the arm + hand q at capture time (raw subscribers
-    like 01_check_dds -- NO controllers, nothing commanded, nothing moves), so the offline
-    collision-world self-filter (12_check_world --frame) can mask the robot at the right pose.
+    like checks/01_dds -- NO controllers, nothing commanded, nothing moves), so the offline
+    collision-world self-filter (tools/check_world --frame) can mask the robot at the right pose.
     Returns (q14, hand_q_left, hand_q_right) in repo / Dex3 get_q order; any may be None if the
     bus is quiet. Never fails the capture -- a frame without q just self-filters at home offline."""
     try:
         from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_, HandState_
-        domain, iface = _rig.dds_for(target)
+        domain, iface = console.dds_for(target)
         ChannelFactoryInitialize(domain, iface) if iface else ChannelFactoryInitialize(domain)
         low = ChannelSubscriber("rt/lowstate", LowState_); low.Init()
         lh = ChannelSubscriber("rt/dex3/left/state", HandState_); lh.Init()
@@ -72,28 +63,26 @@ def _grab_state(target, timeout_s: float = 2.0):
 
 
 def main():
-    ap = _rig.add_target_arg(argparse.ArgumentParser())
+    ap = console.add_target_arg(argparse.ArgumentParser())
     ap.add_argument("--out", default=None,
                     help="output .npz (default captures/capture_<timestamp>.npz)")
     args = ap.parse_args()
 
-    robot = make_robot(connect_dds=False, connect_camera=True,
-                       camera_config=_rig.camera_config_for(args.target))
+    robot = Robot.offline(args.target, camera=True)
     if not robot.camera.has_depth:
-        print(f"[{args.target}] no head depth stream -- need the real ZED. Nothing to capture.")
+        print(f"[{args.target}] no head depth stream -- nothing to capture.")
         return
-    rgb, depth = _grab_pair(robot.camera)
-    if rgb is None or depth is None:
-        missing = " + ".join(s for s, v in (("color", rgb), ("depth", depth)) if v is None)
-        print(f"no {missing} frame after warmup -- is that stream publishing?")
+    if not robot.wait_for_frames(rgb=True, depth=True):   # warm up both cold streams
+        print("no color+depth frame after warmup -- is that stream publishing?")
         return
+    rgb, depth = robot.rgb(), robot.depth()               # both warm -> back-to-back pair
     depth = np.asarray(depth, np.float32)
 
     intr = robot.cfg["camera"]["intrinsics"]
     T_pc = robot.frames.T_pelvis_camera(None).homogeneous     # head cam is q-independent
 
-    # READ-ONLY snapshot of the robot pose at capture time, so 12_check_world --frame can run the
-    # collision-world self-filter offline (mask the robot's own arm/fingers). Best-effort.
+    # READ-ONLY snapshot of the robot pose at capture time, so tools/check_world --frame can run
+    # the collision-world self-filter offline (mask the robot's own arm/fingers). Best-effort.
     q14, hq_l, hq_r = _grab_state(args.target)
     empty = np.array([])
 
@@ -120,8 +109,8 @@ def main():
     print(f"  rgb {rgb.shape}  depth {depth.shape}  finite {100 * finite.mean():.1f}%  "
           f"depth[min/med/max] {v.min():.0f}/{np.median(v):.0f}/{v.max():.0f} mm")
     print(f"  pose: {q_status}")
-    print(f"  replay: python scripts/10_segment.py --frame {out} --mode interactive")
-    print(f"          python scripts/12_check_world.py --frame {out} --visualize")
+    print(f"  replay: python scripts/tools/segment.py --frame {out} --mode interactive")
+    print(f"          python scripts/tools/check_world.py --frame {out} --visualize")
 
     # eyeball previews next to the npz
     if cv2 is not None:

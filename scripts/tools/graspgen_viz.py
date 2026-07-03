@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""10 - Standalone GraspGenX grasp inspection in viser (no robot, no motion).
+"""tools/graspgen_viz - Standalone GraspGenX grasp inspection in viser (no robot, no motion).
 
 Loads a saved pelvis-frame point cloud, sends it to the GraspGenX ZMQ server, and
 shows the cloud + ranked grasps + gripper-mesh overlay in viser -- the client-side
@@ -7,7 +7,7 @@ equivalent of GraspGenX's scripts/demo_object_pc.py. Use it to iterate on grasps
 (gripper, num_grasps, topk, threshold) without running a pick. Reuses the thin
 ZMQ client and the viz module; imports nothing from the graspgenx package.
 
-    bash -ic 'use_conda g1_curobo && python scripts/10_graspgen_viz.py --pcd captures/cloud.npy'
+    bash -ic 'use_conda g1_curobo && python scripts/tools/graspgen_viz.py --pcd captures/cloud.npy'
 
 The cloud must already be in the frame you want grasps in (pelvis, meters) -- the
 server centers/uncenters internally and returns grasps in that same frame.
@@ -27,7 +27,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load_cloud(path: str):
     """Load (xyz (N,3) float32, colors (N,3) uint8 | None) from .npy/.npz/.xyz/.ply/.obj.
-    A colored .ply (from 10_segment --save) carries per-vertex RGB; .npy is XYZ-only."""
+    A colored .ply (from tools/segment --save) carries per-vertex RGB; .npy is XYZ-only."""
     ext = path.rsplit(".", 1)[-1].lower()
     colors = None
     if ext == "npy":
