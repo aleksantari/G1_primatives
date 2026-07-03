@@ -2,9 +2,8 @@
 ``spatial.pose.Pose`` in the pelvis frame; kinematics come from cuRobo (no pinocchio).
 
 Perception frame chain:
-    tag (optical-frame pose from AprilTag) --T_cam_tag-->
     camera optical frame --T_pelvis_camera (cuRobo FK to d435_link + body->optical)-->
-    pelvis --tag_to_block--> block center.
+    pelvis frame (all downstream perception composes from here).
 
 Camera extrinsics are NOT hand-measured: ``T_pelvis_camera`` is forward-kinematics to
 the URDF ``d435_link`` frame (queried from the cuRobo planner, which lists it as an
@@ -80,12 +79,9 @@ class Frames:
         return (self.correction * self.planner.fk_link(self.parent_frame, q14)
                 * self.mount * self.body_to_optical)
 
-    def T_pelvis_tag(self, T_cam_tag: Pose, q14=None) -> Pose:
-        """tag pose (in camera optical frame) -> pelvis frame."""
-        return self.T_pelvis_camera(q14) * T_cam_tag
-
-    def T_pelvis_block(self, T_cam_tag: Pose, tag_to_block: Pose, q14=None) -> Pose:
-        return self.T_pelvis_tag(T_cam_tag, q14) * tag_to_block
+    def T_pelvis_from_camera(self, T_cam_obj: Pose, q14=None) -> Pose:
+        """An object pose observed in the camera OPTICAL frame -> pelvis frame."""
+        return self.T_pelvis_camera(q14) * T_cam_obj
 
     def T_pelvis_from_world(self, T_world_obj: Pose) -> Pose:
         """Map a sim WORLD-frame object pose into the pelvis frame using the

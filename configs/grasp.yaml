@@ -1,17 +1,9 @@
 # Grasp-source config. `grasp_source` selects where candidate grasp poses come from
-# (both implement the same GraspSource interface -> ranked wrist-yaw goal Poses):
-#   apriltag  -- the known-good A-B reference: detected pose + URDF palm offset (one grasp).
+# (all implement the same GraspSource interface -> ranked wrist-yaw goal Poses):
 #   graspgenx -- learned 6-DoF grasps from the GraspGenX ZMQ service (segmented cloud in).
 #   sim_cloud -- SIM only: GT cube cloud from rt/sim_state -> GraspGenX (no camera/depth/SAM3).
-# 09_graspgen.py --source overrides this per run for A-B comparison.
+# 09_graspgen.py --source overrides this per run.
 grasp_source: graspgenx
-
-# AprilTag source. Its palm_offset_xyz is the URDF-measured wrist_yaw->palm offset, shared
-# by the GraspGenX source too (same gripper). Mirrors 07_pick_place's inline constants.
-apriltag:
-  palm_offset_xyz: [0.1192, -0.0346, 0.0]   # wrist_yaw -> palm grasp center (side-mirrored)
-  grasp_offset:    [0.0, 0.0, 0.02]          # contact margin past the finger-base midpoint
-  grasp_rpy: null                            # null = use the wrist's current FK orientation
 
 # GraspGenX source: depth -> segmented cloud -> ZMQ infer -> ranked grasps -> wrist goals.
 graspgenx:
@@ -76,8 +68,8 @@ segment:
 
 # Sim-only GraspGenX path (grasp_source: sim_cloud): build a ground-truth object cloud from the
 # live rt/sim_state block pose (no camera/depth/SAM3) and feed the SAME GraspGenX + tool transform
-# as `graspgenx`. Reuses the graspgenx: block (host/port/gripper/voxel/wristyaw_grasp_rpy) +
-# apriltag.palm_offset_xyz. Needs `detector: sim_state` (perception.yaml) for the live block pose.
+# as `graspgenx`. Reuses the graspgenx: block (host/port/gripper/voxel/wristyaw_grasp_rpy +
+# palm_offset_xyz). Needs `detector: sim_state` (perception.yaml) for the live block pose.
 sim_cloud:
   object_size_m: 0.06       # red block edge (m); the sampled cube size
   n_points: 2000            # ~points over the cube surface (the model resamples to 3500)

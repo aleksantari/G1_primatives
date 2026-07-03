@@ -4,9 +4,8 @@
     Executor.run(JointTrajectory)
 
 cuRobo emits a fully time-parameterized trajectory, so there is no separate
-retiming step and no geometry-only handoff. `JointPath` is retained as a plain
-(N,14) geometry container for inspection/offline use; the live planner builds a
-`JointTrajectory` directly. Poses are `spatial.pose.Pose` in the pelvis frame.
+retiming step and no geometry-only handoff. Poses are `spatial.pose.Pose` in the
+pelvis frame.
 """
 from __future__ import annotations
 
@@ -16,25 +15,6 @@ from typing import Any, Dict
 import numpy as np
 
 DOF = 14  # dual arm: left 7 + right 7, upstream joint order (G1_29_JointArmIndex)
-
-
-@dataclass
-class JointPath:
-    """Geometric joint-space path, no timing. ``q`` is (N, 14)."""
-    q: np.ndarray
-    meta: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self):
-        self.q = np.asarray(self.q, dtype=float).reshape(-1, DOF)
-
-    @property
-    def n(self) -> int:
-        return self.q.shape[0]
-
-    def max_consecutive_jump(self) -> float:
-        if self.n < 2:
-            return 0.0
-        return float(np.max(np.linalg.norm(np.diff(self.q, axis=0), axis=1)))
 
 
 @dataclass

@@ -7,15 +7,12 @@ wrist goal is::
 
     T_pelvis_wristyaw = T_pelvis_grasp * inverse(T_wristyaw_grasp)
 
-For the GraspGenX path ``T_wristyaw_grasp`` is **DERIVED from kinematics** (NOT the AprilTag
-top-down palm offset, which is reverse-engineered for a different grasp and meaningless here):
+For the GraspGenX path ``T_wristyaw_grasp`` is **DERIVED from kinematics**:
 ``scripts/derive_graspgenx_tool_transform.py`` registers GraspGenX's grasp convention against
 the Dex3 URDF -- rotation = the fixed grasp(+Z approach,+X closing)->wrist_yaw axis map, and
 translation = our power_close contact midpoint (hand FK) minus the GraspGenX fingertip depth
 along the approach axis. The config (``grasp.yaml: graspgenx``) stores the RIGHT-hand values;
 the LEFT hand is the mirror image across the wrist Y-plane, applied here.
-
-``palm_offset`` below is the SEPARATE AprilTag A-B path's offset and is left untouched.
 """
 from __future__ import annotations
 
@@ -29,14 +26,6 @@ from g1_classical_manip.grasp.base import GraspCandidate
 from g1_classical_manip.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 _MIRROR_Y = np.diag([1.0, -1.0, 1.0])      # reflect a wrist-frame transform R/t across Y (R<->L)
-
-
-def palm_offset(palm_offset_xyz, side: str) -> np.ndarray:
-    """AprilTag path only: wrist_yaw -> palm grasp center; the lateral ``y`` is kept for the
-    LEFT hand and negated for the RIGHT, exactly as ``07_pick_place._palm_offset`` (with the
-    configured ``y = -0.0346`` that means left -y, right +y -- the A-B-faithful behavior)."""
-    x, y, z = np.asarray(palm_offset_xyz, float)
-    return np.array([x, y if side == LEFT else -y, z])
 
 
 def build_T_wristyaw_grasp(palm_offset_xyz, side: str, R_wristyaw_grasp) -> Pose:

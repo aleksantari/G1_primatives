@@ -1,6 +1,6 @@
 """Head-camera client wrapper. One small surface over a few transports; frames are
 RGB-first (``get_rgb_frame``) for perception, with ``get_bgr_frame`` (cv2 viewers) and
-``get_gray_frame`` (AprilTag) alongside.
+``get_gray_frame`` alongside.
 
 Backends:
   * ``unitree`` -- the vendored unitree_lerobot ImageClient (``zmq_image_client``):

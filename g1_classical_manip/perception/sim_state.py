@@ -5,7 +5,7 @@ The sim publishes a `String_` JSON every step:
 where the inner JSON holds `rigid_object.<key>.root_pose = [[x,y,z, qw,qx,qy,qz]]`
 in the sim WORLD frame (Isaac wxyz quat). We read the manipuland's live world pose
 and map it to the pelvis frame via `transforms.Frames` (same world->pelvis the static
-GroundTruthDetector uses). Unlike the hardcoded `ground_truth` block pose, this tracks
+static-config detectors used). Unlike a hardcoded block pose, this tracks
 the block as it settles / is nudged -- the marker-free oracle for sim.
 
 Requires DDS to be initialised by the caller (ChannelFactoryInitialize), i.e. used

@@ -253,3 +253,13 @@ DEFERRED; see the Motion section and `docs/trajectory_speed_tracking.md`). Not m
   — pure pip wheels. The **GraspGenX** (`:5556`) and **SAM3** (`:5557`) inference services run
   **separately on the workstation GPU** (their own repos/envs); this repo only ships thin clients
   that never import those packages. SAM3 launch: `use_conda sam3 && python -m sam3.serving --port 5557`.
+
+## Wrist cameras (future; design notes migrated from the deleted configs/cameras.yaml)
+- The URDF has NO wrist camera link. Two options when wrist cameras arrive:
+  (a) hand-eye-measure a constant `T_wristlink_camera` mount per side (parent frames
+  `left/right_wrist_yaw_link`), or (b) PREFERRED: add fixed `left/right_wrist_camera`
+  links to the URDF and FK-derive the extrinsics like the head (`d435_link`) path.
+- Streaming: the teleimager backend has no wrist getters; wrist streaming needs the
+  unitree_lerobot backend on PC2 (per-camera ZMQ ports).
+- Head-camera extrinsics remain FK-derived (`d435_link`) in sim and hand-eye-calibrated
+  (`camera_real.yaml: extrinsics.mount`, 2026-06-18 ZED left eye) on real.

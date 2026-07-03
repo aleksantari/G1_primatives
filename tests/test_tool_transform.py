@@ -7,7 +7,7 @@ import yaml
 from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
 from g1_classical_manip.ee.hand_base import LEFT, RIGHT
 from g1_classical_manip.grasp.tool_transform import (
-    palm_offset, build_T_wristyaw_grasp, wrist_goal_from_grasp, approach_offset_for_side)
+    build_T_wristyaw_grasp, wrist_goal_from_grasp, approach_offset_for_side)
 
 PALM = [0.1192, -0.0346, 0.0]
 
@@ -19,14 +19,6 @@ def _graspgenx_constants():
         (Path(__file__).resolve().parents[1] / "configs" / "grasp.yaml").read_text())
     gx = cfg["graspgenx"]
     return list(gx["wristyaw_grasp_rpy"]), list(gx["palm_offset_xyz"])
-
-
-def test_palm_offset_side_mirror():
-    # matches 07_pick_place._palm_offset: y if LEFT else -y, with stored y = -0.0346
-    l, r = palm_offset(PALM, LEFT), palm_offset(PALM, RIGHT)
-    assert l[1] == pytest.approx(-0.0346) and r[1] == pytest.approx(0.0346)
-    assert r[1] == pytest.approx(-l[1])            # right is the negation of left
-    np.testing.assert_allclose([l[0], l[2]], [0.1192, 0.0])
 
 
 def test_build_T_wristyaw_grasp_side_mirror():
@@ -51,17 +43,16 @@ def test_round_trip_recovers_commanded_wrist():
     np.testing.assert_allclose(recovered.homogeneous, wrist.homogeneous, atol=1e-9)
 
 
-def test_identity_rotation_matches_apriltag_backoff():
+def test_identity_rotation_reduces_to_direct_backoff():
     # with grasp rotation == wrist rotation and T_wristyaw_grasp = (I, off), the GraspGenX
-    # math reduces to 07_pick_place's wrist = target - R @ off  (the validated A-B path).
+    # math reduces to the direct form wrist = target - R @ off (hardware-validated A-B algebra).
     R = rpy_to_matrix(np.pi, 0.0, 0.0)
     target = np.array([0.45, -0.2, 0.85])
-    off = palm_offset(PALM, RIGHT) + np.array([0.0, 0.0, 0.02])   # palm + grasp margin
+    off = np.array([0.1192, 0.0346, 0.02])          # palm offset (RIGHT mirror) + grasp margin
     T_pelvis_grasp = Pose(R, target)
     T_wg = Pose(np.eye(3), off)
     wrist_goal = wrist_goal_from_grasp(T_pelvis_grasp, T_wg)
-    apriltag_wrist = target + R @ (-off)            # 07_pick_place._wrist_goal
-    np.testing.assert_allclose(wrist_goal.translation, apriltag_wrist, atol=1e-9)
+    np.testing.assert_allclose(wrist_goal.translation, target + R @ (-off), atol=1e-9)
     np.testing.assert_allclose(wrist_goal.rotation, R, atol=1e-12)
 
 

@@ -3,7 +3,7 @@
 A ``Detector`` consumes a grayscale head frame (+ optional arm config) and returns
 named ``Detection`` objects -- a labeled ``Pose`` in the pelvis frame. ``detect()``
 updates internal state from one frame; ``block_pose()`` returns the filtered
-pelvis-frame pose for one label. ``AprilTagDetector`` is the first implementation;
+pelvis-frame pose for one label. ``SimStateDetector`` is the current implementation;
 a model-based detector implements the same interface later (registered in the
 factory's ``_DETECTORS`` map).
 

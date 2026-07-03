@@ -9,11 +9,10 @@ live in cuRobo).
                             unitree_lerobot flow does the same, never calling
                             MotionSwitcher). Opt in to an SDK release with
                             enter_debug_mode=True; never in sim.
-  * connect_camera=True  -> open the head-camera ZMQ stream (for the apriltag detector).
+  * connect_camera=True  -> open the head-camera ZMQ stream (RGB + depth).
 
 The frame-math owner (transforms.Frames) + the configured detector are always built
-(cheap, no I/O) so robot.detector is available; the ground_truth detector needs no
-camera, so detect() works planner-only/offline.
+(cheap, no I/O) so robot.detector is available.
 """
 from __future__ import annotations
 
@@ -56,8 +55,8 @@ class Robot:
     hand: Any = None
     executor: Optional[Executor] = None
     frames: Any = None          # transforms.Frames (frame-math owner)
-    detector: Any = None        # perception Detector (apriltag | ground_truth)
-    grasp_source: Any = None    # grasp.GraspSource (apriltag | graspgenx)
+    detector: Any = None        # perception Detector (sim_state)
+    grasp_source: Any = None    # grasp.GraspSource (graspgenx | sim_cloud)
     camera: Any = None          # image_server.HeadCamera (None unless connect_camera)
     connected: bool = False
 
@@ -70,21 +69,15 @@ def _build_perception(planner, cfg: Dict[str, Any]):
     """Build the frame-math owner + the configured detector (no I/O). The seam for
     new detectors is the `detector:` selector in perception.yaml."""
     from g1_classical_manip.perception.transforms import Frames
-    from g1_classical_manip.perception.apriltag_block import AprilTagDetector
-    from g1_classical_manip.perception.ground_truth import GroundTruthDetector
     from g1_classical_manip.perception.sim_state import SimStateDetector
 
     sim_base = (cfg["robot"].get("sim", {}) or {}).get("base_world_pose")
     frames = Frames(planner, camera_cfg=cfg["camera"], sim_base_world_pose=sim_base)
     perc = cfg["perception"] or {}
-    kind = perc.get("detector", "apriltag")
-    if kind == "apriltag":
-        detector = AprilTagDetector(frames, perc, cfg["camera"])
-    elif kind == "ground_truth":
-        block = (perc.get("ground_truth", {}) or {}).get("block", {})
-        detector = GroundTruthDetector.from_config(frames, block)
-    elif kind == "sim_state":
-        # live sim ground-truth via rt/sim_state; needs DDS (connect_dds=True)
+    kind = perc.get("detector", "sim_state")
+    if kind == "sim_state":
+        # live sim ground-truth via rt/sim_state; needs DDS (connect_dds=True).
+        # Future real-camera detectors register here (the `detector:` seam).
         detector = SimStateDetector.from_config(frames, perc.get("sim_state", {}))
     else:
         raise ValueError(f"unknown detector: {kind}")
@@ -138,18 +131,10 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
     """Build the configured grasp source (no I/O; the GraspGenX/SAM3 ZMQ sockets open lazily
     per call). Selector: grasp.yaml `grasp_source` -- mirrors the `detector:` seam."""
     g = cfg.get("grasp", {}) or {}
-    kind = g.get("grasp_source", "apriltag")
-    apr = g.get("apriltag", {}) or {}
-    if kind == "apriltag":
-        from g1_classical_manip.grasp.apriltag_source import AprilTagGraspSource
-        return AprilTagGraspSource(apr["palm_offset_xyz"], apr["grasp_offset"],
-                                   apr.get("grasp_rpy"))
+    kind = g.get("grasp_source", "graspgenx")
     if kind in ("graspgenx", "sim_cloud"):
         from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
         gx = dict(g.get("graspgenx", {}) or {})
-        # GraspGenX carries its OWN derived grasp->wrist transform (palm_offset_xyz +
-        # wristyaw_grasp_rpy, see grasp.yaml); fall back to the AprilTag offset only if absent.
-        gx.setdefault("palm_offset_xyz", apr.get("palm_offset_xyz"))
 
         def _client():
             return GraspGenXClient(host=gx.get("host", "127.0.0.1"),

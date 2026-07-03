@@ -1,42 +1,8 @@
-# Perception config. `detector` selects the single active head-camera detector:
-#   apriltag     -- live head-cam + AprilTag (the real detector).
-#   sim_state    -- LIVE sim ground truth from rt/sim_state (marker-free; tracks the
-#                   block as it moves). Needs DDS (make_robot connect_dds=True).
-#   ground_truth -- CONSTANT configured block pose (offline fallback; no DDS/camera).
+# Perception config. `detector` selects the single active object-pose detector:
+#   sim_state -- LIVE sim ground truth from rt/sim_state (marker-free; tracks the
+#                object as it moves). Needs DDS (make_robot connect_dds=True).
+# Future real-camera detectors register here (factory._build_perception is the seam).
 detector: sim_state
-
-# AprilTag block detection (params for the `apriltag` detector).
-tag:
-  family: "tag36h11"
-  size_m: 0.05
-  #size_m: 0.0481           # tag black-square edge (m) = 0.801 (black fraction of
-                           # apriltag_14.png) x 0.06 (cube top face). Geometric/true
-                           # value; GT depth cross-check agreed to ~5%. On hardware,
-                           # measure the printed tag's black-square edge.
-  # Rigid offset from the AprilTag frame to the block BODY frame, in the tag frame.
-  # The tag is on the +Z (top) face of the 6 cm cube: the block center is 0.03 m
-  # below the tag along -z_tag (xyz), and rpy=[pi,0,0] flips the tag's optical frame
-  # (z into the surface) onto the block body frame (z up) -- the measured tag->body
-  # rotation was 178.7 deg about x. detect() then returns an upright block pose.
-  tag_to_block:
-    xyz: [0.0, 0.0, -0.03]
-    rpy: [3.141593, 0.0, 0.0]
-  # Map of tag id -> semantic name (optional). Unlisted ids are ignored.
-  # The sim red-block USD carries AprilTag ID 14 (family 36h11).
-  ids:
-    14: "block"
-
-filter:
-  median_frames: 5         # median over N frames before a pose is accepted.
-  max_stale_s: 0.5         # reject poses older than this.
-  min_decision_margin: 30.0  # pupil-apriltags decision_margin gate.
-
-# pupil_apriltags detector params. quad_decimate=1.0 (no downsampling) is REQUIRED
-# here: the sim tag is small (~30 px) in the 640x480 head frame, and the library
-# default of 2.0 downsamples it below the decode threshold (tag goes undetected).
-detector_params:
-  quad_decimate: 1.0
-  nthreads: 4
 
 # Live sim ground truth (`detector: sim_state`). Subscribes to rt/sim_state and reads
 # rigid_object.<object_key>.root_pose (sim WORLD frame, Isaac wxyz quat), mapped to the
@@ -45,11 +11,3 @@ detector_params:
 sim_state:
   object_key: "object"
   topic: "rt/sim_state"
-
-# Static ground-truth fallback (`detector: ground_truth`, no DDS/camera). CONSTANT block
-# WORLD pose; transforms.Frames maps it to the pelvis frame. Goes stale if the block moves
-# -- prefer `sim_state` against a running sim. Spawn pose of the dex3 red-block scene:
-ground_truth:
-  block:
-    xyz: [-4.25, -4.03, 0.84]
-    quat_wxyz: [1.0, 0.0, 0.0, 0.0]

@@ -1,15 +1,13 @@
-"""Grasp sources + multi-candidate planning, all with fakes (no GPU/robot/zmq)."""
+"""Grasp sources, all with fakes (no GPU/robot/zmq)."""
 import numpy as np
 import pytest
 
 from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.perception.base import Detection
+from g1_classical_manip.ee.hand_base import RIGHT
 from g1_classical_manip.perception.depth import deproject_depth
 from g1_classical_manip.perception.segment import Segmenter
-from g1_classical_manip.grasp.apriltag_source import AprilTagGraspSource
 from g1_classical_manip.grasp.graspgenx_source import GraspGenXGraspSource
-from g1_classical_manip.grasp.tool_transform import palm_offset, build_T_wristyaw_grasp
+from g1_classical_manip.grasp.tool_transform import build_T_wristyaw_grasp
 
 PALM = [0.1192, -0.0346, 0.0]
 GCFG = {"palm_offset_xyz": PALM, "wristyaw_grasp_rpy": [0.0, np.pi / 2, 0.0],
@@ -21,14 +19,6 @@ CAM_CFG = {"intrinsics": {"fx": 100.0, "fy": 100.0, "cx": 1.0, "cy": 1.0}}
 class FakeArm:
     def get_current_dual_arm_q(self):
         return np.zeros(14)
-
-
-class FakePlanner:
-    def __init__(self, R):
-        self.R = R
-
-    def fk(self, side, q):
-        return Pose(self.R, [0.0, 0.0, 0.0])
 
 
 _DEFAULT_RGB = object()
@@ -81,28 +71,6 @@ class FakeRobot:
         self.arm = FakeArm()
         self.planner = planner
         self.camera = camera
-
-
-# ----------------------------------------------------------------- AprilTag source
-def test_apriltag_source_matches_07(monkeypatch):
-    from g1_classical_manip import primitives as P
-    center = np.array([0.45, -0.2, 0.85])
-    monkeypatch.setattr(P, "detect",
-                        lambda robot, target: Detection(pose=Pose(np.eye(3), center)))
-    R0 = rpy_to_matrix(0.1, 0.2, -0.3)
-    src = AprilTagGraspSource(PALM, [0.0, 0.0, 0.02], grasp_rpy=None)
-    cands = src.grasps(FakeRobot(planner=FakePlanner(R0)), RIGHT, "block")
-    assert len(cands) == 1 and cands[0].confidence == 1.0
-    off = palm_offset(PALM, RIGHT) + np.array([0.0, 0.0, 0.02])
-    np.testing.assert_allclose(cands[0].wrist_goal.translation, center + R0 @ (-off), atol=1e-9)
-    np.testing.assert_allclose(cands[0].wrist_goal.rotation, R0, atol=1e-12)
-
-
-def test_apriltag_source_empty_when_no_detection(monkeypatch):
-    from g1_classical_manip import primitives as P
-    monkeypatch.setattr(P, "detect", lambda robot, target: None)
-    src = AprilTagGraspSource(PALM, [0.0, 0.0, 0.02])
-    assert src.grasps(FakeRobot(planner=FakePlanner(np.eye(3))), RIGHT, "block") == []
 
 
 # ----------------------------------------------------------------- GraspGenX source
@@ -182,35 +150,3 @@ def test_graspgenx_source_retains_last_mask_for_exclude_object():
     assert src.last_mask is not None and (src.last_mask == m).all()
     src.grasps(FakeRobot(camera=None), RIGHT, "block")      # early return BEFORE segmentation
     assert src.last_mask is None                            # stale mask cleared
-
-
-# ----------------------------------------------------------------- plan_to_pose_set
-def test_plan_to_pose_set_returns_first_success():
-    from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner, PlanningError
-    planner = CuroboArmPlanner.__new__(CuroboArmPlanner)   # skip cuRobo __init__
-    calls = []
-
-    def fake(q, side, goal):
-        calls.append(goal)
-        if len(calls) < 3:
-            raise PlanningError("nope")
-        return "TRAJ"
-
-    planner.plan_to_pose = fake
-    goals = [Pose.Identity() for _ in range(4)]
-    assert planner.plan_to_pose_set(np.zeros(14), RIGHT, goals) == "TRAJ"
-    assert len(calls) == 3                                 # stopped at first success
-
-
-def test_plan_to_pose_set_all_fail_raises():
-    from g1_classical_manip.motion.curobo_planner import CuroboArmPlanner, PlanningError
-    planner = CuroboArmPlanner.__new__(CuroboArmPlanner)
-
-    def fake(q, side, goal):
-        raise PlanningError("nope")
-
-    planner.plan_to_pose = fake
-    with pytest.raises(PlanningError):
-        planner.plan_to_pose_set(np.zeros(14), RIGHT, [Pose.Identity(), Pose.Identity()])
-    with pytest.raises(PlanningError):
-        planner.plan_to_pose_set(np.zeros(14), RIGHT, [])

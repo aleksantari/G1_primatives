@@ -50,16 +50,6 @@ def move(robot, side: str, goal_pose: Pose) -> Result:
     return Result(bool(res.success), res.reason)
 
 
-def move_to_candidates(robot, side: str, goal_poses) -> Result:
-    """Move `side` wrist to the FIRST reachable goal in a ranked list (e.g. grasp
-    candidates, best-first); the other arm holds. The planner tries each in order and
-    picks the first that solves -- so callers don't assume a single grasp."""
-    q0 = robot.arm.get_current_dual_arm_q()
-    traj = robot.planner.plan_to_pose_set(q0, side, goal_poses)
-    res = robot.executor.run(traj)
-    return Result(bool(res.success), res.reason)
-
-
 @dataclass
 class GraspResult:
     ok: bool
@@ -72,7 +62,7 @@ def _update_collision_world(robot, side: str, q0=None) -> None:
     """Build the depth-ESDF collision world from the head camera before a grasp plan. Gated:
     a no-op unless the planner has the collision world enabled AND a head depth frame is
     available. SOURCE-INDEPENDENT -- it uses the head depth, so it works with any grasp source
-    (apriltag / graspgenx / sim_cloud). `q0` (current arm config) self-filters the robot out of
+    (graspgenx / sim_cloud). `q0` (current arm config) self-filters the robot out of
     the depth. Best-effort: a perception hiccup never blocks the grasp (the planner just falls
     back to self-collision-only)."""
     planner = robot.planner
@@ -179,16 +169,16 @@ def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
 def detect(robot, target: str = "block", frames: int = 5) -> Optional[Detection]:
     """Detect `target` from the head camera; return a Detection whose `.pose` is the
     object pose in the pelvis frame (or None if not found). Pulls up to `frames` head
-    images to fill the detector's median filter; detectors with no camera
-    (ground_truth) ignore the frames. Compose with move: `move(robot, side, det.pose)`."""
+    images to fill the detector's filter; detectors with no camera (sim_state) ignore
+    the frames. Compose with move: `move(robot, side, det.pose)`."""
     arm = getattr(robot, "arm", None)
     q14 = arm.get_current_dual_arm_q() if arm is not None else None
     cam = getattr(robot, "camera", None)
     got, attempts, last = 0, 0, None
     while got < max(1, frames) and attempts < max(1, frames) * 4:
         attempts += 1
-        # RGB-first: detectors get RGB (AprilTagDetector grayscales itself); future
-        # RGB perception primitives consume get_rgb_frame() the same way.
+        # RGB-first: detectors get RGB; future RGB perception primitives consume
+        # get_rgb_frame() the same way.
         rgb = cam.get_rgb_frame() if cam is not None else None
         if cam is not None and rgb is None:
             continue                                   # frame not ready; retry

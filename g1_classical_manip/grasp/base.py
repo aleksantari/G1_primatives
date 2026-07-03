@@ -15,7 +15,7 @@ class GraspCandidate:
     ``wrist_goal`` is the wrist-yaw goal Pose in the pelvis frame — what
     ``primitives.move`` / ``plan_to_pose`` consume directly (the source has already
     applied the grasp->tool transform). ``grasp_pose`` is the raw model grasp frame
-    (debug/telemetry; ``None`` for the AprilTag source)."""
+    (debug/telemetry)."""
     wrist_goal: Pose
     confidence: float = 1.0
     grasp_pose: Optional[Pose] = None
