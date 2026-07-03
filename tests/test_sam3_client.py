@@ -8,7 +8,7 @@ import zmq
 import msgpack
 import msgpack_numpy
 
-from g1_classical_manip.perception.sam3_client import Sam3Client
+from g1_primitives.perception.sam3_client import Sam3Client
 
 msgpack_numpy.patch()
 

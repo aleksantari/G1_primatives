@@ -4,7 +4,7 @@ voxel shape) + the object-exclusion mask dilation. The Mapper/CUDA path is exerc
 operator-run sim validation, not here."""
 import numpy as np
 
-from g1_classical_manip.motion.collision_world import (
+from g1_primitives.motion.collision_world import (
     esdf_grid_shape, dilate_mask, kernel_safe_dims)
 
 

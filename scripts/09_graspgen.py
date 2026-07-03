@@ -33,9 +33,9 @@ import time
 
 import numpy as np
 import _rig
-from g1_classical_manip import primitives as P
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.latency import LOG
+from g1_primitives import primitives as P
+from g1_primitives.ee.hand_base import LEFT, RIGHT
+from g1_primitives.latency import LOG
 
 
 def _shift_z(pose, dz: float):
@@ -61,8 +61,8 @@ def _finger_contact_check(robot, side, wrist_goal, object_center):
     center (the sim GT cube). Compared against GT -- NOT the grasp pose, which our contact hits
     by construction of the grasp->wrist transform. `object_center` is the pelvis-frame cube
     center. Validates GraspGenX's pick + our derived transform + our real finger geometry."""
-    from g1_classical_manip.ee.hand_kinematics import Dex3Kinematics
-    from g1_classical_manip.spatial.pose import Pose
+    from g1_primitives.ee.hand_kinematics import Dex3Kinematics
+    from g1_primitives.spatial.pose import Pose
     q7 = robot.cfg["hands"]["dex3"]["presets"]["power_close"][side]
     kin = Dex3Kinematics()
     tips = kin.fingertips(side, q7)
@@ -154,10 +154,10 @@ def main():
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
                          camera_config=_rig.camera_config_for(args.target))
     if args.debug_planner:
-        from g1_classical_manip.motion.curobo_planner import set_curobo_log_level
+        from g1_primitives.motion.curobo_planner import set_curobo_log_level
         set_curobo_log_level("debug")
     if args.source or args.segment is not None or args.visualize:   # overrides of grasp.yaml
-        from g1_classical_manip.factory import _build_grasp_source
+        from g1_primitives.factory import _build_grasp_source
         if args.source:
             robot.cfg["grasp"]["grasp_source"] = args.source
         if args.segment is not None:
@@ -226,7 +226,7 @@ def main():
                 viz.show_collision_spheres(c, r)
         if args.grasp_roll_deg or args.grasp_pitch_deg or args.grasp_yaw_deg:
             from dataclasses import replace                    # post-rotate each wrist goal in
-            from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix   # the WRIST frame:
+            from g1_primitives.spatial.pose import Pose, rpy_to_matrix   # the WRIST frame:
             rot = Pose(rpy_to_matrix(np.deg2rad(args.grasp_roll_deg),         # roll/pitch/yaw =
                                      np.deg2rad(args.grasp_pitch_deg),        # about wrist X/Y/Z
                                      np.deg2rad(args.grasp_yaw_deg)), [0, 0, 0])

@@ -14,7 +14,7 @@ import argparse
 
 import numpy as np
 import _rig
-from g1_classical_manip import primitives as P
+from g1_primitives import primitives as P
 
 
 def main():

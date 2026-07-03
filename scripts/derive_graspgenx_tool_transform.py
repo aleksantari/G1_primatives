@@ -36,9 +36,9 @@ import os
 import numpy as np
 import yaml
 
-from g1_classical_manip.spatial.pose import rpy_to_matrix
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.ee.hand_kinematics import Dex3Kinematics
+from g1_primitives.spatial.pose import rpy_to_matrix
+from g1_primitives.ee.hand_base import LEFT, RIGHT
+from g1_primitives.ee.hand_kinematics import Dex3Kinematics
 
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 RPY = [np.pi / 2, 0.0, np.pi]              # SIM-VALIDATED: approach +Z -> wrist +Y (see header)

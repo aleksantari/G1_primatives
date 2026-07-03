@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from g1_classical_manip.viz.gripper_geom import load_gripper_geom, GripperGeom
+from g1_primitives.viz.gripper_geom import load_gripper_geom, GripperGeom
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(_REPO_ROOT, "assets", "grippers")

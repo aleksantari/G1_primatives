@@ -8,9 +8,9 @@ import types
 import numpy as np
 import pytest
 
-from g1_classical_manip.spatial.pose import Pose
-from g1_classical_manip.ee.hand_base import RIGHT
-from g1_classical_manip.motion.curobo_planner import (
+from g1_primitives.spatial.pose import Pose
+from g1_primitives.ee.hand_base import RIGHT
+from g1_primitives.motion.curobo_planner import (
     CuroboArmPlanner, GraspPlanOutcome, PlanningError, REPO_ARM, WRIST_FRAME)
 
 TOOL_FRAMES = ["left_wrist_yaw_link", "right_wrist_yaw_link", "d435_link"]
@@ -254,7 +254,7 @@ def test_plan_grasp_set_empty_raises():
 
 # --------------------------------------------------------------- depth-ESDF collision world
 def test_plan_grasp_set_disables_hand_links_when_cw_on(monkeypatch):
-    from g1_classical_manip.motion.curobo_planner import HAND_LINKS
+    from g1_primitives.motion.curobo_planner import HAND_LINKS
     _inject_curobo_types(monkeypatch)
     mp = FakeMP(_grasp_result())
     p = _planner(mp)
@@ -279,7 +279,7 @@ def test_plan_grasp_set_left_mirror_flips_y_offset(monkeypatch):
     # the LEFT-hand mirror (tool_transform.approach_offset_for_side): a tool-frame "y" approach
     # offset must reach cuRobo SIGN-FLIPPED for the left arm (its approach axis is wrist -Y),
     # and untouched for the right / other axes / world-frame offsets.
-    from g1_classical_manip.ee.hand_base import LEFT
+    from g1_primitives.ee.hand_base import LEFT
     _inject_curobo_types(monkeypatch)
     for side, axis, tool_frame, cfg_off, expect in [
             (LEFT, "y", True, -0.10, +0.10),      # THE flip
@@ -295,8 +295,8 @@ def test_plan_grasp_set_left_mirror_flips_y_offset(monkeypatch):
 
 
 def test_hand_links_map():
-    from g1_classical_manip.motion.curobo_planner import HAND_LINKS
-    from g1_classical_manip.ee.hand_base import LEFT
+    from g1_primitives.motion.curobo_planner import HAND_LINKS
+    from g1_primitives.ee.hand_base import LEFT
     assert HAND_LINKS[RIGHT] == [
         "right_hand_palm_link", "right_hand_thumb_0_link", "right_hand_thumb_1_link",
         "right_hand_thumb_2_link", "right_hand_index_0_link", "right_hand_index_1_link",
@@ -343,8 +343,8 @@ def test_seg_positions_maps_hands_by_name_not_index():
     # The Dex3 get_q RIGHT order is thumb,thumb,thumb,INDEX,INDEX,MIDDLE,MIDDLE -- but cuRobo orders
     # the right hand thumb,middle,index. A raw-index copy would swap index<->middle. _seg_positions
     # must place them BY NAME. (LEFT get_q order already matches cuRobo, so it's a straight map.)
-    from g1_classical_manip.motion.curobo_planner import _seg_positions, REPO_ARM
-    from g1_classical_manip.ee.hand_base import LEFT, RIGHT
+    from g1_primitives.motion.curobo_planner import _seg_positions, REPO_ARM
+    from g1_primitives.ee.hand_base import LEFT, RIGHT
     seg_names = list(REPO_ARM) + _cur_hand("left") + _cur_hand("right")
     q_arm = np.arange(14, dtype=float)
     hand_q = {LEFT: np.array([10, 11, 12, 13, 14, 15, 16.]),    # t0 t1 t2 m0 m1 i0 i1
@@ -360,7 +360,7 @@ def test_seg_positions_maps_hands_by_name_not_index():
 
 
 def test_seg_positions_defaults_hands_open_without_hand_q():
-    from g1_classical_manip.motion.curobo_planner import _seg_positions, REPO_ARM
+    from g1_primitives.motion.curobo_planner import _seg_positions, REPO_ARM
     seg_names = list(REPO_ARM) + ["right_hand_thumb_0_joint", "left_hand_index_1_joint"]
     d = dict(zip(seg_names, _seg_positions(seg_names, np.ones(14), None)))
     assert d["right_hand_thumb_0_joint"] == 0.0 and d["left_hand_index_1_joint"] == 0.0
@@ -377,8 +377,8 @@ def test_update_grasp_world_noops():
 
 # --------------------------------------------------------------- _hold_idle
 def test_hold_idle_pins_idle_arm():
-    from g1_classical_manip.motion.planner_base import JointTrajectory
-    from g1_classical_manip.ee.hand_base import LEFT
+    from g1_primitives.motion.planner_base import JointTrajectory
+    from g1_primitives.ee.hand_base import LEFT
     p = CuroboArmPlanner.__new__(CuroboArmPlanner)
     # a 4-step trajectory where every joint ramps (so drift would show); idle arm must be pinned.
     q = np.tile(np.linspace(1.0, 2.0, 14), (4, 1)) + np.arange(4)[:, None] * 0.1
@@ -529,14 +529,14 @@ class FakeRobot2:
 
 
 def _cands(n=3):
-    from g1_classical_manip.grasp.base import GraspCandidate
+    from g1_primitives.grasp.base import GraspCandidate
     return [GraspCandidate(wrist_goal=Pose(np.eye(3), [0.4, 0.0, 0.8]),
                            confidence=1.0 - 0.1 * i,
                            grasp_pose=Pose(np.eye(3), [0.4, 0.0, 0.8])) for i in range(n)]
 
 
 def test_grasp_motion_orders_segments_and_callbacks():
-    from g1_classical_manip import primitives as P
+    from g1_primitives import primitives as P
     out = GraspPlanOutcome(True, 1, _Seg("approach"), _Seg("grasp"), _Seg("lift"),
                            True, True, True, "ok")
     robot = FakeRobot2(out)
@@ -563,7 +563,7 @@ def test_grasp_motion_orders_segments_and_callbacks():
 
 
 def test_grasp_motion_short_circuits_on_failed_segment():
-    from g1_classical_manip import primitives as P
+    from g1_primitives import primitives as P
     out = GraspPlanOutcome(True, 0, _Seg("approach"), _Seg("grasp"), _Seg("lift"),
                            True, True, True, "ok")
     robot = FakeRobot2(out, fail="grasp")                   # grasp segment aborts
@@ -574,7 +574,7 @@ def test_grasp_motion_short_circuits_on_failed_segment():
 
 
 def test_grasp_motion_fails_when_plan_grasp_fails():
-    from g1_classical_manip import primitives as P
+    from g1_primitives import primitives as P
     bad = GraspPlanOutcome(False, -1, None, None, None, False, False, False, "no plan")
     robot = FakeRobot2(bad)
     res = P.grasp_motion(robot, RIGHT, _cands(2), close_cb=lambda: robot.events.append("close"))
@@ -582,7 +582,7 @@ def test_grasp_motion_fails_when_plan_grasp_fails():
 
 
 def test_grasp_motion_no_candidates():
-    from g1_classical_manip import primitives as P
+    from g1_primitives import primitives as P
     robot = FakeRobot2(GraspPlanOutcome(True, 0, _Seg("a"), _Seg("g"), _Seg("l"),
                                         True, True, True, "ok"))
     res = P.grasp_motion(robot, RIGHT, [])
@@ -599,7 +599,7 @@ def test_collision_world_points_accessor():
 
 
 def test_grasp_motion_fires_on_world_built_before_planning():
-    from g1_classical_manip import primitives as P
+    from g1_primitives import primitives as P
     out = GraspPlanOutcome(True, 0, _Seg("approach"), None, None, True, False, False, "ok")
     robot = FakeRobot2(out)
     sentinel = np.zeros((3, 3))

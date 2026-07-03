@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 import yaml
 
-from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.grasp.tool_transform import (
+from g1_primitives.spatial.pose import Pose, rpy_to_matrix
+from g1_primitives.ee.hand_base import LEFT, RIGHT
+from g1_primitives.grasp.tool_transform import (
     build_T_wristyaw_grasp, wrist_goal_from_grasp, approach_offset_for_side)
 
 PALM = [0.1192, -0.0346, 0.0]

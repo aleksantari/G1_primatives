@@ -25,9 +25,9 @@ import sys
 import time
 
 import _rig
-from g1_classical_manip.factory import make_robot, _build_grasp_source
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.latency import LOG
+from g1_primitives.factory import make_robot, _build_grasp_source
+from g1_primitives.ee.hand_base import LEFT, RIGHT
+from g1_primitives.latency import LOG
 
 
 def _warm_camera(cam, timeout_s: float = 6.0) -> bool:

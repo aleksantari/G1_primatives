@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from g1_classical_manip.perception.segment import (
+from g1_primitives.perception.segment import (
     NullSegmenter, Sam3Segmenter, _prompt_kwargs)
 
 H, W = 8, 10

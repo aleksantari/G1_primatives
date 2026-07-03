@@ -36,11 +36,11 @@ import time
 
 import numpy as np
 import _rig
-from g1_classical_manip.factory import make_robot
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.motion.planner_base import DOF
-from g1_classical_manip.motion.collision_world import EsdfMapper
-from g1_classical_manip.perception.depth import deproject_depth
+from g1_primitives.factory import make_robot
+from g1_primitives.ee.hand_base import LEFT, RIGHT
+from g1_primitives.motion.planner_base import DOF
+from g1_primitives.motion.collision_world import EsdfMapper
+from g1_primitives.perception.depth import deproject_depth
 
 
 def _aabb(p):
@@ -51,7 +51,7 @@ def _load_capture(path):
     """An 11_capture_frame .npz -> (depth, K{fx,fy,cx,cy}, T_pelvis_camera Pose, q14|None,
     hand_q{LEFT,RIGHT}|None). q14 / hand_q are present only if the capture recorded them (older
     captures predate that -> None -> the self-filter falls back to home)."""
-    from g1_classical_manip.spatial.pose import Pose
+    from g1_primitives.spatial.pose import Pose
     z = np.load(path)
     depth = np.asarray(z["depth"], np.float32)
     K = {k: float(z[k]) for k in ("fx", "fy", "cx", "cy")}
@@ -191,7 +191,7 @@ def main():
         print(f"esdf voxel override: {ev} m (tsdf {tv} m)")
     ex_mask = None
     if args.exclude_mask:                          # cut the TARGET object (exclude_object offline)
-        from g1_classical_manip.motion.collision_world import dilate_mask
+        from g1_primitives.motion.collision_world import dilate_mask
         ex_mask = np.load(args.exclude_mask).astype(bool)
         ex_mask = dilate_mask(ex_mask, p["exclude_object_dilate_px"])
         print(f"exclude-mask: {args.exclude_mask} ({int(ex_mask.sum())} px after "
@@ -283,13 +283,13 @@ def main():
                                     position=tuple(float(x) for x in args.probe))
         n_sph = 0
         if args.show_spheres:               # the cuRobo collision spheres at the self-filter config
-            from g1_classical_manip.viz import viser_primitives as vp
+            from g1_primitives.viz import viser_primitives as vp
             c, r = robot.planner.collision_spheres(q_arm)
             n_sph = vp.add_collision_spheres(srv, c, r, name="/collision_spheres")
             print(f"collision spheres: {n_sph} overlaid (green) at the self-filter q "
                   f"[{src}] -- any green sphere inside the RED voxels = in collision with the world")
         if args.diagnose:                   # numeric backing: WHY q_arm is (self/world) in collision
-            from g1_classical_manip.viz import viser_primitives as vp
+            from g1_primitives.viz import viser_primitives as vp
             # geometric predicate (legacy, side-by-side with the truth-test above)
             out = robot.planner.diagnose(q_arm, args.side, world_points=(occ if len(occ) else None),
                                          voxel_size=float(p["esdf_voxel_size"]))

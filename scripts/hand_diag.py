@@ -22,8 +22,8 @@ import time
 
 import numpy as np
 
-from g1_classical_manip.factory import make_robot
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
+from g1_primitives.factory import make_robot
+from g1_primitives.ee.hand_base import LEFT, RIGHT
 
 
 def snap(hand, side):

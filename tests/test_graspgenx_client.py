@@ -8,7 +8,7 @@ import zmq
 import msgpack
 import msgpack_numpy
 
-from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
+from g1_primitives.grasp.graspgenx_client import GraspGenXClient
 
 msgpack_numpy.patch()
 

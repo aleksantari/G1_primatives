@@ -2,10 +2,10 @@
 import numpy as np
 import pytest
 
-from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
-from g1_classical_manip.ee.hand_base import RIGHT
-from g1_classical_manip.grasp.tool_transform import build_T_wristyaw_grasp
-from g1_classical_manip.grasp.sim_cloud_source import SimCloudGraspSource, sample_cube
+from g1_primitives.spatial.pose import Pose, rpy_to_matrix
+from g1_primitives.ee.hand_base import RIGHT
+from g1_primitives.grasp.tool_transform import build_T_wristyaw_grasp
+from g1_primitives.grasp.sim_cloud_source import SimCloudGraspSource, sample_cube
 
 PALM = [0.1192, -0.0346, 0.0]
 GCFG = {"palm_offset_xyz": PALM, "wristyaw_grasp_rpy": [0.0, np.pi / 2, 0.0],

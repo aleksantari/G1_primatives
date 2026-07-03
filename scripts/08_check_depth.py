@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 import _rig
-from g1_classical_manip.factory import make_robot
+from g1_primitives.factory import make_robot
 
 try:
     import cv2

@@ -3,7 +3,7 @@ is built via __new__ and a fake SUB socket is injected, so we exercise the resha
 without a real ZMQ server."""
 import numpy as np
 
-from g1_classical_manip.image_server.image_client import HeadCamera
+from g1_primitives.image_server.image_client import HeadCamera
 
 
 class _Again(Exception):

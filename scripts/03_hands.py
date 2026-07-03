@@ -14,8 +14,8 @@ import argparse
 
 import numpy as np
 import _rig
-from g1_classical_manip import primitives as P
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
+from g1_primitives import primitives as P
+from g1_primitives.ee.hand_base import LEFT, RIGHT
 
 
 def _q(hand, side):

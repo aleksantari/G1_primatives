@@ -1,8 +1,8 @@
 """Dex3 hand FK (wrist_yaw -> fingertips), parsed from the committed URDF."""
 import numpy as np
 
-from g1_classical_manip.ee.hand_base import LEFT, RIGHT
-from g1_classical_manip.ee.hand_kinematics import Dex3Kinematics
+from g1_primitives.ee.hand_base import LEFT, RIGHT
+from g1_primitives.ee.hand_kinematics import Dex3Kinematics
 
 # configs/hands.yaml dex3.presets.power_close (RIGHT-hand order: th0,th1,th2, idx0,idx1, mid0,mid1)
 POWER_CLOSE_RIGHT = [0.0, -0.85, -1.40, 1.30, 1.40, 1.30, 1.40]

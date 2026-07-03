@@ -18,9 +18,9 @@ import os
 import numpy as np
 import trimesh
 
-from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
-from g1_classical_manip.viz import load_gripper_geom
-from g1_classical_manip.viz.grasp_viz import GraspViz
+from g1_primitives.grasp.graspgenx_client import GraspGenXClient
+from g1_primitives.viz import load_gripper_geom
+from g1_primitives.viz.grasp_viz import GraspViz
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

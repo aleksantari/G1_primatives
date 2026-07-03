@@ -24,11 +24,11 @@ import time
 
 import numpy as np
 import _rig
-from g1_classical_manip.factory import make_robot, load_configs
-from g1_classical_manip.spatial.pose import Pose
-from g1_classical_manip.perception.depth import deproject_depth
-from g1_classical_manip.perception.segment import Sam3Segmenter, SegmentationAborted
-from g1_classical_manip.perception.sam3_client import Sam3Client
+from g1_primitives.factory import make_robot, load_configs
+from g1_primitives.spatial.pose import Pose
+from g1_primitives.perception.depth import deproject_depth
+from g1_primitives.perception.segment import Sam3Segmenter, SegmentationAborted
+from g1_primitives.perception.sam3_client import Sam3Client
 
 try:
     import cv2
@@ -152,7 +152,7 @@ def main():
     # --- segment ---
     try:
         if args.mode == "interactive":
-            from g1_classical_manip.perception.segment_gui import refine_mask
+            from g1_primitives.perception.segment_gui import refine_mask
             with _client() as c:
                 mask = refine_mask(rgb, c, prompt, top_k=args.top_k)
         else:

@@ -2,7 +2,7 @@ import numpy as np
 import yaml
 import os
 
-from g1_classical_manip.ee.dex3 import Dex3Hand
+from g1_primitives.ee.dex3 import Dex3Hand
 
 
 class FakeCtrl:

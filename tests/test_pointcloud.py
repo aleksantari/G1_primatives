@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from g1_classical_manip.spatial.pointcloud import PointCloud
-from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
+from g1_primitives.spatial.pointcloud import PointCloud
+from g1_primitives.spatial.pose import Pose, rpy_to_matrix
 
 
 def test_validation_and_dtype():

@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "g1_classical_manip"
+name = "g1_primitives"
 version = "0.1.0"
 description = "cuRobo-native action-primitive motion library for the suspended Unitree G1 (29-DoF, Dex3-1)."
 requires-python = ">=3.11"
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["g1_classical_manip"]
+packages = ["g1_primitives"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

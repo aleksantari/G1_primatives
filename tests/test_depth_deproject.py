@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from g1_classical_manip.perception.depth import deproject_depth, colorize_from_image
-from g1_classical_manip.spatial.pose import Pose, rpy_to_matrix
+from g1_primitives.perception.depth import deproject_depth, colorize_from_image
+from g1_primitives.spatial.pose import Pose, rpy_to_matrix
 
 H, W = 3, 3
 FX = FY = 100.0

@@ -2,7 +2,7 @@
 cuRobo env). Convention fidelity vs pinocchio is cross-checked separately."""
 import numpy as np
 
-from g1_classical_manip.spatial.pose import (
+from g1_primitives.spatial.pose import (
     Pose, rpy_to_matrix, quat_wxyz_to_matrix, matrix_to_quat_wxyz, from_xyz_rpy)
 
 
