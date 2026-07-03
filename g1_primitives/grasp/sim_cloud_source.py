@@ -17,7 +17,7 @@ import numpy as np
 from g1_primitives.spatial.pose import rpy_to_matrix
 from g1_primitives.spatial.pointcloud import PointCloud
 from g1_primitives.perception.depth import colorize_from_image
-from g1_primitives.grasp.base import GraspSource, GraspCandidate
+from g1_primitives.grasp.base import GraspSource, GraspCandidate, SourceSnapshot
 from g1_primitives.grasp.tool_transform import candidates_from_grasps
 from g1_primitives.latency import LOG   # latency instrumentation (no-op unless enabled)
 
@@ -72,6 +72,7 @@ class SimCloudGraspSource(GraspSource):
         return rgb
 
     def grasps(self, robot, side: str, target: str) -> List[GraspCandidate]:
+        self.last_snapshot = None                       # stale-state guard (SourceSnapshot)
         pose = self.pose_source.block_pose(target)      # pelvis-frame object pose (live), or None
         if pose is None:
             return []
@@ -94,6 +95,8 @@ class SimCloudGraspSource(GraspSource):
         cloud = PointCloud(pts_pelvis.astype(np.float32), frame="pelvis", colors=colors)
         if self.gcfg.get("voxel_m"):
             cloud = cloud.voxel_downsampled(self.gcfg["voxel_m"])
+        snap = SourceSnapshot(target=target, cloud=cloud)   # GT cloud -> perception validation
+        self.last_snapshot = snap
         if cloud.is_empty():
             return []
 
@@ -113,5 +116,7 @@ class SimCloudGraspSource(GraspSource):
         if self.viz is not None:                         # cloud + all grasps (pelvis frame)
             self.viz.show_candidates(cloud.points, grasps, conf, colors=cloud.colors,
                                      branch_tags=tags)
-        return candidates_from_grasps(grasps, conf, side, self.palm_offset_xyz,
+        out = candidates_from_grasps(grasps, conf, side, self.palm_offset_xyz,
                                       self.R_wristyaw_grasp, branch_tags=tags)
+        snap.n_candidates = len(out)
+        return out

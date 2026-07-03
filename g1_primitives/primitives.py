@@ -86,8 +86,10 @@ def _update_collision_world(robot, side: str, q0=None) -> None:
         hand = getattr(robot, "hand", None)                # live finger angles -> self-filter the hand
         hand_q = {s: hand.get_q(s) for s in (LEFT, RIGHT)} if hasattr(hand, "get_q") else None
         # The TARGET's SAM3 mask (graspgenx source; None elsewhere) -> cut the object out of the
-        # ESDF so the approach can reach it (gated by collision_world.exclude_object).
-        object_mask = getattr(getattr(robot, "grasp_source", None), "last_mask", None)
+        # ESDF so the approach can reach it (gated by collision_world.exclude_object). Read from
+        # the source's typed SourceSnapshot (grasp.base), not an ad-hoc attribute.
+        snap = getattr(getattr(robot, "grasp_source", None), "last_snapshot", None)
+        object_mask = snap.mask if snap is not None else None
         if planner.update_grasp_world(side, depth, K, T_pc, q0, hand_q=hand_q,
                                       object_mask=object_mask):
             print("grasp_motion: collision world updated from head depth (ESDF, robot self-filtered)")

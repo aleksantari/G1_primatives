@@ -150,3 +150,19 @@ def test_sim_cloud_source_no_camera_no_color():
                               {**GCFG, "voxel_m": None}, camera_cfg=None, viz=viz)
     src.grasps(FakeRobotCam(camera=None), RIGHT, "block")       # no camera -> flat (colors None)
     assert viz.colors is None
+
+
+def test_sim_cloud_source_snapshot_carries_gt_cloud():
+    # the perception-validation tool reads last_snapshot.cloud as the GT reference.
+    client = FakeClient(np.eye(4, dtype=np.float32)[None], np.array([1.0], np.float32))
+    src = SimCloudGraspSource(FakeFrames(), FakePoseSource(Pose(np.eye(3), [0.4, -0.2, 0.8])),
+                              lambda: client, GCFG)
+    cands = src.grasps(robot=None, side=RIGHT, target="block")
+    snap = src.last_snapshot
+    assert snap is not None and snap.target == "block"
+    assert snap.mask is None                              # no 2D mask on the GT path
+    assert snap.cloud is not None and snap.cloud.points.shape[0] > 0
+    assert snap.n_candidates == len(cands)
+    src2 = SimCloudGraspSource(FakeFrames(), FakePoseSource(None), lambda: None, GCFG)
+    src2.grasps(robot=None, side=RIGHT, target="block")   # no pose -> early return
+    assert src2.last_snapshot is None

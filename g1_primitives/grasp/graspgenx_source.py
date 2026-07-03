@@ -16,7 +16,7 @@ import numpy as np
 from g1_primitives.spatial.pose import rpy_to_matrix
 from g1_primitives.perception.depth import deproject_depth
 from g1_primitives.perception.segment import SegmentationAborted
-from g1_primitives.grasp.base import GraspSource, GraspCandidate
+from g1_primitives.grasp.base import GraspSource, GraspCandidate, SourceSnapshot
 from g1_primitives.grasp.tool_transform import candidates_from_grasps
 from g1_primitives.latency import LOG   # latency instrumentation (no-op unless enabled)
 
@@ -32,14 +32,12 @@ class GraspGenXGraspSource(GraspSource):
         self.palm_offset_xyz = np.asarray(gcfg["palm_offset_xyz"], float)
         self.R_wristyaw_grasp = rpy_to_matrix(*gcfg["wristyaw_grasp_rpy"])
         self.viz = viz                                  # optional viz.GraspViz (None = off)
-        # The most recent SAM3 object mask (H,W bool, depth-aligned), retained so the collision
-        # world can EXCLUDE the target object from the ESDF (collision_world.exclude_object --
-        # the GraspGenX end2end reference's design: the gripper has to reach it). None until a
-        # grasps() call segments; reset at every call so a failed capture can't leave a stale mask.
-        self.last_mask = None
+        # last_snapshot (grasp.base.SourceSnapshot): the most recent mask (collision-world
+        # object exclusion reads it) + cloud (perception validation reads it). Reset per call.
+        self.last_snapshot = None
 
     def grasps(self, robot, side: str, target: str) -> List[GraspCandidate]:
-        self.last_mask = None                          # stale-mask guard (see __init__)
+        self.last_snapshot = None                      # stale-state guard (see SourceSnapshot)
         cam = getattr(robot, "camera", None)
         if cam is None:
             return []
@@ -56,11 +54,13 @@ class GraspGenXGraspSource(GraspSource):
             mask = self.segmenter.mask(rgb)            # (H,W) bool / all-False / None (whole frame)
         except SegmentationAborted:
             return []                                  # operator aborted -> no grasps (loud)
-        self.last_mask = mask                          # retained for collision_world.exclude_object
+        snap = SourceSnapshot(target=target, mask=mask)  # mask -> collision_world.exclude_object
+        self.last_snapshot = snap
 
         with LOG.span("deproject"):                    # masked depth -> pelvis-frame point cloud
             cloud = deproject_depth(depth, self.intrinsics, T_pc,
                                     voxel_m=self.gcfg.get("voxel_m"), mask=mask, rgb=rgb)
+        snap.cloud = cloud                             # -> perception validation (GT compare)
         if cloud.is_empty():
             return []
         assert cloud.frame == "pelvis", f"cloud must be pelvis-frame, got {cloud.frame!r}"
@@ -86,5 +86,7 @@ class GraspGenXGraspSource(GraspSource):
                                      branch_tags=tags)
         # candidates_from_grasps stashes branch_tags[i] on cand.extra["branch_tag"], aligned
         # to each grasp by the same sort (one code path, shared with the sim-cloud source).
-        return candidates_from_grasps(grasps, conf, side, self.palm_offset_xyz,
-                                      self.R_wristyaw_grasp, branch_tags=tags)
+        out = candidates_from_grasps(grasps, conf, side, self.palm_offset_xyz,
+                                     self.R_wristyaw_grasp, branch_tags=tags)
+        snap.n_candidates = len(out)
+        return out

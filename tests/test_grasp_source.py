@@ -137,16 +137,20 @@ def test_graspgenx_source_empty_on_missing_inputs():
     assert src2.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block") == []
 
 
-def test_graspgenx_source_retains_last_mask_for_exclude_object():
-    # the segmenter's mask must be RETAINED on the source (collision_world.exclude_object reads
-    # it to cut the target out of the ESDF), and RESET at every grasps() call so an early
-    # return (e.g. camera gone) can never leave a stale mask behind.
+def test_graspgenx_source_snapshot_retains_mask_and_cloud():
+    # the SourceSnapshot must be RETAINED on the source (collision_world.exclude_object reads
+    # .mask to cut the target out of the ESDF; perception validation reads .cloud), and RESET
+    # at every grasps() call so an early return (e.g. camera gone) can never leave stale state.
     m = np.zeros((3, 3), bool)
     m[1, 1] = True
     client = FakeClient(np.eye(4, dtype=np.float32)[None], np.array([1.0], np.float32))
     src = GraspGenXGraspSource(FakeFrames(), FakeSeg(m), lambda: client, GCFG, CAM_CFG)
-    assert src.last_mask is None                            # nothing segmented yet
-    src.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block")
-    assert src.last_mask is not None and (src.last_mask == m).all()
+    assert src.last_snapshot is None                        # nothing segmented yet
+    cands = src.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block")
+    snap = src.last_snapshot
+    assert snap is not None and snap.target == "block"
+    assert snap.mask is not None and (snap.mask == m).all()
+    assert snap.cloud is not None and snap.cloud.points.shape[0] == int(m.sum())
+    assert snap.n_candidates == len(cands)
     src.grasps(FakeRobot(camera=None), RIGHT, "block")      # early return BEFORE segmentation
-    assert src.last_mask is None                            # stale mask cleared
+    assert src.last_snapshot is None                        # stale snapshot cleared
