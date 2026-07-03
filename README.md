@@ -210,13 +210,16 @@ python scripts/tools/validate_perception.py --segment auto --max-centroid-mm 20 
 ## Depth-ESDF collision world (`--collision-world`)
 
 Head depth → cuRobo `Mapper` → an ESDF `VoxelGrid` handed to the grasp planner, so the
-`plan_grasp` **approach** routes *around* the table/clutter. Same path sim + real,
-source-independent. A cuRobo `RobotSegmenter` **self-filter** removes the robot's own
-arm/fingers from the depth at the live measured config, and the **target object is cut
-from the world** (`collision_world.exclude_object`, from its SAM3 mask) because the
-approach segment plans with ALL collision links enabled — an in-world target would block
-its own pre-grasp. OFF by default; opt in with `examples/02_pick.py --collision-world`
-or `robot.set_collision_world(True)` (tuning in `planner.yaml: grasp.collision_world`).
+`plan_grasp` **approach** routes *around* the table/clutter — **including the target
+object itself**: the object stays IN the world, and native `plan_grasp` gives the
+per-phase semantics we want (the Step-2 approach collision-checks the arm AND hand
+against the target so the motion to the pre-grasp can't sweep through it; the goalset
+pick / grasp descent / lift disable the hand links so the intended contact is allowed).
+A cuRobo `RobotSegmenter` **self-filter** removes the robot's own arm/fingers from the
+depth at the live measured config. `collision_world.exclude_object` (cut the target via
+its SAM3 mask) is an opt-in clutter escape hatch, default OFF. The whole world is OFF by
+default; opt in with `examples/02_pick.py --collision-world` or
+`robot.set_collision_world(True)` (tuning in `planner.yaml: grasp.collision_world`).
 
 Inspect the world in isolation with `tools/check_world.py` (`--visualize`, `--probe X Y Z`,
 `--frame captures/*.npz` for fully-offline replay, `--diagnose` for the planner's own

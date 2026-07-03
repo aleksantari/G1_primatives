@@ -131,9 +131,14 @@ module-scope cleanliness is what the whole fake pattern depends on.
   `set_collision_world(True)` / `examples/02_pick.py --collision-world`): head depth →
   cuRobo `Mapper` → ESDF `VoxelGrid` → the grasp planner, so the plan_grasp **approach**
   routes around the table/clutter. Source-independent, same path sim + real. The TARGET
-  object is CUT from the world (`exclude_object`, from the source snapshot's SAM3 mask)
-  because `disable_collision_links` applies to plan_grasp Steps 1/3 ONLY — the Step-2
-  APPROACH plans with ALL links enabled. A cuRobo `RobotSegmenter` **self-filter** removes
+  object STAYS IN the world (`exclude_object` default OFF, 2026-07-03): native plan_grasp's
+  per-step link disabling already gives the wanted semantics — the Step-2 APPROACH plans
+  with ALL links enabled (arm + hand collision-checked against the target, so the motion
+  to the pre-grasp can't sweep through it), while Steps 1/3/4 disable the hand links for
+  the intended grasp/lift contact. The old default-ON cut ("in-world target blocks its own
+  pre-grasp") predated the voxel-dims fix and made the approach BLIND to the target; it
+  remains the opt-in clutter escape hatch (from the source snapshot's SAM3 mask). A cuRobo
+  `RobotSegmenter` **self-filter** removes
   the robot's own pixels at the LIVE measured config (arm q + finger q via a dedicated
   hand-active segmenter; hand q mapped BY NAME — Dex3 right-hand `get_q` swaps
   index/middle vs left). `diagnostics.world_check(planner, side, q)` truth-tests a config

@@ -212,6 +212,15 @@ DEFERRED; see the Motion section and `docs/trajectory_speed_tracking.md`). Not m
         removed, and the block stays solid (~5 voxels at the 1cm ESDF, not eroded to ~1). **Watch:**
         too-big a margin erodes the object out of the world; the planned approach is also more
         dynamic → see the trajectory speed/tracking item under Motion.
+  - [ ] **Collision-world RE-VALIDATION (post voxel-bug fix + object-in-world change).** The
+        2026-06-30 run used the then-unknown broken voxel checker AND `exclude_object: true`
+        (the approach was blind to the target). Since 2026-07-03 the target STAYS IN the world
+        (`exclude_object` default off) so plan_grasp's Step-2 approach collision-checks the
+        arm+hand against it. Re-run in sim first: `examples/02_pick --target sim --collision-world`
+        (graspgenx + `--segment auto`, then sim_cloud) — **pass:** approach visibly routes around
+        the object (not through it), no "Planning to approach pose failed" from a flagged
+        pre-grasp (if it fails, `--diagnose` distinguishes a genuinely-inside pre-grasp — the
+        exclude_object escape hatch — from a phantom). Then repeat on real.
   - [x] **`wristyaw_grasp_rpy` + `palm_offset_xyz` — DERIVED, sim-validated 2026-06-28, real-validated
         2026-06-30**: no longer a guess — `scripts/tools/derive_tool_transform.py` derives the
         grasp→wrist_yaw map from Dex3 FK (`[π/2,0,π]`: approach +Z→wrist +Y; `palm_offset

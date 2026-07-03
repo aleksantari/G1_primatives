@@ -430,7 +430,7 @@ class CuroboArmPlanner:
             depth_max_m=float(c.get("depth_max_m", 2.0)),
             self_filter=bool(c.get("self_filter", True)),
             robot_mask_margin=float(c.get("robot_mask_margin", 0.02)),
-            exclude_object=bool(c.get("exclude_object", True)),
+            exclude_object=bool(c.get("exclude_object", False)),
             exclude_object_dilate_px=int(c.get("exclude_object_dilate_px", 4)),
         )
 
@@ -492,9 +492,11 @@ class CuroboArmPlanner:
         (arm AND fingers) is self-filtered out of the depth (essential: else the arm/hand is fused
         into the world and plan_grasp starts the arm inside a copy of itself). `object_mask`
         ((H,W) bool, depth-aligned -- the TARGET's SAM3 mask) cuts the object OUT of the world
-        (gated by collision_world.exclude_object, dilated exclude_object_dilate_px): the reference
-        end2end design -- the gripper has to REACH the object, and plan_grasp's Step-2 approach
-        plans with ALL links enabled (hand included), so an in-world target blocks its own grasp."""
+        (gated by collision_world.exclude_object, dilated exclude_object_dilate_px). Default OFF:
+        the object SHOULD stay in the world so plan_grasp's Step-2 approach (ALL links enabled)
+        collision-checks the arm+hand against it -- Steps 1/3/4 disable the hand links, so the
+        intended grasp/lift contact is still allowed. Opt in only for clutter where diagnostics
+        show every reachable pre-grasp genuinely inside the inflated target ESDF."""
         if not self._cw_enabled or depth_mm is None:
             return False
         import numpy as _np
@@ -663,10 +665,12 @@ class CuroboArmPlanner:
         Step 2 plans the approach with ALL collision links RE-ENABLED (hand included;
         disable_collision_links applies to Steps 1/3 only), and its graph/IK gate checks the start
         AND goal configs against the world at activation 0. A start config inside the ESDF, or a
-        target object fused into the world blocking its own pre-grasp region, fails EVERY retry
-        identically. world_check(side, q) tests the exact gate; collision_world.exclude_object cuts
-        the target from the world (the end2end reference design). Diagnose the set with
-        diagnose_candidates."""
+        pre-grasp region genuinely inside an obstacle, fails EVERY retry identically.
+        world_check(side, q) tests the exact gate. NOTE the in-world TARGET is intentional:
+        the approach must collision-check the arm+hand against it (the hand links are disabled
+        only for the goalset pick + grasp/lift contact steps); collision_world.exclude_object is
+        the opt-in escape hatch if the inflated target blocks every reachable pre-grasp.
+        Diagnose the set with diagnose_candidates."""
         goals_all = list(wrist_goals)
         if not goals_all:
             raise PlanningError("plan_grasp_set_sweep: no candidate goals")
