@@ -28,6 +28,7 @@ touch DDS (the script warns if it is unset).
 | `tools/graspgen_viz.py` | offline cloud → GraspGenX → viser | no |
 | `tools/capture_frame.py` | save an RGB-D + pose `.npz` for offline replay | no |
 | `tools/check_world.py` | inspect the depth-ESDF collision world | no |
+| `tools/validate_perception.py` | sim GT gate: score the full perception stack vs rt/sim_state | no |
 | `tools/derive_tool_transform.py` | provenance: derive the GraspGenX→wrist transform | no |
 | `tools/hand_loop_diag.py` | raw dex3 command→state loop diagnosis (sim) | hands |
 
