@@ -9,6 +9,65 @@ from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwi
 from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
 import time
 
+def ensure_debug_mode(verbose: bool = True, client_factory=None,
+                      timeout_s: float = 10.0, poll_s: float = 1.0):
+    """Check-first debug-mode entry -> (ok, msg). Called by Robot.connect("real").
+
+    CheckMode FIRST: if no high-level mode is active (result['name'] empty) the robot
+    is ALREADY in debug mode and we return immediately WITHOUT calling ReleaseMode --
+    releasing on a robot the operator already put in debug mode drops it back OUT of
+    low-level control (hardware-observed: rt/lowcmd then publishes into the void and
+    the arms never move). Only when a named mode (ai/loco/...) is active do we
+    ReleaseMode + re-check in a bounded loop. The vendored MotionSwitcher class below
+    (Enter_Debug_Mode's blind release-while loop) is exactly that footgun -- kept
+    verbatim for provenance; use this function instead.
+
+    ``client_factory`` (tests) overrides the default MotionSwitcherClient construction;
+    DDS must already be initialised (ChannelFactoryInitialize) before the default path.
+    Never raises: any RPC/DDS failure returns (False, msg).
+    """
+    def _say(m):
+        if verbose:
+            print(f"[motion_switcher] {m}")
+    try:
+        if client_factory is None:
+            # lazy so a fake factory never needs the SDK path exercised
+            from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
+                MotionSwitcherClient as _MSC)
+
+            def client_factory():
+                c = _MSC()
+                c.SetTimeout(1.0)
+                c.Init()
+                return c
+        msc = client_factory()
+        _status, result = msc.CheckMode()
+        name = (result or {}).get("name") or ""
+        if not name:
+            msg = "already in debug mode (untouched)"
+            _say(msg)
+            return True, msg
+        first = name
+        _say(f"active high-level mode '{first}' -> releasing (up to {timeout_s:.0f}s)")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            msc.ReleaseMode()
+            time.sleep(poll_s)
+            _status, result = msc.CheckMode()
+            name = (result or {}).get("name") or ""
+            if not name:
+                msg = f"released '{first}' -> now in debug mode"
+                _say(msg)
+                return True, msg
+        msg = f"mode '{name}' still active after {timeout_s:.0f}s -- NOT in debug mode"
+        _say(msg)
+        return False, msg
+    except Exception as e:  # noqa: BLE001 - never let a mode check kill the connect
+        msg = f"MotionSwitcher unavailable ({e!r}) -- cannot confirm debug mode"
+        _say(msg)
+        return False, msg
+
+
 # MotionSwitcher used to switch mode between debug mode and ai mode
 class MotionSwitcher:
     def __init__(self):
