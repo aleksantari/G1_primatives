@@ -3,7 +3,7 @@
 **Status:** wired, **ON by default for REAL hardware** (forced OFF in sim by `factory.py`),
 gravity-only, **sign + necessity confirmed on the physical robot 2026-06-17**. Config:
 `configs/planner.yaml` → `executor.gravity_comp: true`, `gravity_scale: 1.0`; per-run
-override via `make_robot(gravity_comp=, gravity_scale=)` or `04_move --gravity-scale`.
+override via `connect(gravity_comp=, gravity_scale=)` or `checks/05_move --gravity-scale`.
 
 ## TL;DR
 - The executor can feed a per-joint feed-forward torque to the arm motors so the PD
@@ -41,7 +41,7 @@ tau = dyn.compute_inverse_dynamics(JointState(position=q, velocity=q̇, accelera
 ```
 
 ## How it's wired here
-- **`CuroboArmPlanner.gravity_torque(q_repo14) -> (14,) Nm`** (`motion/curobo_planner.py`).
+- **`CuroboArmPlanner.gravity_torque(q_repo14) -> (14,) Nm`** (`motion/planner.py`).
   Lazily builds `Dynamics` from `self._mp.kinematics.kinematics_config` (14-DoF arms, base
   locked), calls `compute_inverse_dynamics` with `q̇=q̈=0`, reorders cuRobo→repo
   (left7+right7). Lazy build ⇒ the default (off) path pays nothing.
@@ -52,7 +52,7 @@ tau = dyn.compute_inverse_dynamics(JointState(position=q, velocity=q̇, accelera
 - **Config** (`configs/planner.yaml` → `executor`): `gravity_comp: true`,
   `gravity_scale: 1.0`. The factory passes these + the `planner` into the `Executor`, and
   **forces `gravity_comp` OFF in sim** (`mode: sim`) unless explicitly overridden. Per-run
-  overrides: `make_robot(gravity_comp=, gravity_scale=)`, surfaced as `04_move --gravity-scale`.
+  overrides: `connect(gravity_comp=, gravity_scale=)`, surfaced as `checks/05_move --gravity-scale`.
 - **Gravity-only**, matching the proven `solve_tau` approach (full computed-torque is a
   later option — pass the trajectory's `q̇/q̈`).
 
@@ -85,8 +85,8 @@ its own baked inertial params). Negligible for feed-forward; flagged below.
 ## Hardware validation (2026-06-17) — confirmed on the physical G1
 First real-robot bring-up of the launch home (arms power-on folded). Debug mode set by the
 **operator via the physical remote** (we do NOT call `MotionSwitcher` — releasing it dropped
-the robot out of low-level control). Ramped `gravity_scale` via `04_move --gravity-scale`,
-reading the launch-home **per-joint residual** (`make_robot` prints it):
+the robot out of low-level control). Ramped `gravity_scale` via `checks/05_move --gravity-scale`,
+reading the launch-home **per-joint residual** (`connect` prints it):
 
 | `gravity_scale` | `arm_velocity_limit` | max residual | elbow residual | result |
 |---|---|---|---|---|
@@ -112,7 +112,7 @@ Takeaways:
 
 ## Re-validating / sign re-check (procedure)
 `gravity_comp` is now the default for real. To re-confirm (e.g. after a model change), drop
-it with `04_move --target real --gravity-scale 0.5` and watch the elbow residual: it should
+it with `checks/05_move --target real --gravity-scale 0.5` and watch the elbow residual: it should
 **shrink** vs the off (`--gravity-scale 0.0`) run. If it **grows**, the sign flipped — re-run
 with a negative scale and negate `gravity_torque` in the planner. Then ramp to 1.0.
 
@@ -137,6 +137,6 @@ with a negative scale and negate `gravity_torque` in the planner. Then ramp to 1
 - cuRobo: `curobo/_src/robot/dynamics/dynamics.py` (`Dynamics.compute_inverse_dynamics`),
   `dynamics_cfg.py`, `benchmark/inverse_dynamics_kernel_benchmark.py` (construction recipe).
 - Hardware-proven feed-forward: `unitree_lerobot/unitree_lerobot/eval_robot/robot_control/robot_arm_ik.py::solve_tau`.
-- Our code: `motion/curobo_planner.py::gravity_torque`, `motion/executor.py::_tauff`,
+- Our code: `motion/planner.py::gravity_torque`, `motion/executor.py::_tauff`,
   `configs/planner.yaml::executor`.
 - Spikes: `~/repos/curobo_g1_smoke/{grav_spike.py, pin_vs_curobo_grav.py, wire_check.py}`.

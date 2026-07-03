@@ -5,7 +5,7 @@ The motion stack drives the Isaac sim over the **same DDS interface** the real r
 **no code changes**. The sim's dex3 robot is the **calibrated mode_16 dex3 USD** — the same
 kinematics cuRobo plans on (sim == cuRobo == real).
 
-**Result:** the cuRobo-native MVP (`scripts/05_mvp_demo.py`) runs `home → move → close_hand →
+**Result:** the cuRobo-native MVP (`scripts/examples/01_hello_motion.py`) runs `home → move → close_hand →
 open_hand → home` with **zero executor aborts**; `home`/`move` are collision-aware via cuRobo.
 The G1+Dex3 task fixes the base, uses Isaac's PD actuators, and the Dex3 hands connect over DDS.
 
@@ -29,14 +29,14 @@ export CYCLONEDDS_HOME=/opt/cyclonedds
 export CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml   # MUST match the sim's
 use_conda g1_curobo
 # bring-up ladder (all default --target sim):
-python scripts/01_check_dds.py     # READ-ONLY arm + hand state (no motion)
-python scripts/02_check_image.py   # head-cam live feed
-python scripts/03_hands.py --side right   # close/open hand primitives
-python scripts/04_move.py          # home (add --dz 0.1 for a lift)
-python scripts/05_mvp_demo.py      # full MVP cycle
+python scripts/checks/01_dds.py     # READ-ONLY arm + hand state (no motion)
+python scripts/checks/02_camera.py   # head-cam live feed
+python scripts/checks/04_hands.py --side right   # close/open hand primitives
+python scripts/checks/05_move.py          # home (add --dz 0.1 for a lift)
+python scripts/examples/01_hello_motion.py      # full MVP cycle
 python scripts/06_detect.py        # AprilTag feed + pose vs ground truth
 ```
-Expected (05_mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`, `home: ok`, `DONE`.
+Expected (examples/01_hello_motion): `home: ok`, `move: ok`, `close: grasped`, `open: opened`, `home: ok`, `DONE`.
 
 > If it hangs on `Waiting to subscribe dds...`, the sim's DDS bridge has gone stale (happens
 > after the sim has been up a long time / many reconnects) — restart Terminal 1.
@@ -63,14 +63,14 @@ Expected (05_mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`
   hit the real Dex3 too.
 - Only the 14 arm joints (`rt/lowcmd[15:29]`) drive the articulation; leg/waist commands are
   ignored by the task — our debug-mode leg-lock is harmless.
-- `05_mvp_demo.py --target sim` sets a 0.40 rad abort threshold (Isaac PD lags transiently on
+- `examples/01_hello_motion.py --target sim` sets a 0.40 rad abort threshold (Isaac PD lags transiently on
   fast moves); the cuRobo trajectory itself tracks well within that. (`--target real` keeps the
   config default; override with `--abort`.)
 - **Sim executes at `time_dilation=1.0`** (factory-forced full-speed playback — the sim bypasses
   the arm controller's measured-relative velocity clip, so it tracks the un-dilated cuRobo
   trajectory; real defaults `0.5`). Caveat: a sufficiently dynamic route (e.g. the collision-world
   grasp APPROACH) can still exceed the 0.40 abort budget at full speed — planning succeeds but
-  execution aborts (`approach: tracking error 0.401 > 0.400 rad`); `09_graspgen --speed 0.5`
+  execution aborts (`approach: tracking error 0.401 > 0.400 rad`); `examples/02_pick --speed 0.5`
   fixes it. See `docs/trajectory_speed_tracking.md`.
 - **Sim head DEPTH stream.** Beyond the JPEG color PUB (`:55555`), the sim opens a 2nd ZMQ PUB
   carrying the head `front_camera` `distance_to_image_plane` as a raw float32 `(480,640)` map in
@@ -78,7 +78,7 @@ Expected (05_mvp_demo): `home: ok`, `move: ok`, `close: grasped`, `open: opened`
   on the configured `depth_port` and exposes it via `get_depth_frame()`; `configs/camera_sim.yaml`
   sets `stream.depth_port 55556`, `depth_height 480`, `depth_width 640` (match the sim env's
   `ISAAC_HEAD_DEPTH_PORT`). This feeds the SAME deproject → PointCloud → cuRobo Mapper/ESDF
-  collision world as real, and is what lets `scripts/12_check_world.py` run in sim. **The sim-side
+  collision world as real, and is what lets `scripts/tools/check_world.py` run in sim. **The sim-side
   depth publisher (`camera_state._publish_head_depth`) lives in the SEPARATE `unitree_sim_isaaclab`
   repo (uncommitted, user-managed) — it is NOT in this repo.**
 
@@ -118,7 +118,7 @@ Nucleus/S3-only — not local by default). Run it:
 ```bash
 TASK=Isaac-PickPlace-Props-G129-Dex3-Joint ./launch_sim.sh          # add PROPS_ROW=front|back
 # then, from this repo:
-bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py --target sim \
+bash -ic 'use_conda g1_curobo && python scripts/examples/02_pick.py --target sim \
     --source graspgenx --segment --collision-world --visualize --grasp-only'
 ```
 Notes: `--source sim_cloud` still works but only grasps the `object` cube (cube-only; point it at
@@ -132,4 +132,4 @@ PUB sockets the sim opens (see the head-depth gotcha above); `image_client.py`'s
 SUBs both. Block ground-truth pose is on `rt/sim_state` (JSON), consumed by the `sim_cloud`
 grasp source. Episode reset is `rt/reset_pose/cmd` (String_, category int). This is what enables
 the in-sim de-risk path for the grasp pipeline + the depth-ESDF collision world
-(`scripts/09_graspgen.py`, `scripts/12_check_world.py`).
+(`scripts/examples/02_pick.py`, `scripts/tools/check_world.py`).

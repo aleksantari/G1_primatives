@@ -1,9 +1,9 @@
-# `09_graspgen` pipeline — end-to-end call map
+# `examples/02_pick` pipeline — end-to-end call map
 
-**What:** how the main grasp script (`scripts/09_graspgen.py`) runs the whole pick-and-lift, from
-process wiring through grasp generation, native cuRobo `plan_grasp`, and streamed execution. Covers
-the **native** path (default); `--legacy` (sequential `plan_to_pose` probe + manual offsets) is the
-A-B baseline and is noted where it diverges. File:function references are clickable in the repo.
+**What:** how the main grasp script (`scripts/examples/02_pick.py`) runs the whole pick-and-lift, from
+process wiring through grasp generation, native cuRobo `plan_grasp`, and streamed execution. Written for
+the pre-restructure layout and refreshed for `g1_primitives`; the flow is unchanged, but line
+numbers below are approximate. File:function references are clickable in the repo.
 
 ## TL;DR
 `main()` wires the robot (planner + arm + hand + executor + camera + grasp source), applies CLI
@@ -16,38 +16,38 @@ executor (which aborts-to-hold past the tracking-error threshold).
 ## High-level flow
 
 ```
-                        scripts/09_graspgen.py : main()
+                        scripts/examples/02_pick.py : main()
                                     │
         ┌───────────────────────────┴───────────────────────────┐
-        │ 1. WIRING   _rig.connect(target)  → factory.make_robot │
+        │ 1. WIRING   g1.connect(target)  → api/robot.Robot      │
         └───────────────────────────┬───────────────────────────┘
-                                    │ builds the Robot dataclass:
+                                    │ builds the Robot facade:
    ┌──────────────┬─────────────────┼───────────────┬──────────────┬───────────────┐
    ▼              ▼                 ▼               ▼              ▼               ▼
 CuroboArm     G1_29_Arm        Dex3Hand        Executor      HeadCamera      GraspSource
- Planner      Controller      (Dex3Controller)               (image_client)  (_build_grasp_source)
-(curobo_      (robot_arm.py)  (robot_hand_     (executor.py)  rgb :55555      apriltag│graspgenx│sim_cloud
+ Planner      Controller      (Dex3Controller)               (camera_client) (api/_builders)
+(motion/      (robot_arm.py)  (robot_hand_     (executor.py)  rgb :55555      graspgenx│sim_cloud
  planner.py)   rt/lowcmd       unitree.py)                     depth :55556    (grasp/*_source.py)
   warmup()     rt/lowstate     rt/dex3/*/cmd                   (sim) / ZED
   + grasp MP                   rt/dex3/*/state                 :56555 (real)
                                     │
         ┌───────────────────────────┴───────────────────────────┐
-        │ 2. CLI OVERRIDES (main, lines 152-178)                 │
-        │   --source/--segment/--visualize → _build_grasp_source │
-        │   --abort / sim→0.40 → executor.abort_thresh           │
-        │   --speed → executor.time_dilation                     │
-        │   --grasp-only → strategies = [no approach/no lift]    │
-        │   --collision-world → planner.set_collision_world(True)│
+        │ 2. CLI OVERRIDES (main)                                │
+        │   --source/--segment/--visualize → robot.set_grasp_    │
+        │      source / set_segmenter / set_visualize            │
+        │   --abort / sim→0.40, --speed → robot.set_executor     │
+        │   --grasp-only → GraspOptions(approach/lift=False)     │
+        │   --collision-world → robot.set_collision_world(True)  │
         └───────────────────────────┬───────────────────────────┘
                                     │
         ┌───────────────────────────▼───────────────────────────┐
-        │ 3. PICK SEQUENCE  (each step operator-gated _rig.confirm)│
+        │ 3. PICK SEQUENCE  (each step operator-gated console.confirm)│
         └───────────────────────────┬───────────────────────────┘
                                     │
-   P.home(robot) ──────────► planner.plan_joint(q, home) ─► executor.run(traj)   [primitives.py:home]
-   P.open_hand(robot,side) ─► hand.open(side) ─► Dex3Controller cmd              [primitives.py:open_hand]
+   P.home(robot) ──────────► planner.plan_joint(q, home) ─► executor.run(traj)   [api/primitives.py:home]
+   P.open_hand(robot,side) ─► hand.open(side) ─► Dex3Controller cmd              [api/primitives.py:open_hand]
    cands = robot.grasp_source.grasps(robot, side, object)   ◄── ❰SUBSYSTEM A❱
-   res  = P.grasp_motion(robot, side, cands, close_cb, ...)  ◄── ❰SUBSYSTEM B❱
+   res  = P.grasp_motion(robot, side, cands, GraspOptions)   ◄── ❰SUBSYSTEM B❱
    P.home(robot)
 ```
 
@@ -55,12 +55,12 @@ CuroboArm     G1_29_Arm        Dex3Hand        Executor      HeadCamera      Gra
 
 ```
 robot.grasp_source.grasps(robot, side, "block")              [grasp/base.py: GraspSource ABC]
-   │   09 is GraspGenX-only (--source graspgenx | sim_cloud). AprilTag stays a GraspSource
-   │   (grasp/apriltag_source.py) but is the 07_pick_place baseline — not selectable here.
+   │   sources: graspgenx (live depth) | sim_cloud (sim GT) — grasp.yaml `source:` /
+   │   --source. Each grasps() call retains a typed SourceSnapshot (mask + cloud).
    │
    ├── graspgenx  (grasp/graspgenx_source.py: grasps)         ── REAL / live depth
-   │     cam.get_rgb_frame() + cam.get_depth_frame()          [image_server/image_client.py]
-   │     frames.T_pelvis_camera(q14)                          [perception/transforms.py]
+   │     cam.get_rgb_frame() + cam.get_depth_frame()          [hardware/camera_client.py]
+   │     frames.T_pelvis_camera(q14)                          [perception/frames.py]
    │     segmenter.mask(rgb) ──ZMQ :5557──► SAM3 server       [perception/segment.py, sam3_client.py]
    │     deproject_depth(depth, K, T_pc, mask, rgb) → PointCloud (pelvis)   [perception/depth.py]
    │     client.infer(cloud.points, planner=topdown, ...) ──ZMQ :5556──► GraspGenX
@@ -86,61 +86,62 @@ robot.grasp_source.grasps(robot, side, "block")              [grasp/base.py: Gra
 ## Subsystem B — `grasp_motion()` → plan → execute
 
 ```
-P.grasp_motion(robot, side, candidates, close_cb, confirm_cb, on_selected)   [primitives.py:grasp_motion]
+P.grasp_motion(robot, side, candidates, options: GraspOptions)   [api/primitives.py:grasp_motion]
+   │  options: close policy + approach/lift toggles + confirm gate + GraspObserver hooks
    │  q0 = robot.arm.get_current_dual_arm_q()
    │
-   ├─① _update_collision_world(robot, side, q0)   (gated: --collision-world)  [primitives.py:70]
+   ├─① _update_collision_world(robot, side, q0)   (gated: --collision-world)  [api/primitives.py]
    │      depth = cam.get_depth_frame();  hand_q = {L,R: hand.get_q(side)}
-   │      planner.update_grasp_world(side, depth, K, T_pc, q0, hand_q)         [curobo_planner.py:408]
+   │      planner.update_grasp_world(side, depth, K, T_pc, q0, hand_q)         [planner.py:408]
    │         ├─ EsdfMapper.esdf_from_depth(depth, K, T_pc, robot_filter)       [collision_world.py:99]
    │         │     cuRobo Mapper.integrate(CameraObservation) → compute_esdf() → VoxelGrid
-   │         │     robot_filter = robot_depth_filter(q0, hand_q)               [curobo_planner.py:388]
+   │         │     robot_filter = robot_depth_filter(q0, hand_q)               [planner.py:388]
    │         │        cuRobo RobotSegmenter (hand-active, ops_dtype=float32)
    │         │        zeros the robot's own pixels at the LIVE arm+finger pose
    │         └─ _grasp_planner(side).update_world(SceneCfg(voxel=[grid]))
    │
-   ├─② planner.plan_grasp_set_sweep(q0, side, [c.wrist_goal], strategies, ...)  [curobo_planner.py:536]
+   ├─② planner.plan_grasp_set_sweep(q0, side, [c.wrist_goal], strategies, ...)  [planner.py:536]
    │      for strategy in planner.yaml grasp.strategies:   (approach/lift offset sweep)
-   │        plan_grasp_set(...)                                                 [curobo_planner.py:456]
+   │        plan_grasp_set(...)                                                 [planner.py:456]
    │          GoalToolPose.from_poses(K wrist goals, num_goalset=K)   (single tool frame)
    │          disable_collision_links = [wrist] (+ HAND_LINKS if cw on)
    │          _grasp_planner(side).plan_grasp(goal, start, approach_axis=y, lift_axis=z, ...)
    │             └─ cuRobo: Stage1 goalset IK (hand off) → Stage2 free APPROACH (hand ON,
    │                world-collision-checked) → Stage3 linear GRASP descent (hand off) → Stage4 LIFT
    │          _hold_idle(traj, side, q0)   (pin the idle arm to home in every segment)
-   │      → GraspPlanOutcome(chosen_index, approach, grasp, lift)
-   │      on_selected(chosen, out) → _report_choice (viser mark + sim FK contact check)
+   │      → GraspPlanOutcome(chosen_index, approach, grasp, lift, strategy)
+   │      observer.on_selected(chosen, report) → viser mark + sim FK contact check
    │
    └─③ EXECUTE each segment:  executor.run(traj)                                [executor.py:112]
-          approach → grasp → [close_cb: settle + P.close_hand] → lift
+          approach → grasp → [close: settle + hand.close per options] → lift
           run(): prime(traj.q[0]) → stream q at control_hz, clock × time_dilation,
                  tauff = gravity_comp G(q);  abort-to-hold if |q_des−q_meas| > abort_thresh
                  (◄─ the tracking-error abort: full-speed approach can trip 0.40; see
                   docs/trajectory_speed_tracking.md)
    │
    ▼
-GraspResult(ok, info, chosen_index)   → on failure: 09 recovers (open_hand + home)
+GraspResult(ok, info, report)         → on failure: 02_pick recovers (open_hand + home)
 ```
 
 ## Key files & functions
 
-- Entry: `scripts/09_graspgen.py:98` `main()` · wiring `scripts/_rig.py:44` `connect()` →
-  `g1_classical_manip/factory.py:183` `make_robot()` (`_build_grasp_source` picks the source).
-- Primitives (`g1_classical_manip/primitives.py`): `home` :33 · `open_hand` :183 · `grasp_motion`
-  :101 · `_update_collision_world` :70.
-- Grasp sources (`g1_classical_manip/grasp/`): `graspgenx_source.py:35`, `sim_cloud_source.py:73`,
-  `apriltag_source.py`; transform `tool_transform.py: candidates_from_grasps` / `build_T_wristyaw_grasp`.
+- Entry: `scripts/examples/02_pick.py` `main()` · wiring `g1_primitives/api/robot.py`
+  `Robot.connect()` (`api/_builders.build_grasp_source` picks the source).
+- Primitives (`g1_primitives/api/primitives.py`): `home` · `open_hand` · `grasp_motion` ·
+  `_update_collision_world`.
+- Grasp sources (`g1_primitives/grasp/`): `graspgenx_source.py`, `sim_cloud_source.py`;
+  transform `tool_transform.py: candidates_from_grasps` / `build_T_wristyaw_grasp`.
   Wire clients: `graspgenx_client.py` (`infer`, protocol v2 → `(grasps, conf, branch_tags)`),
   `perception/sam3_client.py`.
-- Planner (`g1_classical_manip/motion/curobo_planner.py`): `plan_grasp_set_sweep` :536 ·
+- Planner (`g1_primitives/motion/planner.py`): `plan_grasp_set_sweep` :536 ·
   `plan_grasp_set` :456 · `update_grasp_world` :408 · `robot_depth_filter` :388 · `_hold_idle` :435 ·
   `_grasp_planner` (single-tool-frame, voxel-capable when the world is on).
-- Collision world (`g1_classical_manip/motion/collision_world.py`): `EsdfMapper.esdf_from_depth` :99.
-- Executor (`g1_classical_manip/motion/executor.py`): `run` :112 (`prime` → stream ×`time_dilation`
+- Collision world (`g1_primitives/motion/collision_world.py`): `EsdfMapper.esdf_from_depth` :99.
+- Executor (`g1_primitives/motion/executor.py`): `run` :112 (`prime` → stream ×`time_dilation`
   → abort-to-hold), `_tauff` = gravity-comp `G(q)`.
 
 ## Latency profiling (`--latency`)
-`09_graspgen --latency` records a timing span at each stage of the call map above and, at the end,
+`examples/02_pick --latency` records a timing span at each stage of the call map above and, at the end,
 prints a table + saves a **timeline (Gantt) + per-component bar chart** (`--latency-out`, default
 `latency.png`; a sibling `.json` of raw spans too). Off by default (zero overhead). Spans, by
 category:
@@ -150,10 +151,10 @@ category:
   `grasp/graspgenx_client.py:infer`) — so SAM3's cv2-GUI refinement is NOT counted (it falls into the
   untimed gap). `sim_cloud` swaps `depth_grab`+`sam3`+`deproject` for one `cloud_build` span.
 - **exec** (motion): `exec:approach|grasp|lift` (executor.run in `grasp_motion`), `home:*`, `hand:*`.
-- **wait** (human): `wait: <step>` from each `_rig.confirm` keyboard gate.
+- **wait** (human): `wait: <step>` from each `console.confirm` keyboard gate.
 The summary footer splits total **compute** vs **exec** vs **wait** vs **untimed gap (GUI/idle)** vs
 **wall-clock** — i.e. true pipeline speed separated from the human-in-the-loop overhead. The recorder
-is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enabled).
+is `g1_primitives/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enabled).
 
 ## External services / buses
 - ZMQ services (separate repos/envs): **GraspGenX** `:5556`, **SAM3** `:5557`, **viser** `:8080`.
@@ -180,7 +181,7 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
 (the *start*, i.e. current config, OR the *end* pre-grasp/grasp goal violates collision) or
 **"No grasp in goal set was reachable"** (no candidate solved IK). Two flags open it up:
 - **`--debug-planner`** — turns up cuRobo's *own* logger (`set_curobo_log_level("debug")` in
-  `motion/curobo_planner.py`) so the graph planner's "Start or End state in collision", the IK
+  `motion/planner.py`) so the graph planner's "Start or End state in collision", the IK
   stage's reachability message, and per-stage trajopt warnings are **printed** instead of swallowed.
   Tells you *which phase* rejected.
 - **`--diagnose`** — on any plan/exec abort, runs `planner.diagnose(q_fail, side, world_points=…)`
@@ -213,7 +214,7 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
   predicate (+ a "near" tier at the optimizer eta), labels offending spheres by link, and refuses to
   pass a side whose planner still holds the empty build grid. `09 --diagnose --collision-world` runs
   it on the START config; `diagnose_candidates` uses it for the per-candidate world column whenever
-  the live ESDF is loaded; `12_check_world --diagnose [--side] [--exclude-mask m.npy]` runs it
+  the live ESDF is loaded; `tools/check_world --diagnose [--side] [--exclude-mask m.npy]` runs it
   standalone (live or `--frame` offline), printing the truth table next to the legacy geometric one.
 
 ### The corrected plan_grasp mental model (what the audit established)
@@ -246,9 +247,9 @@ is `g1_classical_manip/latency.py` (`LOG`, a no-op `LOG.span(...)` unless enable
   near-singular / ESDF penetration → they won't.
 
 ### Offline truth-test chain (no sim/robot needed after one capture)
-  `11_capture_frame --target sim --out captures/X.npz` (records depth + intrinsics + T_pelvis_camera
-  + arm/hand q) → `10_segment --frame captures/X.npz --save` (writes `captures/X_mask.npy`) →
-  `12_check_world --frame captures/X.npz --exclude-mask captures/X_mask.npy --diagnose --side left
+  `tools/capture_frame --target sim --out captures/X.npz` (records depth + intrinsics + T_pelvis_camera
+  + arm/hand q) → `tools/segment --frame captures/X.npz --save` (writes `captures/X_mask.npy`) →
+  `tools/check_world --frame captures/X.npz --exclude-mask captures/X_mask.npy --diagnose --side left
   --visualize` → reads out: is the START in collision per the real gate? is the object cut cleanly
   (`--probe <xyz>` flips IN THE WORLD → ERASED)? what remains near the pre-grasp region?
 

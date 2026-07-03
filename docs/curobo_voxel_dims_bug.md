@@ -84,7 +84,7 @@ Any one of these closes the bug; (a) is the most robust:
 
 ## Workaround in this repo (active)
 
-`g1_classical_manip/motion/collision_world.py: kernel_safe_dims(dims, voxel_size)` re-authors
+`g1_primitives/motion/collision_world.py: kernel_safe_dims(dims, voxel_size)` re-authors
 every `VoxelGrid`'s dims a **quarter-voxel high** (`(k + 0.25) * voxel_size`) before the planner
 loads it — cuRobo's Python-side `round()` (`VoxelGrid.get_grid_shape`) still recovers `k`, while
 the kernel's float32 ratio (`k + 0.25`) truncates to `k`. Applied to both the Mapper output

@@ -108,7 +108,7 @@ Empty result = `grasps` shape `(0,4,4)`, `confidences` `(0,)`, `branch_tags` `[]
 - **`grasp/graspgenx_source.py`** — `GraspGenXGraspSource` reads `planner`/`obb_density`/
   `skip_obb_rule` from `grasp.yaml: graspgenx` and stashes each grasp's tag on
   `GraspCandidate.extra["branch_tag"]` (debug/viz). Selection downstream
-  (`09_graspgen.py::_select_candidate`) is **first reachable in confidence order**.
+  (`examples/02_pick.py::_select_candidate`) is **first reachable in confidence order**.
 - **`configs/grasp.yaml` → `graspgenx`** — `planner` / `obb_density` / `skip_obb_rule` plus
   `num_grasps` / `topk` / `grasp_threshold` / `voxel_m` and the tool-transform constants.
   Current default: `planner: topdown`, `obb_density: dense`.
@@ -117,7 +117,7 @@ Empty result = `grasps` shape `(0,4,4)`, `confidences` `(0,)`, `branch_tags` `[]
 
 ### Minimal call
 ```python
-from g1_classical_manip.grasp.graspgenx_client import GraspGenXClient
+from g1_primitives.grasp.graspgenx_client import GraspGenXClient
 with GraspGenXClient(host="127.0.0.1", port=5556) as c:
     grasps, conf, tags = c.infer(cloud_xyz, gripper_name="unitree_g1", planner="topdown")
 # grasps: (K,4,4) pelvis-frame, conf-desc; tags[i] in {"obb","diff"}

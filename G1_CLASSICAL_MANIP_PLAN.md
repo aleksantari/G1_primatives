@@ -1,4 +1,12 @@
-# g1_classical_manip — Plan & Source of Truth
+# g1_classical_manip — Plan & Source of Truth (HISTORICAL)
+
+> **HISTORICAL DOCUMENT (frozen 2026-07-02).** This is the design plan that carried the
+> repo from v1 to the hardware-validated grasp pipeline. The `api_dev` restructure has
+> since landed: the package is now **`g1_primitives`** with a `Robot` facade
+> (`g1_primitives.connect`), scripts are regrouped under `scripts/{checks,examples,tools}/`,
+> and the AprilTag stack (incl. `06_detect`/`07_pick_place` below) was deleted. The
+> current source of truth is **`README.md` + `CLAUDE.md`**; script names below are
+> pre-restructure (map: `scripts/README.md`). Kept for design rationale and history.
 
 A **cuRobo-native motion library** for the Unitree G1 (29-DoF, Dex3-1 hands), exposing a
 small, growing set of **configurable action + perception primitives** an **LLM agent composes**

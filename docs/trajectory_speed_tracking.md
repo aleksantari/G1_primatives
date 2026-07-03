@@ -24,7 +24,7 @@ clean track was at 0.5, not 1.0). See [[trajectory-speed-tracking]] in memory.
   already references.)
 
 ## Symptom (observed)
-Sim, `09_graspgen --collision-world` (full pipeline, real-grasp execution gated):
+Sim, `examples/02_pick --collision-world` (full pipeline, real-grasp execution gated):
 ```
 grasp_motion: approach: tracking error 0.401 > 0.400 rad at traj_t=0.58s
 GRASP-GEN ABORTED (RuntimeError): approach: tracking error 0.401 > 0.400 rad at traj_t=0.58s
@@ -33,7 +33,7 @@ The trajectory **planned fine** — this is an *execution* abort, not a planning
 is a **hair** over threshold (`0.401 > 0.400`), i.e. marginally infeasible, not grossly broken.
 
 ## Diagnosis (confirmed)
-`09_graspgen --speed 0.5` (slow the SAME trajectory's playback by half) → the approach **tracks
+`examples/02_pick --speed 0.5` (slow the SAME trajectory's playback by half) → the approach **tracks
 clean, no abort**. So the cause is the planned **dynamics being too hot for the controller at
 full-speed playback**, not the robot model geometry, the self-filter, or the thumb-lock change
 (none of which touch the 14-arm-joint trajectory). This is exactly the `build_robot_model`
@@ -45,7 +45,7 @@ hardware can execute).
 | | Sim | Real |
 |---|---|---|
 | `time_dilation` (playback) | **1.0** (factory forces it; sim bypasses the velocity clip) | **0.5** (planner.yaml default) |
-| abort threshold (`09`) | **0.40** (loosened for sim in `09_graspgen.py`) | **0.20** (executor default) |
+| abort threshold (`09`) | **0.40** (loosened for sim in `examples/02_pick.py`) | **0.20** (executor default) |
 | arm velocity clip (`clip_arm_q_target`, caps PD torque, measured-relative) | **bypassed** (`simulation_mode`) | **active** — the reason real needs 0.5 |
 
 Read the table carefully — the naïve conclusion ("sim-only") is wrong:
@@ -71,7 +71,7 @@ it. Faster real motion (toward 1.0) and tighter routing (next two watch-list ite
 
 ## The two levers
 1. **`executor.time_dilation`** (workaround, in place). `planner.yaml: executor.time_dilation`;
-   per-run `09_graspgen --speed` / `04_move --speed`. Slows playback of the *same* path. Sim is
+   per-run `examples/02_pick --speed` / `checks/05_move --speed`. Slows playback of the *same* path. Sim is
    forced to 1.0 in `factory.py`; real defaults to 0.5. **Tuning sim and real means tuning this
    per target.**
 2. **`acceleration_scale` / `velocity_scale`** in `configs/curobo/g1_dex3_curobo.yml` cspace
@@ -99,8 +99,8 @@ hardware-validated config.
   first lowering `acceleration_scale`, or tracking diverges (this is the whole point).
 
 ## Pointers
-- Symptom/abort logic: `g1_classical_manip/motion/executor.py` (`abort_thresh`, `time_dilation`).
-- Sim overrides: `09_graspgen.py` (`--speed`, `--abort`; sim sets `abort_thresh = 0.40`).
+- Symptom/abort logic: `g1_primitives/motion/executor.py` (`abort_thresh`, `time_dilation`).
+- Sim overrides: `examples/02_pick.py` (`--speed`, `--abort`; sim sets `abort_thresh = 0.40`).
 - Model dynamics: `configs/curobo/g1_dex3_curobo.yml` cspace; recipe
   `configs/curobo/build_g1_dex3.py`.
 - Related: `docs/gravity_comp.md` (the other half of real-arm trackability — feed-forward torque),

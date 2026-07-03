@@ -17,8 +17,8 @@ grasps against the object cloud (the client-side equivalent of GraspGenX's
   markers, colored by confidence) + the gripper **collision-mesh overlay** + a
   confidence threshold slider. Renders in the **pelvis frame**, so grasps sit on the cloud.
 - Two ways in:
-  - **Integrated** (during a pick): `python scripts/09_graspgen.py --source graspgenx --visualize ...`
-  - **Standalone** (inspect a saved cloud, no robot): `python scripts/10_graspgen_viz.py --pcd <cloud>`
+  - **Integrated** (during a pick): `python scripts/examples/02_pick.py --source graspgenx --visualize ...`
+  - **Standalone** (inspect a saved cloud, no robot): `python scripts/tools/graspgen_viz.py --pcd <cloud>`
 - Lives **entirely on the client**. The ZMQ server stays a headless inference box.
 - Imports **nothing** from the `graspgenx` package (that would pull torch + a multi-GB
   auto-download). The viser primitives + gripper loader are vendored, exactly like
@@ -50,20 +50,20 @@ Open the viewer at `http://localhost:8080` (forward it if headless:
 ### Integrated (see grasps during a real pick)
 
 ```bash
-bash -ic 'use_conda g1_curobo && python scripts/09_graspgen.py \
+bash -ic 'use_conda g1_curobo && python scripts/examples/02_pick.py \
     --target real --source graspgenx --segment interactive --visualize'
 ```
 
-`--visualize` flips `graspgenx.visualize.enabled` on for that run and rebuilds the
-grasp source. Sequence: the source draws the cloud + all ranked grasps right after
-inference; after `_select_candidate` picks the reachable one, the script overlays it
-in **green**. The viser server runs in the background — it does **not** block the
-operator-gated step prompts.
+`--visualize` calls `robot.set_visualize(True)` (flips `graspgenx.visualize.enabled`
+and rebuilds the grasp source). Sequence: the source draws the cloud + all ranked
+grasps right after inference; after cuRobo picks the goalset winner, the script's
+`GraspObserver.on_selected` overlays it in **green**. The viser server runs in the
+background — it does **not** block the operator-gated step prompts.
 
 ### Standalone (inspect a saved cloud, no robot, no motion)
 
 ```bash
-bash -ic 'use_conda g1_curobo && python scripts/10_graspgen_viz.py \
+bash -ic 'use_conda g1_curobo && python scripts/tools/graspgen_viz.py \
     --pcd captures/cloud.npy --gripper_name unitree_g1'
 ```
 
@@ -79,7 +79,7 @@ visualize:
   enabled: false          # opt-in; --visualize flips it for one run
   port: 8080
   show_mesh: true         # overlay the gripper mesh at the top/chosen grasp
-  threshold_tuner: false  # confidence slider; OFF in the gated pick flow, ON in 10_graspgen_viz
+  threshold_tuner: false  # confidence slider; OFF in the gated pick flow, ON in tools/graspgen_viz
   max_markers: 100        # cap markers (viser slows with thousands)
   gripper_asset_dir: "assets/grippers"   # <dir>/<gripper_name>/{config.json, coll_mesh.obj}
 ```
@@ -94,26 +94,25 @@ GraspGenXGraspSource.grasps()                 # grasp/graspgenx_source.py
   client.infer(cloud) -> grasps (K,4,4), conf (K,)   [pelvis frame]
   └─ if self.viz: viz.show_candidates(cloud.points, grasps, conf)   # cloud + all grasps
 
-09_graspgen.py
-  chosen = _select_candidate(...)              # highest-confidence reachable grasp
+examples/02_pick.py (GraspObserver.on_selected — cuRobo's goalset winner)
   └─ viz.mark_chosen(chosen.grasp_pose.homogeneous)   # green overlay
 
-factory._build_grasp_source()                  # builds GraspViz from config, injects viz=
+api/_builders.build_grasp_source()             # builds GraspViz from config, injects viz=
 ```
 
 **Files** (all new/edited in this repo; nothing in GraspGenX):
 
 | File | Role |
 | --- | --- |
-| `g1_classical_manip/viz/viser_primitives.py` | Drawing fns **vendored** from GraspGenX `utils/viser_utils.py` (viser/trimesh/numpy only). |
-| `g1_classical_manip/viz/gripper_geom.py` | Torch-free loader: `config.json` → `sweep_volume`, `coll_mesh.obj` → mesh. Graceful fallback. |
-| `g1_classical_manip/viz/grasp_viz.py` | `GraspViz`: `show_candidates()`, `mark_chosen()`, `spin()`. |
-| `g1_classical_manip/viz/__init__.py` | Lazy `GraspViz` (importing the package does **not** pull viser). |
+| `g1_primitives/viz/viser_primitives.py` | Drawing fns **vendored** from GraspGenX `utils/viser_utils.py` (viser/trimesh/numpy only). |
+| `g1_primitives/viz/gripper_geom.py` | Torch-free loader: `config.json` → `sweep_volume`, `coll_mesh.obj` → mesh. Graceful fallback. |
+| `g1_primitives/viz/grasp_viz.py` | `GraspViz`: `show_candidates()`, `mark_chosen()`, `spin()`. |
+| `g1_primitives/viz/__init__.py` | Lazy `GraspViz` (importing the package does **not** pull viser). |
 | `grasp/graspgenx_source.py` | `+viz=` param; one guarded `show_candidates(...)` after inference. |
-| `factory.py` | `_build_grasp_viz()` builds it from config; injected in the `graspgenx` branch. |
+| `api/_builders.py` | `build_grasp_viz()` builds it from config; injected in the `graspgenx` branch. |
 | `configs/grasp.yaml` | `graspgenx.visualize` block. |
-| `scripts/09_graspgen.py` | `--visualize` flag + the `mark_chosen` overlay. |
-| `scripts/10_graspgen_viz.py` | Standalone inspector. |
+| `scripts/examples/02_pick.py` | `--visualize` flag + the `mark_chosen` overlay. |
+| `scripts/tools/graspgen_viz.py` | Standalone inspector. |
 | `assets/grippers/unitree_g1/` | `config.json` + `coll_mesh.obj`, copied from the gripper_descriptions tree. |
 
 ---
@@ -151,7 +150,7 @@ despite the upstream gripper_descriptions README mislabeling it.
 ## Verified
 
 - All new/edited files compile; **zero** `graspgenx` imports under `viz/`.
-- Lazy import holds: `import g1_classical_manip.viz` does **not** load viser.
+- Lazy import holds: `import g1_primitives.viz` does **not** load viser.
 - Loader against the real asset (`g1_curobo`): `sweep_volume (6,)`, `has_mesh=True`, 12,130 verts.
 - GraspGenX repo untouched by this work.
 
@@ -159,18 +158,18 @@ despite the upstream gripper_descriptions README mislabeling it.
 
 Need a **live GraspGenX server + a real pelvis cloud + a browser** (couldn't be run headless):
 
-1. **Standalone:** server up → `scripts/10_graspgen_viz.py --pcd <cloud>` → viser at :8080
+1. **Standalone:** server up → `scripts/tools/graspgen_viz.py --pcd <cloud>` → viser at :8080
    shows cloud + confidence-colored markers + blue top grasp + gripper mesh; slider toggles markers.
-2. **Integrated:** `scripts/09_graspgen.py --source graspgenx --segment none --visualize` → cloud +
+2. **Integrated:** `scripts/examples/02_pick.py --source graspgenx --segment none --visualize` → cloud +
    ranked grasps + **green** chosen grasp before the approach move. This also confirms the
    pelvis-frame contract (mesh on the cloud, not at the origin).
 
 ---
 
-## Related: the collision-world viz (`12_check_world.py`)
+## Related: the collision-world viz (`tools/check_world.py`)
 
 This doc is about **grasp candidates** (cloud + ranked 6-DoF grasps + gripper mesh). A
-separate viser viewer, **`scripts/12_check_world.py --visualize`**, renders the
+separate viser viewer, **`scripts/tools/check_world.py --visualize`**, renders the
 **depth-ESDF collision world** in isolation (no grasps, no planning, no motion) so you can
 verify ESDF placement and the robot self-filter:
 
