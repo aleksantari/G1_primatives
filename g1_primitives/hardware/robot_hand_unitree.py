@@ -1,7 +1,7 @@
 # Threaded Dex3 / Dex1 controllers for g1_primitives.
 #
 # Re-wrapped from unitreerobotics/xr_teleoperate (Apache-2.0) via the user's
-# G1_teleop_dex fork: teleop/robot_control/robot_hand_unitree.py. See NOTICE.
+# G1_teleop_dex fork: teleop/hardware/robot_hand_unitree.py. See NOTICE.
 #
 # The upstream Dex3_1_Controller welds its control loop to XR hand-retargeting
 # and a multiprocessing.Process, and its state subscriber reads only

@@ -38,7 +38,7 @@ import numpy as np
 import _rig
 from g1_primitives.factory import make_robot
 from g1_primitives.ee.hand_base import LEFT, RIGHT
-from g1_primitives.motion.planner_base import DOF
+from g1_primitives.motion.trajectory import DOF
 from g1_primitives.motion.collision_world import EsdfMapper
 from g1_primitives.perception.depth import deproject_depth
 
@@ -257,7 +257,8 @@ def main():
         if robot.planner.update_grasp_world(args.side, depth, K, T_pc, q_arm, hand_q=hand_q,
                                             object_mask=raw_mask):   # planner dilates per config
             print(f"--- truth-test: the grasp planner's OWN ESDF gate at the self-filter q [{src}] ---")
-            wc = robot.planner.world_check(args.side, q_arm)
+            from g1_primitives.motion.diagnostics import world_check
+            wc = world_check(robot.planner, args.side, q_arm)
         else:
             print("truth-test skipped (planner world update failed)")
 
@@ -291,7 +292,8 @@ def main():
         if args.diagnose:                   # numeric backing: WHY q_arm is (self/world) in collision
             from g1_primitives.viz import viser_primitives as vp
             # geometric predicate (legacy, side-by-side with the truth-test above)
-            out = robot.planner.diagnose(q_arm, args.side, world_points=(occ if len(occ) else None),
+            from g1_primitives.motion.diagnostics import diagnose
+            out = diagnose(robot.planner, q_arm, args.side, world_points=(occ if len(occ) else None),
                                          voxel_size=float(p["esdf_voxel_size"]))
             if len(out["offending_centers"]):
                 vp.add_collision_spheres(srv, out["offending_centers"], out["offending_radii"],

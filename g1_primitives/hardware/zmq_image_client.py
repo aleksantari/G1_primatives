@@ -18,10 +18,10 @@
 # which is licensed under the MIT License.
 # ------------------------------------------------------------------------------
 # VENDORED into g1_primitives from unitree_lerobot
-# (unitree_lerobot/eval_robot/image_server/image_client.py). Only change vs upstream:
+# (unitree_lerobot/eval_robot/hardware/camera_client.py). Only change vs upstream:
 # the `logging_mp` import is made optional (stdlib-logging fallback). The threaded
 # ZMQ-SUB + REQ-config(:60000) + TeleImage client is used as-is; head-camera stereo
-# slicing + RGB live in the HeadCamera wrapper (image_server/image_client.py). See NOTICE.
+# slicing + RGB live in the HeadCamera wrapper (hardware/camera_client.py). See NOTICE.
 # ------------------------------------------------------------------------------
 
 import cv2

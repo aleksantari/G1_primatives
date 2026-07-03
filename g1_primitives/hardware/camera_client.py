@@ -42,7 +42,7 @@ class HeadCamera:
         self._depth_pref = kwargs.get("depth", None)
 
         if backend == "unitree":
-            from g1_primitives.image_server.zmq_image_client import ImageClient
+            from g1_primitives.hardware.zmq_image_client import ImageClient
             self._client = ImageClient(
                 host=host, request_port=int(kwargs.get("request_port", 60000)),
                 request_bgr=True)  # request_bgr -> the client decodes BGR in a bg thread

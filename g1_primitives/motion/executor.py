@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from g1_primitives.motion.planner_base import JointTrajectory, DOF
+from g1_primitives.motion.trajectory import JointTrajectory, DOF
 
 
 @dataclass

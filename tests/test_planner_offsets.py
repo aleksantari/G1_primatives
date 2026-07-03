@@ -11,7 +11,7 @@ import yaml
 
 from g1_primitives.spatial.pose import Pose, rpy_to_matrix
 from g1_primitives.ee.hand_base import LEFT, RIGHT
-from g1_primitives.motion.curobo_planner import approach_offset_for_side
+from g1_primitives.motion.planner import approach_offset_for_side
 from g1_primitives.grasp.tool_transform import build_T_wristyaw_grasp, wrist_goal_from_grasp
 
 

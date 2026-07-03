@@ -23,7 +23,7 @@ from typing import Optional, Dict, Any
 import numpy as np
 import yaml
 
-from g1_primitives.motion.curobo_planner import CuroboArmPlanner
+from g1_primitives.motion.planner import CuroboArmPlanner
 from g1_primitives.motion.executor import Executor
 
 _CONFIG_FILES = {"robot": "robot.yaml", "planner": "planner.yaml", "hands": "hands.yaml",
@@ -156,7 +156,7 @@ def _build_grasp_source(frames, cfg: Dict[str, Any]):
 
 
 def _build_camera(cfg: Dict[str, Any]):
-    from g1_primitives.image_server.image_client import HeadCamera
+    from g1_primitives.hardware.camera_client import HeadCamera
     st = (cfg["camera"] or {}).get("stream", {})
     backend = st.get("backend", "zmq")
     # forward the rest of the stream block (port / request_port / stereo / stereo_side
@@ -201,8 +201,8 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
 
     # --- DDS-connected controllers ---
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-    from g1_primitives.robot_control.robot_arm import G1_29_ArmController
-    from g1_primitives.robot_control.robot_hand_unitree import (
+    from g1_primitives.hardware.robot_arm import G1_29_ArmController
+    from g1_primitives.hardware.robot_hand_unitree import (
         Dex3Controller, Dex1Controller)
     from g1_primitives.ee.dex3 import Dex3Hand
     from g1_primitives.ee.dex1 import Dex1Hand
@@ -228,7 +228,7 @@ def make_robot(config_dir: str = DEFAULT_CONFIG_DIR, connect_dds: bool = False,
     # sim. MotionSwitcher needs DDS already initialised (above).
     do_enter = bool(enter_debug_mode) and not sim
     if do_enter:
-        from g1_primitives.robot_control.motion_switcher import MotionSwitcher
+        from g1_primitives.hardware.motion_switcher import MotionSwitcher
         status, active = MotionSwitcher().Enter_Debug_Mode()
         print(f"[make_robot] MotionSwitcher.Enter_Debug_Mode -> status={status}, "
               f"remaining active mode={active}")

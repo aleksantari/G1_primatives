@@ -23,7 +23,7 @@ CLEAN_MODULES = [
     "g1_primitives.grasp.tool_transform",
     "g1_primitives.grasp.graspgenx_client",
     "g1_primitives.ee.hand_base",
-    "g1_primitives.motion.planner_base",
+    "g1_primitives.motion.trajectory",
 ]
 
 
@@ -48,5 +48,5 @@ def test_perception_and_base_layers_import_without_heavy_deps():
 def test_motion_planner_module_scope_is_torch_free():
     # curobo_planner defers torch/cuRobo into methods (the FakeMP/__new__ test pattern
     # depends on this) -- importing the MODULE must stay cheap.
-    hit = _probe("g1_primitives.motion.curobo_planner", ("torch", "curobo"))
+    hit = _probe("g1_primitives.motion.planner", ("torch", "curobo"))
     assert not hit, f"motion.curobo_planner pulled {hit} at module scope"

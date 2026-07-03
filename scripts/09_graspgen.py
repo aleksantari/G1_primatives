@@ -45,16 +45,6 @@ def _shift_z(pose, dz: float):
     return p
 
 
-def _approach_pose(grasp_wrist, grasp_pose, dist: float):
-    """Pre-grasp: back off `dist` along the grasp APPROACH axis (grasp +Z = into the object)
-    when the 6-DoF grasp frame is known (always, for GraspGenX/sim_cloud), else straight up
-    (world +z; defensive fallback). So the descend sweeps along the gripper's approach line."""
-    axis = grasp_pose.rotation[:, 2] if grasp_pose is not None else np.array([0.0, 0.0, -1.0])
-    p = grasp_wrist.copy()
-    p.translation = grasp_wrist.translation - dist * np.asarray(axis, float)
-    return p
-
-
 def _finger_contact_check(robot, side, wrist_goal, object_center):
     """SIM verification the viser mesh overlay can't do: FK OUR Dex3 fingertips at `wrist_goal`
     + the power_close preset and report how close our grasp contact lands to the TRUE object
@@ -154,7 +144,7 @@ def main():
     robot = _rig.connect(args.target, connect_hand=True, connect_camera=True,
                          camera_config=_rig.camera_config_for(args.target))
     if args.debug_planner:
-        from g1_primitives.motion.curobo_planner import set_curobo_log_level
+        from g1_primitives.motion.diagnostics import set_curobo_log_level
         set_curobo_log_level("debug")
     if args.source or args.segment is not None or args.visualize:   # overrides of grasp.yaml
         from g1_primitives.factory import _build_grasp_source
@@ -294,32 +284,11 @@ def main():
     except Exception as e:                       # noqa: BLE001 - top-level task recovery
         print(f"\nGRASP-GEN ABORTED ({type(e).__name__}): {e}")
         if args.diagnose:                        # explain the failure config BEFORE recovery moves it
-            try:
-                q_fail = robot.arm.get_current_dual_arm_q()
-                wpts = robot.planner.collision_world_points()
-                viz = getattr(robot.grasp_source, "viz", None)
-                print("--- diagnose: START config (current) ---")
-                out = robot.planner.diagnose(q_fail, side, world_points=wpts)
-                if viz is not None and len(out["offending_centers"]):   # magenta = start offenders
-                    viz.show_collision_spheres(out["offending_centers"], out["offending_radii"],
-                                               color=[255, 0, 255], name="diag_offenders")
-                if args.collision_world:         # TRUTH-TEST: the planner's OWN ESDF gate at start --
-                    wc = robot.planner.world_check(side, q_fail)   # the real 'Start or End' predicate
-                    if viz is not None and len(wc["offending_centers"]):   # red = gate-failing spheres
-                        viz.show_collision_spheres(wc["offending_centers"], wc["offending_radii"],
-                                                   color=[255, 60, 60], name="diag_world_gate")
-                if cands:                        # END: sweep the top-K candidates' grasp + pre-grasp
-                    gp = robot.cfg["planner"].get("grasp") or {}
-                    strat = (gp.get("strategies") or [{}])[0]
-                    dist = abs(float(strat.get("approach_offset", -0.10)))
-                    grasp_goals = [c.wrist_goal for c in cands]
-                    pregrasp_goals = [_approach_pose(c.wrist_goal, c.grasp_pose, dist) for c in cands]
-                    print(f"--- diagnose: END configs (top candidates, pre-grasp back-off {dist:.2f}m) ---")
-                    robot.planner.diagnose_candidates(
-                        side, grasp_goals, pregrasp_goals, world_points=wpts,
-                        k=args.diagnose_k, start_q_repo14=q_fail)
-            except Exception as de:              # noqa: BLE001 - diagnostics must never mask the abort
-                print(f"diagnose failed: {de}")
+            from g1_primitives.motion.diagnostics import explain_failure
+            explain_failure(robot.planner, side, robot.arm.get_current_dual_arm_q(),
+                            candidates=cands, grasp_cfg=robot.cfg["planner"].get("grasp"),
+                            viz=getattr(robot.grasp_source, "viz", None),
+                            k=args.diagnose_k, collision_world=args.collision_world)
         print("recovering -> open hand + home ...")
         try:
             P.open_hand(robot, side)

@@ -1,5 +1,5 @@
 # Adapted from unitreerobotics/xr_teleoperate (Apache-2.0) and the user's
-# G1_teleop_dex fork: teleop/robot_control/robot_arm.py -> G1_29_ArmController.
+# G1_teleop_dex fork: teleop/hardware/robot_arm.py -> G1_29_ArmController.
 # See NOTICE for attribution. Kept verbatim except: trimmed the unused
 # H1/H1_2/G1_23 LowState helpers and the teleop __main__ demo. The tuned gains
 # and the debug(rt/lowcmd)/motion(rt/arm_sdk) split are preserved.

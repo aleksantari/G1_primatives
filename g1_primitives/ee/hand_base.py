@@ -1,6 +1,6 @@
 """End-effector abstraction (CLAUDE.md: thin interface over Dex3/Dex1).
 
-A Hand wraps a low-level threaded controller (robot_control.robot_hand_unitree)
+A Hand wraps a low-level threaded controller (hardware.robot_hand_unitree)
 and adds named presets + grasp verification from motor stall / tau_est / press
 sensors. Concrete hands: ee.dex3.Dex3Hand, ee.dex1.Dex1Hand. The factory picks
 one from configs/robot.yaml `hand:`.

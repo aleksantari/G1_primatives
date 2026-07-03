@@ -10,7 +10,7 @@ import pytest
 
 from g1_primitives.spatial.pose import Pose
 from g1_primitives.ee.hand_base import RIGHT
-from g1_primitives.motion.curobo_planner import (
+from g1_primitives.motion.planner import (
     CuroboArmPlanner, GraspPlanOutcome, PlanningError, REPO_ARM, WRIST_FRAME)
 
 TOOL_FRAMES = ["left_wrist_yaw_link", "right_wrist_yaw_link", "d435_link"]
@@ -254,7 +254,7 @@ def test_plan_grasp_set_empty_raises():
 
 # --------------------------------------------------------------- depth-ESDF collision world
 def test_plan_grasp_set_disables_hand_links_when_cw_on(monkeypatch):
-    from g1_primitives.motion.curobo_planner import HAND_LINKS
+    from g1_primitives.motion.planner import HAND_LINKS
     _inject_curobo_types(monkeypatch)
     mp = FakeMP(_grasp_result())
     p = _planner(mp)
@@ -295,7 +295,7 @@ def test_plan_grasp_set_left_mirror_flips_y_offset(monkeypatch):
 
 
 def test_hand_links_map():
-    from g1_primitives.motion.curobo_planner import HAND_LINKS
+    from g1_primitives.motion.planner import HAND_LINKS
     from g1_primitives.ee.hand_base import LEFT
     assert HAND_LINKS[RIGHT] == [
         "right_hand_palm_link", "right_hand_thumb_0_link", "right_hand_thumb_1_link",
@@ -343,7 +343,7 @@ def test_seg_positions_maps_hands_by_name_not_index():
     # The Dex3 get_q RIGHT order is thumb,thumb,thumb,INDEX,INDEX,MIDDLE,MIDDLE -- but cuRobo orders
     # the right hand thumb,middle,index. A raw-index copy would swap index<->middle. _seg_positions
     # must place them BY NAME. (LEFT get_q order already matches cuRobo, so it's a straight map.)
-    from g1_primitives.motion.curobo_planner import _seg_positions, REPO_ARM
+    from g1_primitives.motion.planner import _seg_positions, REPO_ARM
     from g1_primitives.ee.hand_base import LEFT, RIGHT
     seg_names = list(REPO_ARM) + _cur_hand("left") + _cur_hand("right")
     q_arm = np.arange(14, dtype=float)
@@ -360,7 +360,7 @@ def test_seg_positions_maps_hands_by_name_not_index():
 
 
 def test_seg_positions_defaults_hands_open_without_hand_q():
-    from g1_primitives.motion.curobo_planner import _seg_positions, REPO_ARM
+    from g1_primitives.motion.planner import _seg_positions, REPO_ARM
     seg_names = list(REPO_ARM) + ["right_hand_thumb_0_joint", "left_hand_index_1_joint"]
     d = dict(zip(seg_names, _seg_positions(seg_names, np.ones(14), None)))
     assert d["right_hand_thumb_0_joint"] == 0.0 and d["left_hand_index_1_joint"] == 0.0
@@ -377,7 +377,7 @@ def test_update_grasp_world_noops():
 
 # --------------------------------------------------------------- _hold_idle
 def test_hold_idle_pins_idle_arm():
-    from g1_primitives.motion.planner_base import JointTrajectory
+    from g1_primitives.motion.trajectory import JointTrajectory
     from g1_primitives.ee.hand_base import LEFT
     p = CuroboArmPlanner.__new__(CuroboArmPlanner)
     # a 4-step trajectory where every joint ramps (so drift would show); idle arm must be pinned.
