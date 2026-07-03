@@ -16,7 +16,7 @@ from g1_primitives.motion.executor import Executor
 
 # ------------------------------------------------------------- reconfiguration
 def test_set_grasp_source_mutates_cfg_and_rebuilds(monkeypatch):
-    r = Robot({"grasp": {"grasp_source": "graspgenx",
+    r = Robot({"grasp": {"source": "graspgenx",
                          "graspgenx": {"port": 5556},
                          "sim_cloud": {"density": 2}}}, None)
     r.frames = "FRAMES"
@@ -30,7 +30,7 @@ def test_set_grasp_source_mutates_cfg_and_rebuilds(monkeypatch):
     monkeypatch.setattr(_builders, "build_grasp_source", fake_build)
     r.set_grasp_source("sim_cloud", density=5)
     assert r.grasp_source is sentinel
-    assert r.cfg["grasp"]["grasp_source"] == "sim_cloud"
+    assert r.cfg["grasp"]["source"] == "sim_cloud"
     assert r.cfg["grasp"]["sim_cloud"]["density"] == 5       # override merged in place
     assert seen["frames"] == "FRAMES" and seen["cfg"] is r.cfg
     assert r.grasp_source_kind == "sim_cloud"
@@ -168,7 +168,7 @@ class FakeSource:
 
 
 def test_grasp_no_candidates_names_the_source():
-    r = Robot({"grasp": {"grasp_source": "sim_cloud"}}, None)
+    r = Robot({"grasp": {"source": "sim_cloud"}}, None)
     r.grasp_source = FakeSource([])
     res = r.grasp("right", "block")
     assert not res
@@ -177,7 +177,7 @@ def test_grasp_no_candidates_names_the_source():
 
 
 def test_grasp_delegates_to_grasp_motion(monkeypatch):
-    r = Robot({"grasp": {"grasp_source": "sim_cloud"}}, None)
+    r = Robot({"grasp": {"source": "sim_cloud"}}, None)
     r.grasp_source = FakeSource(["c1", "c2"])
     seen = {}
 
@@ -195,7 +195,7 @@ def test_grasp_delegates_to_grasp_motion(monkeypatch):
 
 
 def test_grasp_candidates_warms_depth_only_for_graspgenx(monkeypatch):
-    r = Robot({"grasp": {"grasp_source": "graspgenx"}}, None)
+    r = Robot({"grasp": {"source": "graspgenx"}}, None)
     r.grasp_source = FakeSource(["c"])
     r.camera = FakeCam()
     seen = {}
@@ -208,7 +208,7 @@ def test_grasp_candidates_warms_depth_only_for_graspgenx(monkeypatch):
     r.grasp_candidates("right", "block")
     assert seen["depth"] is True                             # graspgenx needs depth
 
-    r.cfg["grasp"]["grasp_source"] = "sim_cloud"
+    r.cfg["grasp"]["source"] = "sim_cloud"
     r.grasp_candidates("right", "block")
     assert seen["depth"] is False                            # sim_cloud does not
 

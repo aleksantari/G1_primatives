@@ -142,7 +142,7 @@ def main():
     if args.source or args.segment is not None or args.visualize:   # overrides of grasp.yaml
         from g1_primitives.factory import _build_grasp_source
         if args.source:
-            robot.cfg["grasp"]["grasp_source"] = args.source
+            robot.cfg["grasp"]["source"] = args.source
         if args.segment is not None:
             robot.cfg["grasp"].setdefault("segment", {})["mode"] = (
                 None if args.segment == "none" else args.segment)
@@ -150,7 +150,7 @@ def main():
             robot.cfg["grasp"].setdefault("graspgenx", {}).setdefault(
                 "visualize", {})["enabled"] = True
         robot.grasp_source = _build_grasp_source(robot.frames, robot.cfg)
-    src_kind = robot.cfg["grasp"].get("grasp_source", "graspgenx")   # --source forces this
+    src_kind = robot.cfg["grasp"].get("source", "graspgenx")   # --source forces this
     seg_mode = (robot.cfg["grasp"].get("segment", {}) or {}).get("mode")
     if args.abort is not None:
         robot.executor.abort_thresh = args.abort

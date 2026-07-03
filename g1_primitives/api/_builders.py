@@ -16,26 +16,26 @@ from g1_primitives.config import _REPO_ROOT
 
 def build_perception(planner, cfg: Dict[str, Any]):
     """Build the frame-math owner + the configured detector (no I/O). The seam for
-    new detectors is the `detector:` selector in perception.yaml."""
+    new detectors is the `source:` selector in perception.yaml."""
     from g1_primitives.perception.frames import Frames
     from g1_primitives.perception.sim_state import SimStateDetector
 
     sim_base = (cfg["robot"].get("sim", {}) or {}).get("base_world_pose")
     frames = Frames(planner.fk_link, camera_cfg=cfg["camera"], sim_base_world_pose=sim_base)
     perc = cfg["perception"] or {}
-    kind = perc.get("detector", "sim_state")
+    kind = perc.get("source", "sim_state")
     if kind == "sim_state":
         # live sim ground-truth via rt/sim_state; needs DDS (a connected robot).
-        # Future real-camera detectors register here (the `detector:` seam).
+        # Future real-camera detectors register here (the `source:` seam).
         detector = SimStateDetector.from_config(frames, perc.get("sim_state", {}))
     else:
-        raise ValueError(f"unknown detector: {kind}")
+        raise ValueError(f"unknown perception source: {kind}")
     return frames, detector
 
 
 def build_segmenter(seg_cfg: Dict[str, Any]):
     """Object segmenter from grasp.yaml `segment` (mode: null|auto|interactive). null/sim ->
-    whole frame; auto/interactive -> SAM3 (lazy ZMQ socket). Mirrors the `detector:` seam."""
+    whole frame; auto/interactive -> SAM3 (lazy ZMQ socket). Mirrors the `source:` seams."""
     from g1_primitives.perception.segment import NullSegmenter, Sam3Segmenter
     mode = seg_cfg.get("mode")
     if mode in (None, "null", "none", "sim"):
@@ -78,9 +78,9 @@ def build_grasp_viz(gx: Dict[str, Any]):
 
 def build_grasp_source(frames, cfg: Dict[str, Any]):
     """Build the configured grasp source (no I/O; the GraspGenX/SAM3 ZMQ sockets open lazily
-    per call). Selector: grasp.yaml `grasp_source` -- mirrors the `detector:` seam."""
+    per call). Selector: grasp.yaml `source` -- mirrors the perception `source:` seam."""
     g = cfg.get("grasp", {}) or {}
-    kind = g.get("grasp_source", "graspgenx")
+    kind = g.get("source", "graspgenx")
     if kind in ("graspgenx", "sim_cloud"):
         from g1_primitives.grasp.graspgenx_client import GraspGenXClient
         gx = dict(g.get("graspgenx", {}) or {})
@@ -101,7 +101,7 @@ def build_grasp_source(frames, cfg: Dict[str, Any]):
         pose_source = SimStateDetector.from_config(
             frames, (cfg.get("perception", {}) or {}).get("sim_state", {}))
         return SimCloudGraspSource(frames, pose_source, _client, gx, cfg["camera"], viz=viz)
-    raise ValueError(f"unknown grasp_source: {kind}")
+    raise ValueError(f"unknown grasp source: {kind}")
 
 
 def build_camera(cfg: Dict[str, Any]):

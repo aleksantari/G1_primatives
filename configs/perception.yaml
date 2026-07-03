@@ -1,10 +1,10 @@
-# Perception config. `detector` selects the single active object-pose detector:
+# Perception config. `source` selects the single active object-pose detector:
 #   sim_state -- LIVE sim ground truth from rt/sim_state (marker-free; tracks the
-#                object as it moves). Needs DDS (make_robot connect_dds=True).
-# Future real-camera detectors register here (factory._build_perception is the seam).
-detector: sim_state
+#                object as it moves). Needs DDS (a connected robot).
+# Future real-camera detectors register here (api._builders.build_perception is the seam).
+source: sim_state
 
-# Live sim ground truth (`detector: sim_state`). Subscribes to rt/sim_state and reads
+# Live sim ground truth (`source: sim_state`). Subscribes to rt/sim_state and reads
 # rigid_object.<object_key>.root_pose (sim WORLD frame, Isaac wxyz quat), mapped to the
 # pelvis frame via robot.yaml `sim.base_world_pose`. object_key is the Isaac rigid-object
 # name (the dex3 red-block scene uses "object").

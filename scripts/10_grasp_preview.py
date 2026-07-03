@@ -71,7 +71,7 @@ def main():
 
     # force the graspgenx source + segment mode + viser viz, with optional param overrides.
     g = robot.cfg["grasp"]
-    g["grasp_source"] = "graspgenx"
+    g["source"] = "graspgenx"
     g.setdefault("segment", {})["mode"] = None if args.segment == "none" else args.segment
     gx = g.setdefault("graspgenx", {})
     gx.setdefault("visualize", {})["enabled"] = True

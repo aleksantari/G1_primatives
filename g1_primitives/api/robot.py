@@ -273,7 +273,7 @@ class Robot:
     @property
     def grasp_source_kind(self) -> str:
         """The configured grasp-source selector ('graspgenx' | 'sim_cloud')."""
-        return (self.cfg.get("grasp") or {}).get("grasp_source", "graspgenx")
+        return (self.cfg.get("grasp") or {}).get("source", "graspgenx")
 
     # -------------------------------------------------------- reconfiguration
     def set_grasp_source(self, name: str, **overrides) -> None:
@@ -281,7 +281,7 @@ class Robot:
         config block, then rebuild it. Overrides land in the source's own block
         (falling back to 'graspgenx' for shared keys like the tool transform)."""
         g = self.cfg.setdefault("grasp", {})
-        g["grasp_source"] = name
+        g["source"] = name
         if overrides:
             block = name if name in g else "graspgenx"
             blk = g.get(block) or {}

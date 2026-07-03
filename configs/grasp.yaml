@@ -1,9 +1,9 @@
-# Grasp-source config. `grasp_source` selects where candidate grasp poses come from
+# Grasp-source config. `source` selects where candidate grasp poses come from
 # (all implement the same GraspSource interface -> ranked wrist-yaw goal Poses):
 #   graspgenx -- learned 6-DoF grasps from the GraspGenX ZMQ service (segmented cloud in).
 #   sim_cloud -- SIM only: GT cube cloud from rt/sim_state -> GraspGenX (no camera/depth/SAM3).
-# 09_graspgen.py --source overrides this per run.
-grasp_source: graspgenx
+# Per-run override: robot.set_grasp_source(...) / the pick example's --source flag.
+source: graspgenx
 
 # GraspGenX source: depth -> segmented cloud -> ZMQ infer -> ranked grasps -> wrist goals.
 graspgenx:
@@ -52,11 +52,11 @@ graspgenx:
     gripper_asset_dir: "assets/grippers"   # <dir>/<gripper_name>/{config.json, *_mesh.obj}
 
 # Object segmentation (SAM3 over ZMQ) -> a 2D mask applied to the depth BEFORE deproject.
-#   mode: null|none -> NullSegmenter (whole frame; sim has no SAM3).
+#   mode: none       -> NullSegmenter (whole frame; sim has no SAM3).
 #         auto       -> one SAM3 call with default_prompt below (headless).
-#         interactive-> cv2 GUI to refine text/box/points before accepting (10_segment / 09 --segment).
+#         interactive-> cv2 GUI to refine text/box/points before accepting.
 segment:
-  mode: null              # default off; --segment auto|interactive overrides per run
+  mode: none              # default off; robot.set_segmenter / --segment overrides per run
   host: "127.0.0.1"       # SAM3 server (workstation GPU). USER-PROVIDED.
   port: 5557
   timeout_ms: 60000
@@ -66,10 +66,10 @@ segment:
     # box: [x0, y0, x1, y1]
     # points: [[x, y], ...]   # (+ optional point_labels: [1, 0, ...])
 
-# Sim-only GraspGenX path (grasp_source: sim_cloud): build a ground-truth object cloud from the
+# Sim-only GraspGenX path (source: sim_cloud): build a ground-truth object cloud from the
 # live rt/sim_state block pose (no camera/depth/SAM3) and feed the SAME GraspGenX + tool transform
 # as `graspgenx`. Reuses the graspgenx: block (host/port/gripper/voxel/wristyaw_grasp_rpy +
-# palm_offset_xyz). Needs `detector: sim_state` (perception.yaml) for the live block pose.
+# palm_offset_xyz). Needs `source: sim_state` (perception.yaml) for the live block pose.
 sim_cloud:
   object_size_m: 0.06       # red block edge (m); the sampled cube size
   n_points: 2000            # ~points over the cube surface (the model resamples to 3500)
