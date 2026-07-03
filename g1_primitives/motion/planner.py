@@ -107,6 +107,7 @@ class GraspPlanOutcome:
     grasp_success: bool
     lift_success: bool
     status: str
+    strategy: Optional[dict] = None    # the WINNING sweep strategy dict (set on success)
 
 
 class CuroboArmPlanner:
@@ -688,7 +689,7 @@ class CuroboArmPlanner:
                 if out.success:                        # remap chosen_index into the ORIGINAL list
                     if 0 <= out.chosen_index < len(active_idx):
                         out = replace(out, chosen_index=active_idx[out.chosen_index])
-                    return out
+                    return replace(out, strategy=dict(s))
                 last = out
                 if not (0 <= out.chosen_index < len(active_idx)):
                     break                              # Step-1 goalset IK failed: no winner to exclude

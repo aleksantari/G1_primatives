@@ -9,7 +9,7 @@ import os
 import numpy as np
 
 from g1_primitives.factory import make_robot, load_configs
-from g1_primitives import primitives as P
+from g1_primitives.api import primitives as P
 from g1_primitives.latency import LOG   # latency instrumentation (no-op unless enabled)
 
 SIM_DOMAIN, SIM_IFACE = 1, "lo"

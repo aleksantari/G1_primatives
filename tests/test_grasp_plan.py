@@ -414,9 +414,11 @@ def test_plan_grasp_set_sweep_first_success():
     strategies = [{"approach_offset": x} for x in (-0.15, -0.10, -0.07, -0.05)]
     out = p.plan_grasp_set_sweep(np.zeros(14), RIGHT, [Pose.Identity()], strategies,
                                  approach_axis="x", lift_axis="z")
-    # equality, not identity: on success the sweep remaps chosen_index into the ORIGINAL
-    # candidate list via dataclasses.replace (a new GraspPlanOutcome instance).
-    assert out == good and seen == [-0.15, -0.10, -0.07]   # stopped at first success
+    # equality-modulo-strategy: on success the sweep remaps chosen_index AND stamps the
+    # winning strategy dict via dataclasses.replace (a new GraspPlanOutcome instance).
+    from dataclasses import replace as _rep
+    assert out == _rep(good, strategy={"approach_offset": -0.07})
+    assert seen == [-0.15, -0.10, -0.07]                   # stopped at first success
 
 
 def test_plan_grasp_set_sweep_candidate_retry_excludes_failed_winner():
@@ -515,13 +517,27 @@ class FakePlannerSweep:
         self.kw = kw
         return self.outcome
 
+    def collision_world_points(self):
+        return None                            # world off (observer hook still fires)
+
+
+class FakeHand:
+    def __init__(self, events, grasped=True):
+        self.events = events
+        self.grasped = grasped
+
+    def close(self, side, verify=False, fraction=1.0):
+        self.events.append("close")
+        return self.grasped
+
 
 class FakeRobot2:
-    def __init__(self, outcome, fail=None):
+    def __init__(self, outcome, fail=None, grasped=True):
         self.events = []
         self.arm = FakeArm2()
         self.planner = FakePlannerSweep(outcome)
         self.executor = FakeExecutor(self.events, fail=fail)
+        self.hand = FakeHand(self.events, grasped=grasped)
         self.cfg = {"planner": {"grasp": {"approach_axis": "x", "lift_axis": "z",
                                           "approach_in_tool_frame": True,
                                           "lift_in_tool_frame": False,
@@ -535,58 +551,85 @@ def _cands(n=3):
                            grasp_pose=Pose(np.eye(3), [0.4, 0.0, 0.8])) for i in range(n)]
 
 
-def test_grasp_motion_orders_segments_and_callbacks():
-    from g1_primitives import primitives as P
+def test_grasp_motion_orders_segments_and_hooks():
+    from g1_primitives.api import primitives as P
+    from g1_primitives.api.options import GraspOptions, GraspObserver
     out = GraspPlanOutcome(True, 1, _Seg("approach"), _Seg("grasp"), _Seg("lift"),
                            True, True, True, "ok")
     robot = FakeRobot2(out)
     cands = _cands(3)
     sel = {}
 
-    def on_selected(chosen, outcome):
-        robot.events.append("selected")
-        sel["chosen"], sel["idx"] = chosen, outcome.chosen_index
+    class Obs(GraspObserver):
+        def on_selected(self, chosen, report):
+            robot.events.append("selected")
+            sel["chosen"], sel["idx"] = chosen, report.chosen_index
+
+        def on_phase(self, label, ok, info):
+            robot.events.append(f"phase:{label}:{'ok' if ok else 'fail'}")
 
     res = P.grasp_motion(robot, RIGHT, cands,
-                         close_cb=lambda: robot.events.append("close"),
-                         confirm_cb=lambda lbl: robot.events.append(f"confirm:{lbl}"),
-                         on_selected=on_selected)
+                         GraspOptions(confirm=lambda lbl: robot.events.append(f"confirm:{lbl}"),
+                                      observer=Obs()))
     assert res.ok and res.chosen_index == 1
     assert sel["chosen"] is cands[1] and sel["idx"] == 1     # chosen_index -> the candidate
     assert robot.events == ["selected",
-                            "confirm:approach", "run:approach",
-                            "confirm:grasp", "run:grasp",
-                            "settle", "close",
-                            "confirm:lift", "run:lift"]
-    # config strategies + axes flow into the sweep
+                            "confirm:approach", "run:approach", "phase:approach:ok",
+                            "confirm:grasp", "run:grasp", "phase:grasp:ok",
+                            "settle", "confirm:close", "close", "phase:close:ok",
+                            "confirm:lift", "run:lift", "phase:lift:ok"]
+    # config axes flow into the sweep; the report carries the per-phase summary
     assert robot.planner.kw["approach_axis"] == "x" and robot.planner.kw["lift_axis"] == "z"
+    assert res.report.phases == {"approach": "ok", "grasp": "ok", "close": "ok", "lift": "ok"}
+    assert res.report.n_candidates == 3 and res.report.failed_phase is None
 
 
 def test_grasp_motion_short_circuits_on_failed_segment():
-    from g1_primitives import primitives as P
+    from g1_primitives.api import primitives as P
     out = GraspPlanOutcome(True, 0, _Seg("approach"), _Seg("grasp"), _Seg("lift"),
                            True, True, True, "ok")
     robot = FakeRobot2(out, fail="grasp")                   # grasp segment aborts
-    res = P.grasp_motion(robot, RIGHT, _cands(2),
-                         close_cb=lambda: robot.events.append("close"))
+    res = P.grasp_motion(robot, RIGHT, _cands(2))
     assert not res.ok and "grasp" in res.info
     assert "close" not in robot.events and "run:lift" not in robot.events   # never closed/lifted
+    assert res.report.failed_phase == "grasp"
+    assert res.report.phases["grasp"] == "failed" and res.report.phases["lift"] == "pending"
 
 
 def test_grasp_motion_fails_when_plan_grasp_fails():
-    from g1_primitives import primitives as P
+    from g1_primitives.api import primitives as P
     bad = GraspPlanOutcome(False, -1, None, None, None, False, False, False, "no plan")
     robot = FakeRobot2(bad)
-    res = P.grasp_motion(robot, RIGHT, _cands(2), close_cb=lambda: robot.events.append("close"))
+    res = P.grasp_motion(robot, RIGHT, _cands(2))
     assert not res.ok and "no plan" in res.info and robot.events == []   # nothing executed
+    assert res.report.planner_status == "no plan" and res.report.failed_phase == "approach"
 
 
 def test_grasp_motion_no_candidates():
-    from g1_primitives import primitives as P
+    from g1_primitives.api import primitives as P
     robot = FakeRobot2(GraspPlanOutcome(True, 0, _Seg("a"), _Seg("g"), _Seg("l"),
                                         True, True, True, "ok"))
     res = P.grasp_motion(robot, RIGHT, [])
     assert not res.ok and "no candidates" in res.info
+
+
+def test_grasp_motion_options_shape_the_sweep():
+    from g1_primitives.api import primitives as P
+    from g1_primitives.api.options import GraspOptions
+    out = GraspPlanOutcome(True, 0, _Seg("grasp"), None, None, True, True, True, "ok",
+                           strategy={"approach_offset": 0.0})
+    robot = FakeRobot2(out)
+    res = P.grasp_motion(robot, RIGHT, _cands(3),
+                         GraspOptions(approach=False, lift=False, close_hand=False,
+                                      max_candidates=1))
+    assert res.ok
+    # --grasp-only semantics: strategies rewritten to skip approach + lift
+    st = robot.planner.kw["strategies"]
+    assert all(s["plan_approach"] is False and s["plan_lift"] is False
+               and s["approach_offset"] == 0.0 for s in st)
+    assert res.report.n_candidates == 1                      # max_candidates sliced the feed
+    assert res.report.phases["close"] == "skipped"           # close_hand=False
+    assert res.report.strategy == {"approach_offset": 0.0}   # winning strategy surfaced
 
 
 def test_collision_world_points_accessor():
@@ -599,12 +642,17 @@ def test_collision_world_points_accessor():
 
 
 def test_grasp_motion_fires_on_world_built_before_planning():
-    from g1_primitives import primitives as P
+    from g1_primitives.api import primitives as P
+    from g1_primitives.api.options import GraspOptions, GraspObserver
     out = GraspPlanOutcome(True, 0, _Seg("approach"), None, None, True, False, False, "ok")
     robot = FakeRobot2(out)
     sentinel = np.zeros((3, 3))
     robot.planner.collision_world_points = lambda: sentinel    # what grasp_motion should hand over
     got = {}
-    P.grasp_motion(robot, RIGHT, _cands(1),
-                   on_world_built=lambda pts: got.__setitem__("pts", pts))
+
+    class Obs(GraspObserver):
+        def on_world_built(self, pts):
+            got["pts"] = pts
+
+    P.grasp_motion(robot, RIGHT, _cands(1), GraspOptions(observer=Obs()))
     assert got["pts"] is sentinel                              # fired with the ESDF points

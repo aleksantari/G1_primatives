@@ -11,7 +11,7 @@ import argparse
 
 import numpy as np
 import _rig
-from g1_primitives import primitives as P
+from g1_primitives.api import primitives as P
 from g1_primitives.ee.hand_base import LEFT, RIGHT
 
 

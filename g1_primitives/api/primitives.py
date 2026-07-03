@@ -1,20 +1,22 @@
-"""Action + perception primitives — the LLM-agent tool surface.
+"""Action + perception primitives — the LLM-agent tool surface (implementation).
 
 Thin, composable verbs over the cuRobo planner + DDS hand control + head-camera
 perception:
     home(robot)
     move(robot, side, goal_pose)   — wrist of `side` to goal_pose (pelvis frame)
+    grasp_motion(robot, side, candidates, options)  — the full native cuRobo pick
     open_hand(robot, side) / close_hand(robot, side)
-    detect(robot, target)          — head-camera object pose (pelvis frame)
-Action verbs return a Result(ok, info); detect returns a Detection (its `.pose` is
-a pelvis-frame Pose, so `move(robot, side, detect(robot).pose)` composes). Tasks are
-built by composing these. Simple by design — keep new behavior out of here unless
-it's genuinely a new primitive.
+    detect(robot, target)          — object pose (pelvis frame)
+Action verbs return a Result(ok, info); grasp_motion returns a GraspResult with a
+serializable GraspReport; detect returns a Detection (its `.pose` is a pelvis-frame
+Pose, so `move(robot, side, detect(robot).pose)` composes). Callers normally reach
+these through the Robot facade methods (api.robot); tasks are built by composing them.
+Simple by design — keep new behavior out of here unless it's genuinely a new primitive.
 """
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import replace
 from typing import Optional
 
 import numpy as np
@@ -22,13 +24,9 @@ import numpy as np
 from g1_primitives.spatial.pose import Pose
 from g1_primitives.ee.hand_base import LEFT, RIGHT  # noqa: F401 (re-export sides)
 from g1_primitives.perception.base import Detection  # noqa: F401 (re-export)
+from g1_primitives.api.results import Result, GraspResult, GraspReport, PHASES
+from g1_primitives.api.options import GraspOptions, GraspObserver
 from g1_primitives.latency import LOG   # latency instrumentation (no-op unless enabled)
-
-
-@dataclass
-class Result:
-    ok: bool
-    info: str = ""
 
 
 def home(robot) -> Result:
@@ -48,14 +46,6 @@ def move(robot, side: str, goal_pose: Pose) -> Result:
     traj = robot.planner.plan_to_pose(q0, side, goal_pose)
     res = robot.executor.run(traj)
     return Result(bool(res.success), res.reason)
-
-
-@dataclass
-class GraspResult:
-    ok: bool
-    info: str = ""
-    chosen_index: int = -1
-    outcome: object = None        # the planner GraspPlanOutcome (segments, per-phase flags)
 
 
 def _update_collision_world(robot, side: str, q0=None) -> None:
@@ -97,75 +87,137 @@ def _update_collision_world(robot, side: str, q0=None) -> None:
         print(f"grasp_motion: collision world skipped: {e}")
 
 
-def grasp_motion(robot, side: str, candidates, close_cb=None, confirm_cb=None,
-                 on_selected=None, on_world_built=None) -> GraspResult:
+def _shift_z(pose: Pose, dz: float) -> Pose:
+    """Copy a wrist goal Pose shifted by `dz` along world +z (pelvis frame)."""
+    p = pose.copy()
+    p.translation = pose.translation + np.array([0.0, 0.0, dz])
+    return p
+
+
+def _report_from_outcome(out, n_candidates: int) -> GraspReport:
+    """Map the planner's GraspPlanOutcome onto the serializable GraspReport. Motion-phase
+    entries start from the PLANNING result ('pending' = a planned segment not yet executed,
+    'skipped' = not part of this plan, 'failed' = the planner rejected it); execution then
+    overwrites them with ok/failed."""
+    phases = {}
+    for label, seg, planned_ok in (("approach", out.approach, out.approach_success),
+                                   ("grasp", out.grasp, out.grasp_success),
+                                   ("lift", out.lift, out.lift_success)):
+        phases[label] = ("pending" if seg is not None
+                         else ("skipped" if planned_ok or out.success else "failed"))
+    phases["close"] = "pending"
+    failed = None
+    if not out.success:
+        failed = next((lbl for lbl, ok in (("approach", out.approach_success),
+                                           ("grasp", out.grasp_success),
+                                           ("lift", out.lift_success)) if not ok), None)
+    return GraspReport(chosen_index=int(getattr(out, "chosen_index", -1)),
+                       n_candidates=int(n_candidates),
+                       phases=phases, failed_phase=failed,
+                       planner_status=str(out.status or ""),
+                       strategy=getattr(out, "strategy", None))
+
+
+def grasp_motion(robot, side: str, candidates,
+                 options: Optional[GraspOptions] = None) -> GraspResult:
     """Native cuRobo plan_grasp over ranked grasp candidates: solve a K-goalset (cuRobo picks
     the feasible grasp) sweeping the configured approach/lift offsets, then execute
-    approach -> grasp -> [close_cb] -> lift. `on_world_built(occupied_points_or_None)` fires right
-    AFTER the depth-ESDF collision world is built (before planning), so callers can VISUALIZE the
-    world even if planning then fails. `on_selected(chosen_candidate, outcome)` fires AFTER cuRobo
-    picks but BEFORE any motion (so callers mark viz / FK-check / print the chosen grasp); `close_cb()`
-    is the operator-gated hand close, run after settling at the grasp pose; `confirm_cb(label)` gates
-    each segment. Reads the `planner.grasp` config block. Returns GraspResult."""
+    approach -> grasp -> close -> lift per ``options`` (api.options.GraspOptions; None = the
+    full autonomous defaults). ``options.confirm(label)`` gates each phase for operator runs;
+    ``options.observer`` receives viz/diagnostics hooks (world built / winner selected / phase
+    done). Reads the ``planner.grasp`` config block. Returns a GraspResult whose ``report``
+    is the serializable per-phase summary."""
+    opts = options or GraspOptions()
+    obs = opts.observer or GraspObserver()
     cands = list(candidates)
+    if opts.max_candidates is not None:
+        cands = cands[:max(0, int(opts.max_candidates))]
     if not cands:
         return GraspResult(False, "no candidates")
+    if opts.grasp_z_offset:
+        cands = [replace(c, wrist_goal=_shift_z(c.wrist_goal, opts.grasp_z_offset))
+                 for c in cands]
     gp = (robot.cfg["planner"].get("grasp") or {})
+    strategies = [dict(s) for s in gp.get("strategies",
+                                          [{"approach_offset": -0.10, "lift_offset": 0.10}])]
+    if not opts.approach:      # straight to the grasp pose (frame sanity / constrained scenes)
+        strategies = [{**s, "approach_offset": 0.0, "plan_approach": False} for s in strategies]
+    if not opts.lift:
+        strategies = [{**s, "plan_lift": False} for s in strategies]
+
     q0 = robot.arm.get_current_dual_arm_q()
     with LOG.span("collision_world"):           # depth-ESDF world (gated), self-filtered at q0
         _update_collision_world(robot, side, q0)
-    if on_world_built is not None:              # let callers overlay the ESDF (even if planning fails)
-        on_world_built(robot.planner.collision_world_points())
+    if opts.observer is not None:               # let callers overlay the ESDF (even on plan failure)
+        obs.on_world_built(robot.planner.collision_world_points())
     with LOG.span("plan_grasp"):                # cuRobo native goalset + approach/grasp/lift solve
         out = robot.planner.plan_grasp_set_sweep(
             q0, side, [c.wrist_goal for c in cands],
-            strategies=gp.get("strategies", [{"approach_offset": -0.10, "lift_offset": 0.10}]),
+            strategies=strategies,
             approach_axis=gp.get("approach_axis", "y"), lift_axis=gp.get("lift_axis", "z"),
             approach_in_tool_frame=gp.get("approach_in_tool_frame", True),
             lift_in_tool_frame=gp.get("lift_in_tool_frame", False),
             hold_idle=gp.get("hold_idle_arm", True),
             disable_collision_links=gp.get("disable_collision_links"),
             max_candidate_retries=gp.get("max_candidate_retries", 12))
+    report = _report_from_outcome(out, len(cands))
     if not out.success:
-        # Surface WHICH phase cuRobo rejected + its status string (the raw plan_grasp diagnostic,
-        # e.g. 'Start or End state in collision' / 'No grasp in goal set was reachable'). For the
-        # per-config breakdown (self vs world collision, joint-limit / singularity) run the planner's
-        # diagnose(q0, side); 09/12 expose it as --diagnose.
+        # Surface WHICH phase cuRobo rejected + its status string (the raw plan_grasp diagnostic).
+        # For the per-config breakdown run motion.diagnostics.explain_failure.
         print(f"grasp_motion: plan_grasp FAILED -- approach={out.approach_success} "
               f"grasp={out.grasp_success} lift={out.lift_success} | status: {out.status or '(none)'}")
-        return GraspResult(False, f"plan_grasp failed: {out.status}", out.chosen_index, out)
+        return GraspResult(False, f"plan_grasp failed: {out.status}", report)
 
     chosen = cands[out.chosen_index] if 0 <= out.chosen_index < len(cands) else None
-    if on_selected is not None and chosen is not None:
-        on_selected(chosen, out)
+    if chosen is not None:
+        obs.on_selected(chosen, report)
+
+    def _phase(label: str, ok: bool, info: str):
+        report.phases[label] = "ok" if ok else "failed"
+        obs.on_phase(label, ok, info)
+        if not ok:
+            report.failed_phase = label
 
     for label, traj in (("approach", out.approach), ("grasp", out.grasp)):
         if traj is None:
             continue
-        if confirm_cb is not None:
-            confirm_cb(label)
+        if opts.confirm is not None:
+            opts.confirm(label)
         with LOG.span(f"exec:{label}", LOG.EXEC):
             r = robot.executor.run(traj)
+        _phase(label, bool(r.success), r.reason)
         if not r.success:
-            return GraspResult(False, f"{label}: {r.reason}", out.chosen_index, out)
+            return GraspResult(False, f"{label}: {r.reason}", report)
 
-    if close_cb is not None:
+    hand = getattr(robot, "hand", None)
+    if opts.close_hand and hand is not None:
         # Settle at the grasp pose first: the fingers close on a converged pose, and the droop
         # accumulated during the (multi-second) close won't trip the lift prime's abort.
         grasp_traj = out.grasp if out.grasp is not None else out.approach
         if grasp_traj is not None:
             robot.executor.settle(grasp_traj.q[-1])
-        close_cb()
+        if opts.confirm is not None:
+            opts.confirm("close")
+        with LOG.span("hand:close", LOG.EXEC):
+            grasped = hand.close(side, verify=opts.verify_close, fraction=opts.close_fraction)
+        closed_ok = bool(grasped) if opts.verify_close else True
+        _phase("close", closed_ok, "grasped" if grasped else
+               ("no grasp" if opts.verify_close else "close commanded (unverified)"))
+        if not closed_ok:
+            return GraspResult(False, "close: no grasp detected", report)
+    else:
+        report.phases["close"] = "skipped"
 
     if out.lift is not None:
-        if confirm_cb is not None:
-            confirm_cb("lift")
+        if opts.confirm is not None:
+            opts.confirm("lift")
         with LOG.span("exec:lift", LOG.EXEC):
             r = robot.executor.run(out.lift)
+        _phase("lift", bool(r.success), r.reason)
         if not r.success:
-            return GraspResult(False, f"lift: {r.reason}", out.chosen_index, out)
+            return GraspResult(False, f"lift: {r.reason}", report)
 
-    return GraspResult(True, "ok", out.chosen_index, out)
+    return GraspResult(True, "ok", report)
 
 
 def detect(robot, target: str = "block", frames: int = 5) -> Optional[Detection]:
@@ -197,10 +249,12 @@ def detect(robot, target: str = "block", frames: int = 5) -> Optional[Detection]
 def open_hand(robot, side: str, verify: bool = False) -> Result:
     ok = robot.hand.open(side, verify=verify)
     return Result(bool(ok) if verify else True,
-                  "opened" if ok else ("open failed" if verify else "open commanded"))
+                  "opened" if ok else
+                  ("open failed" if verify else "open commanded (unverified)"))
 
 
 def close_hand(robot, side: str, verify: bool = False, fraction: float = 1.0) -> Result:
     grasped = robot.hand.close(side, verify=verify, fraction=fraction)
     return Result(bool(grasped) if verify else True,
-                  "grasped" if grasped else ("no grasp" if verify else "close commanded"))
+                  "grasped" if grasped else
+                  ("no grasp" if verify else "close commanded (unverified)"))

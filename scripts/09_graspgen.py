@@ -33,16 +33,9 @@ import time
 
 import numpy as np
 import _rig
-from g1_primitives import primitives as P
+from g1_primitives.api import primitives as P
 from g1_primitives.ee.hand_base import LEFT, RIGHT
 from g1_primitives.latency import LOG
-
-
-def _shift_z(pose, dz: float):
-    """Copy a wrist goal Pose shifted by `dz` along world +z (pelvis frame)."""
-    p = pose.copy()
-    p.translation = pose.translation + np.array([0.0, 0.0, dz])
-    return p
 
 
 def _finger_contact_check(robot, side, wrist_goal, object_center):
@@ -165,9 +158,6 @@ def main():
         robot.executor.abort_thresh = 0.40
     if args.speed is not None:
         robot.executor.time_dilation = args.speed
-    if args.grasp_only:        # frame sanity check: ONE move straight to the grasp pose, no
-        robot.cfg["planner"].setdefault("grasp", {})["strategies"] = [   # back-off, no lift
-            {"approach_offset": 0.0, "plan_approach": False, "plan_lift": False}]
     if args.collision_world:   # depth-ESDF world: approach routes around the object/table
         cw = robot.cfg["planner"].setdefault("grasp", {}).setdefault("collision_world", {})
         cw["enabled"] = True
@@ -241,11 +231,6 @@ def main():
                 except Exception as e:   # noqa: BLE001 - diagnostic only, never blocks the grasp
                     print(f"FK check skipped: {e}")
 
-        def _do_close():
-            _rig.confirm(f"CLOSE hand to {args.close_frac:.2f}", auto)
-            with LOG.span("hand:close", LOG.EXEC):
-                print("close :", P.close_hand(robot, side, verify=args.verify, fraction=args.close_frac))
-
         def _show_world(points):
             """Overlay the depth-ESDF collision world on the SAME viser scene as the grasps (red
             voxels + blue wrist@q markers), so the operator sees the obstacles the approach routes
@@ -259,18 +244,32 @@ def main():
             viz.show_collision_world(points, voxel_size=robot.planner._cw_params()["esdf_voxel_size"],
                                      wrists=wrists)
 
-        # --- native cuRobo plan_grasp goalset path ---
-        from dataclasses import replace
-        feed = cands[:1] if args.select == "first" else cands
-        if args.grasp_z:                 # optional vertical pre-shift of the grasp goals
-            feed = [replace(c, wrist_goal=_shift_z(c.wrist_goal, args.grasp_z)) for c in feed]
-        res = P.grasp_motion(
-            robot, side, feed, close_cb=_do_close,
-            confirm_cb=lambda lbl: _rig.confirm(f"move to {lbl.upper()}", auto),
-            on_selected=lambda chosen, out: _report_choice(
-                chosen, chosen.wrist_goal, note=f" (goalset idx {out.chosen_index})"),
-            on_world_built=(_show_world if (args.visualize and args.collision_world) else None))
-        print(f"grasp_motion: {res.info}")
+        # --- native cuRobo plan_grasp goalset path (policy via GraspOptions) ---
+        from g1_primitives.api.options import GraspOptions, GraspObserver
+
+        class _Obs(GraspObserver):
+            def on_world_built(self, pts):
+                if args.visualize and args.collision_world:
+                    _show_world(pts)
+
+            def on_selected(self, chosen, report):
+                _report_choice(chosen, chosen.wrist_goal,
+                               note=f" (goalset idx {report.chosen_index})")
+
+            def on_phase(self, label, ok, info):
+                print(f"{label:8s}: {'ok' if ok else 'FAILED'} ({info})")
+
+        opts = GraspOptions(
+            close_fraction=args.close_frac, verify_close=args.verify,
+            approach=not args.grasp_only, lift=not args.grasp_only,
+            grasp_z_offset=args.grasp_z,
+            max_candidates=(1 if args.select == "first" else None),
+            confirm=lambda lbl: _rig.confirm(
+                f"CLOSE hand to {args.close_frac:.2f}" if lbl == "close"
+                else f"move to {lbl.upper()}", auto),
+            observer=_Obs())
+        res = P.grasp_motion(robot, side, cands, opts)
+        print(f"grasp_motion: {res.info} | phases: {res.report.phases if res.report else '-'}")
         if not res.ok:
             raise RuntimeError(res.info)
 
