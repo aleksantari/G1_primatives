@@ -3,7 +3,7 @@
 is the shared vocabulary between perception and motion.
 
 Pure data + pure geometry: no torch, no I/O, no frame *construction* (that stays in
-``perception/transforms.py``). ``transformed`` only *applies* an existing ``Pose``.
+``perception/frames.py``). ``transformed`` only *applies* an existing ``Pose``.
 Points are ``(N, 3)`` float32; ``frame`` is a string label (e.g. ``"pelvis"``) asserted
 at boundaries that care (the GraspGenX cloud must be sent in the planning frame).
 

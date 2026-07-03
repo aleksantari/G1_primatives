@@ -54,7 +54,7 @@ class Robot:
     arm: Any = None
     hand: Any = None
     executor: Optional[Executor] = None
-    frames: Any = None          # transforms.Frames (frame-math owner)
+    frames: Any = None          # perception.frames.Frames (frame-math owner)
     detector: Any = None        # perception Detector (sim_state)
     grasp_source: Any = None    # grasp.GraspSource (graspgenx | sim_cloud)
     camera: Any = None          # image_server.HeadCamera (None unless connect_camera)
@@ -68,11 +68,11 @@ class Robot:
 def _build_perception(planner, cfg: Dict[str, Any]):
     """Build the frame-math owner + the configured detector (no I/O). The seam for
     new detectors is the `detector:` selector in perception.yaml."""
-    from g1_primitives.perception.transforms import Frames
+    from g1_primitives.perception.frames import Frames
     from g1_primitives.perception.sim_state import SimStateDetector
 
     sim_base = (cfg["robot"].get("sim", {}) or {}).get("base_world_pose")
-    frames = Frames(planner, camera_cfg=cfg["camera"], sim_base_world_pose=sim_base)
+    frames = Frames(planner.fk_link, camera_cfg=cfg["camera"], sim_base_world_pose=sim_base)
     perc = cfg["perception"] or {}
     kind = perc.get("detector", "sim_state")
     if kind == "sim_state":
@@ -87,8 +87,7 @@ def _build_perception(planner, cfg: Dict[str, Any]):
 def _build_segmenter(seg_cfg: Dict[str, Any]):
     """Object segmenter from grasp.yaml `segment` (mode: null|auto|interactive). null/sim ->
     whole frame; auto/interactive -> SAM3 (lazy ZMQ socket). Mirrors the `detector:` seam."""
-    from g1_primitives.perception.segment import (
-        NullSegmenter, Sam3Segmenter, InteractiveSam3Segmenter)
+    from g1_primitives.perception.segment import NullSegmenter, Sam3Segmenter
     mode = seg_cfg.get("mode")
     if mode in (None, "null", "none", "sim"):
         return NullSegmenter()
@@ -103,6 +102,7 @@ def _build_segmenter(seg_cfg: Dict[str, Any]):
     if mode == "auto":
         return Sam3Segmenter(_sam3, prompt, top_k=1)
     if mode == "interactive":
+        from g1_primitives.perception.segment_gui import InteractiveSam3Segmenter
         return InteractiveSam3Segmenter(_sam3, prompt, top_k=top_k)
     raise ValueError(f"unknown segment mode: {mode}")
 

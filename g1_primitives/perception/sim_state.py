@@ -4,7 +4,7 @@ The sim publishes a `String_` JSON every step:
     {"init_state": "<json>", "task_name": ..., "_timestamp": ...}
 where the inner JSON holds `rigid_object.<key>.root_pose = [[x,y,z, qw,qx,qy,qz]]`
 in the sim WORLD frame (Isaac wxyz quat). We read the manipuland's live world pose
-and map it to the pelvis frame via `transforms.Frames` (same world->pelvis the static
+and map it to the pelvis frame via `frames.Frames` (same world->pelvis the static
 static-config detectors used). Unlike a hardcoded block pose, this tracks
 the block as it settles / is nudged -- the marker-free oracle for sim.
 
@@ -18,7 +18,7 @@ import json
 from typing import Optional, Dict
 
 from g1_primitives.spatial.pose import Pose
-from g1_primitives.perception.transforms import Frames
+from g1_primitives.perception.frames import Frames
 from g1_primitives.perception.base import Detector, Detection
 
 

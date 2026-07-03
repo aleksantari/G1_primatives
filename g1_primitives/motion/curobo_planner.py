@@ -88,6 +88,21 @@ def set_curobo_log_level(level: str = "debug") -> None:
         print(f"set_curobo_log_level: could not set cuRobo log level ({e})")
 
 
+def approach_offset_for_side(side: str, approach_axis: str, approach_in_tool_frame: bool,
+                             offset: float) -> float:
+    """The plan_grasp approach offset, side-corrected for the LEFT mirror. The derived RIGHT-hand
+    grasp->wrist map sends the grasp approach (+Z, into the object) to wrist **+Y**; the LEFT hand
+    is mirrored across the wrist Y-plane (grasp.tool_transform.build_T_wristyaw_grasp), which sends
+    the approach to wrist **-Y**. cuRobo applies a tool-frame approach offset as
+    ``wrist_goal * T(axis*offset)``, so the same negative "y" offset that backs the RIGHT pre-grasp
+    AWAY from the object drives the LEFT one INTO it -> flip the sign for the LEFT. x/z tool axes
+    and world-frame offsets are unaffected by the Y-mirror. Numerically locked by
+    tests/test_planner_offsets.py (both sides back off along -grasp+Z by |offset|)."""
+    if side == LEFT and approach_in_tool_frame and approach_axis == "y":
+        return -float(offset)
+    return float(offset)
+
+
 class PlanningError(RuntimeError):
     pass
 
@@ -965,10 +980,8 @@ class CuroboArmPlanner:
                 disable_collision_links = disable_collision_links + HAND_LINKS[side]
         # LEFT-hand approach mirror: the derived transform maps the grasp approach to wrist +Y on
         # the RIGHT but wrist -Y on the LEFT (tool_transform._MIRROR_Y), so the tool-frame "y"
-        # offset must flip sign for the left or the pre-grasp backs INTO the object. The policy
-        # lives with the mirror itself (tool_transform.approach_offset_for_side) and is numerically
-        # locked by tests/test_tool_transform.py.
-        from g1_primitives.grasp.tool_transform import approach_offset_for_side
+        # offset must flip sign for the left or the pre-grasp backs INTO the object
+        # (approach_offset_for_side above; numerically locked by tests/test_planner_offsets.py).
         approach_offset = approach_offset_for_side(
             side, approach_axis, approach_in_tool_frame, approach_offset)
         res = mp.plan_grasp(

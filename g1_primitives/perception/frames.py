@@ -1,24 +1,30 @@
-"""The single owner of frame math (CLAUDE.md rule 2). Everything is a numpy
-``spatial.pose.Pose`` in the pelvis frame; kinematics come from cuRobo (no pinocchio).
+"""The single owner of frame math. Everything is a numpy ``spatial.pose.Pose`` in the
+pelvis frame.
 
 Perception frame chain:
-    camera optical frame --T_pelvis_camera (cuRobo FK to d435_link + body->optical)-->
+    camera optical frame --T_pelvis_camera (FK to d435_link + body->optical)-->
     pelvis frame (all downstream perception composes from here).
 
 Camera extrinsics are NOT hand-measured: ``T_pelvis_camera`` is forward-kinematics to
-the URDF ``d435_link`` frame (queried from the cuRobo planner, which lists it as an
-FK-only tool frame), with an optional hand-eye ``extrinsic_correction`` and a
+the URDF ``d435_link`` frame, with an optional hand-eye ``extrinsic_correction`` and a
 body->optical rotation from camera.yaml. The head camera is fixed to the locked torso,
 so its pose is q-independent.
+
+LAYERING: perception does NOT import motion. The FK provider is INJECTED as a callable
+``fk_link(link_name, q14) -> Pose`` (the assembler passes ``planner.fk_link``), so this
+module -- and everything above it in perception -- imports without torch/cuRobo.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
 from g1_primitives.spatial.pose import Pose, from_xyz_rpy
-from g1_primitives.motion.curobo_planner import CAMERA_FRAME
+
+# The URDF head-camera link (must stay in sync with motion.curobo_planner.CAMERA_FRAME,
+# which lists it as an FK-only tool frame so fk_link can resolve it).
+DEFAULT_CAMERA_FRAME = "d435_link"
 
 # Standard ROS camera body -> optical frame rotation (z forward, x right, y down).
 BODY_TO_OPTICAL = Pose(np.array([[0.0, 0.0, 1.0],
@@ -27,9 +33,9 @@ BODY_TO_OPTICAL = Pose(np.array([[0.0, 0.0, 1.0],
 
 
 def _parse_source(source: Optional[str]) -> str:
-    """'urdf:d435_link' -> 'd435_link'; bare names pass through; None -> CAMERA_FRAME."""
+    """'urdf:d435_link' -> 'd435_link'; bare names pass through; None -> the head default."""
     if not source:
-        return CAMERA_FRAME
+        return DEFAULT_CAMERA_FRAME
     return source.split(":", 1)[1] if source.startswith("urdf:") else source
 
 
@@ -43,12 +49,12 @@ def _mount_pose(mount) -> Pose:
 
 
 class Frames:
-    """Frame-math owner, cuRobo-backed. Resolves the head camera's pelvis-frame
-    optical pose via the planner's ``fk_link`` and composes perception poses."""
+    """Frame-math owner. Resolves the head camera's pelvis-frame optical pose via the
+    injected ``fk_link`` callable and composes perception poses."""
 
-    def __init__(self, planner, camera_cfg: Optional[dict] = None,
+    def __init__(self, fk_link: Callable[..., Pose], camera_cfg: Optional[dict] = None,
                  sim_base_world_pose: Optional[dict] = None):
-        self.planner = planner
+        self.fk_link = fk_link                    # (link_name, q14=None) -> pelvis-frame Pose
         ext = (camera_cfg or {}).get("extrinsics", {})
         self.parent_frame = _parse_source(ext.get("source"))
         self.body_to_optical = (BODY_TO_OPTICAL
@@ -76,7 +82,7 @@ class Frames:
         """Camera OPTICAL frame in pelvis:
         correction * FK(parent_frame) * mount * body_to_optical. q-independent for
         the head (fixed to the locked torso); pass q14 only matters for moving mounts."""
-        return (self.correction * self.planner.fk_link(self.parent_frame, q14)
+        return (self.correction * self.fk_link(self.parent_frame, q14)
                 * self.mount * self.body_to_optical)
 
     def T_pelvis_from_camera(self, T_cam_obj: Pose, q14=None) -> Pose:

@@ -8,9 +8,10 @@ depth grid 1:1). A grasp model wants ONE object's points, not the whole table.
   * ``None``           -> "no segmentation" -> the whole frame (NullSegmenter / sim).
 
 Implementations: ``NullSegmenter`` (no-op), ``Sam3Segmenter`` (one SAM3 call with a fixed
-configured prompt), ``InteractiveSam3Segmenter`` (operator refines text/box/points in a cv2
-GUI). The interactive one raises ``SegmentationAborted`` on abort so the caller returns no
-grasps rather than silently grasping the whole scene.
+configured prompt), and ``segment_gui.InteractiveSam3Segmenter`` (operator refines
+text/box/points in a cv2 GUI; lives with the GUI so this module stays display-free). The
+interactive one raises ``SegmentationAborted`` on abort so the caller returns no grasps
+rather than silently grasping the whole scene.
 """
 from __future__ import annotations
 
@@ -70,18 +71,3 @@ class Sam3Segmenter(Segmenter):
         if masks.shape[0] == 0:                    # found nothing -> empty (loud), NOT whole-frame
             return np.zeros(rgb.shape[:2], dtype=bool)
         return masks[0] > 0
-
-
-class InteractiveSam3Segmenter(Segmenter):
-    """Operator refines the SAM3 prompt (text/box/points) in a cv2 GUI, then accepts a
-    mask. Raises SegmentationAborted if the operator aborts."""
-
-    def __init__(self, client_factory, prompt_cfg: Optional[dict] = None, top_k: int = 3):
-        self.client_factory = client_factory
-        self.prompt_cfg = prompt_cfg
-        self.top_k = int(top_k)
-
-    def mask(self, rgb: np.ndarray) -> Optional[np.ndarray]:
-        from g1_primitives.perception.segment_gui import refine_mask
-        with self.client_factory() as c:           # one persistent client across all queries
-            return refine_mask(rgb, c, self.prompt_cfg, top_k=self.top_k)

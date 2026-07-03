@@ -1,7 +1,7 @@
 """Depth -> point cloud (the RGB-D producer). Pinhole-unprojects a head-camera depth
 map into a metric, pelvis-frame ``PointCloud``.
 
-This APPLIES the camera extrinsic that ``perception/transforms.py`` owns — it never
+This APPLIES the camera extrinsic that ``perception/frames.py`` owns — it never
 constructs a frame conversion (CLAUDE.md rule 2). The caller passes the optical->pelvis
 ``Pose`` (``robot.frames.T_pelvis_camera(q14)``) and the camera intrinsics
 (``camera_cfg["intrinsics"]``, the left-eye values matching the depth map). Output is in
