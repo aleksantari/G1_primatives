@@ -146,8 +146,13 @@ FSM pick-place pipeline was an early experiment and has been **removed** — see
   `get_q` right-hand order swaps index/middle vs left). `12_check_world` inspects the world in
   isolation (ESDF vs raw cloud + self-view probe). Sim depth = Isaac `front_camera` over ZMQ
   `:55556`. **REAL-VALIDATED 2026-06-30**: ran with `09 --collision-world` in the real grasp
-  (self-filter + live hand-tracking; tracked clean at `time_dilation 0.5`). See `docs/depth_integration_handoff.md`,
-  `docs/trajectory_speed_tracking.md`.
+  (self-filter + live hand-tracking; tracked clean at `time_dilation 0.5`) — but that run used a
+  then-unknown broken checker, so the obstacle-avoidance claim needs re-validation. **cuRobo voxel
+  bug (found 2026-07-02):** the collision kernel truncates float32 grid dims (Mapper grids land at
+  119.99999 → 119 → wrong strides → phantom hits + invisible obstacles); worked around by
+  `collision_world.kernel_safe_dims` on every grid we author — do NOT remove it until upstream
+  fixes land (a regression test flags when). Full report: `docs/curobo_voxel_dims_bug.md`. See
+  `docs/depth_integration_handoff.md`, `docs/trajectory_speed_tracking.md`.
 - Hand control (`robot_control/robot_hand_unitree.py`): threaded `Dex3Controller` /
   `Dex1Controller`, **publishes both hands continuously**; exposes `q/dq/tau/press` (grasp
   signals). Presets + verification in `ee/dex3.py` + `configs/hands.yaml`. Presets are being
