@@ -59,9 +59,6 @@ class Executor:
     def hold(self, q14: np.ndarray):
         self.arm.ctrl_dual_arm(np.asarray(q14, float).reshape(DOF), self._tauff(q14))
 
-    def go_home(self):
-        self.arm.ctrl_dual_arm_go_home()
-
     def go_home_direct(self, q_home: np.ndarray, ramp: bool = True,
                        tol: float = 0.05, timeout: float = 10.0) -> float:
         """Drive both arms to q_home with DIRECT position control (PD), NOT a cuRobo
