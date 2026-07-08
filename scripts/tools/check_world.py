@@ -14,11 +14,12 @@ answer the two questions that decide whether plan_grasp can use it:
      + the viser overlay reveal this.
 
 Three sources for the depth frame + the robot pose:
-  * LIVE (default): connects DDS read-only via g1.connect (sim -> domain 1/lo, home_on_connect=
-    False -> NOTHING moves) so the self-filter runs at the LIVE measured arm+finger q -- exactly
-    like the real grasp path (primitives._update_collision_world passes the current q). The filter
-    masks the robot at the config IN the depth frame, so it MUST match where the arm actually is;
-    if no live state arrives it falls back to home.
+  * LIVE (default): connects via g1.connect with home_on_connect=False. NOTE the vendored arm
+    controller still EASES TOWARD HOME (q_target zeros) from construction, so the arms may drift
+    for a few seconds after connect -- the script WAITS for the measured q to settle before
+    grabbing the depth + q pair, so the self-filter runs at the config that is actually IN the
+    frame (a mid-swing capture bakes a smeared arm into the world / aims the filter at the wrong
+    pose). If no live state arrives it falls back to home.
   * --no-dds: camera/ZMQ depth only (no DDS); self-filter at home.
   * --frame <capture.npz>: OFFLINE replay of a tools/capture_frame capture -- NO robot/camera/DDS
     at all (planner-only on the GPU). Uses the frame's depth + intrinsics + T_pelvis_camera, and the
@@ -65,6 +66,28 @@ def _load_capture(path):
         hand_q = {LEFT: np.asarray(z["hand_q_left"], float),
                   RIGHT: np.asarray(z["hand_q_right"], float)}
     return depth, K, T_pc, q14, hand_q
+
+
+def _wait_arm_settled(arm, timeout=15.0, tol=0.005, hold_n=5, dt=0.1):
+    """Block until the measured arm q stops moving (hold_n consecutive reads within tol rad).
+    The arm controller eases toward home from construction even with home_on_connect=False,
+    so an immediate capture reads a MID-SWING pose: the depth frame and the self-filter q
+    must describe the SAME stationary pose."""
+    if arm is None:
+        return
+    prev, stable, t0 = None, 0, time.time()
+    while time.time() - t0 < timeout:
+        q = arm.get_current_dual_arm_q()
+        if prev is not None and np.max(np.abs(q - prev)) < tol:
+            stable += 1
+            if stable >= hold_n:
+                print(f"arm settled ({time.time()-t0:.1f}s)")
+                return
+        else:
+            stable = 0
+        prev = q
+        time.sleep(dt)
+    print("WARNING: arm still moving after settle timeout -- the capture may be smeared")
 
 
 def _live_q(robot):
@@ -133,8 +156,9 @@ def main():
     else:
         if args.no_dds:                                              # camera/ZMQ only, no DDS
             robot = Robot.offline(args.target, camera=True)
-        else:                                                        # live q; home_on_connect=False -> no motion
+        else:                       # live q; the controller still eases home -> wait for settle
             robot = g1.connect(args.target, home_on_connect=False)
+            _wait_arm_settled(getattr(robot, "arm", None))
         cam = robot.camera
         if not cam.has_depth:
             print(f"[{args.target}] no head depth stream -- run checks/03_depth first."); return
