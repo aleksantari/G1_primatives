@@ -53,15 +53,17 @@ graspgenx:
 
 # Object segmentation (SAM3 over ZMQ) -> a 2D mask applied to the depth BEFORE deproject.
 #   mode: none       -> NullSegmenter (whole frame; sim has no SAM3).
-#         auto       -> one SAM3 call with default_prompt below (headless).
-#         interactive-> cv2 GUI to refine text/box/points before accepting.
+#         auto       -> one headless SAM3 call: the grasp TARGET is the text prompt.
+#         interactive-> cv2 GUI seeded with the grasp TARGET; refine text/box/points.
+# The call's target (robot.grasp(side, target)) DRIVES the prompt in both modes;
+# default_prompt below is only the FALLBACK when the target is empty/None.
 segment:
   mode: none              # default off; robot.set_segmenter / --segment overrides per run
   host: "127.0.0.1"       # SAM3 server (workstation GPU). USER-PROVIDED.
   port: 5557
   timeout_ms: 60000
   top_k: 3                # >1 so points/box ambiguity candidates can be cycled in the GUI
-  default_prompt:         # exactly ONE of text/box/points; used by auto, seeds interactive
+  default_prompt:         # exactly ONE of text/box/points; EMPTY-TARGET FALLBACK only
     text: "red block"
     # box: [x0, y0, x1, y1]
     # points: [[x, y], ...]   # (+ optional point_labels: [1, 0, ...])

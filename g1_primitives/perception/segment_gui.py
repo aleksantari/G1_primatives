@@ -174,14 +174,18 @@ def refine_mask(rgb: np.ndarray, client, prompt_cfg: Optional[dict] = None, *,
 
 class InteractiveSam3Segmenter(Segmenter):
     """Operator refines the SAM3 prompt (text/box/points) in the cv2 GUI above, then accepts
-    a mask. Raises SegmentationAborted if the operator aborts. Lives here (not segment.py)
-    because it is display-bound -- segment.py stays importable headless with no cycle."""
+    a mask. A non-empty ``text`` (the grasp target) SEEDS the GUI -- the window opens
+    already querying it and the operator refines/overrides as usual; empty text seeds from
+    the configured ``default_prompt``. Raises SegmentationAborted if the operator aborts.
+    Lives here (not segment.py) because it is display-bound -- segment.py stays importable
+    headless with no cycle."""
 
     def __init__(self, client_factory, prompt_cfg=None, top_k: int = 3):
         self.client_factory = client_factory
         self.prompt_cfg = prompt_cfg
         self.top_k = int(top_k)
 
-    def mask(self, rgb: np.ndarray):
+    def mask(self, rgb: np.ndarray, text: Optional[str] = None):
+        seed = {"text": text.strip()} if (text and text.strip()) else self.prompt_cfg
         with self.client_factory() as c:           # one persistent client across all queries
-            return refine_mask(rgb, c, self.prompt_cfg, top_k=self.top_k)
+            return refine_mask(rgb, c, seed, top_k=self.top_k)

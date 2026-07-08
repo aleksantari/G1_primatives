@@ -33,6 +33,22 @@ def _rgb():
 
 def test_null_segmenter_returns_none():
     assert NullSegmenter().mask(_rgb()) is None
+    assert NullSegmenter().mask(_rgb(), text="green cylinder") is None   # text ignored
+
+
+def test_sam3_segmenter_target_text_wins():
+    """A non-empty text (the grasp target) IS the prompt -- over a text AND a box
+    default_prompt alike; empty/blank text falls back to the configured prompt."""
+    m = np.zeros((1, H, W), np.uint8)
+    m[0, 1:3, 1:3] = 255
+    for default in ({"text": "red block"}, {"box": [1, 1, 4, 4]}):
+        client = FakeClient(m)
+        Sam3Segmenter(lambda: client, default).mask(_rgb(), text="green cylinder")
+        assert client.kw == {"text": "green cylinder", "top_k": 1}
+    for empty in (None, "", "   "):
+        client = FakeClient(m)
+        Sam3Segmenter(lambda: client, {"box": [1, 1, 4, 4]}).mask(_rgb(), text=empty)
+        assert client.kw == {"box": [1, 1, 4, 4], "top_k": 1}   # fallback: default_prompt
 
 
 def test_sam3_segmenter_returns_top_mask():

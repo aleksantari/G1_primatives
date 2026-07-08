@@ -44,8 +44,10 @@ class FakeFrames:
 class FakeSeg(Segmenter):
     def __init__(self, mask):
         self._mask = mask
+        self.text = None                            # records the target the source passed
 
-    def mask(self, rgb):
+    def mask(self, rgb, text=None):
+        self.text = text
         return self._mask
 
 
@@ -82,9 +84,10 @@ def test_graspgenx_source_ranks_and_transforms():
     g1 = Pose(rpy_to_matrix(-0.2, 0.1, 0.0), [0.39, -0.19, 0.79]).homogeneous.astype(np.float32)
     conf = np.array([0.3, 0.9], np.float32)        # g1 better -> must come first
     client = FakeClient(np.stack([g0, g1]), conf)
-    src = GraspGenXGraspSource(FakeFrames(), FakeSeg(np.ones((3, 3), bool)),
-                               lambda: client, GCFG, CAM_CFG)
+    seg = FakeSeg(np.ones((3, 3), bool))
+    src = GraspGenXGraspSource(FakeFrames(), seg, lambda: client, GCFG, CAM_CFG)
     cands = src.grasps(FakeRobot(camera=FakeCam(DEPTH)), RIGHT, "block")
+    assert seg.text == "block"                      # the target DRIVES segmentation
     assert len(cands) == 2
     assert cands[0].confidence == pytest.approx(0.9) and cands[1].confidence == pytest.approx(0.3)
     assert client.sent is not None and client.sent.shape[1] == 3 and client.sent.shape[0] > 0

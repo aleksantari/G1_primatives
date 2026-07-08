@@ -191,10 +191,13 @@ choose a prop in the SAM3 GUI (`sim_cloud` stays cube-only). See SIM_NOTES.md.
 ## Grasp pipeline — servers and data flow
 
 Grasp poses come from `robot.grasp_source` (grasp.yaml `source:`):
-- **`graspgenx`** — the real pipeline: head depth → SAM3 mask (applied pre-deproject) →
-  pelvis-frame `PointCloud` → GraspGenX ZMQ → ranked 6-DoF grasps → the kinematics-derived
-  grasp→wrist transform (`grasp.yaml: wristyaw_grasp_rpy` + `palm_offset_xyz`,
-  hardware-confirmed 2026-06-30; recipe: `scripts/tools/derive_tool_transform.py`).
+- **`graspgenx`** — the real pipeline: head depth → SAM3 mask (applied pre-deproject;
+  **the grasp `target` drives the prompt** — auto mode uses it as the SAM3 text prompt,
+  interactive mode seeds the GUI with it; `segment.default_prompt` is only the
+  empty-target fallback) → pelvis-frame `PointCloud` → GraspGenX ZMQ → ranked 6-DoF
+  grasps → the kinematics-derived grasp→wrist transform (`grasp.yaml:
+  wristyaw_grasp_rpy` + `palm_offset_xyz`, hardware-confirmed 2026-06-30; recipe:
+  `scripts/tools/derive_tool_transform.py`).
 - **`sim_cloud`** — SIM-only de-risk: an analytic GT cube cloud at the live `rt/sim_state`
   block pose → the same GraspGenX + transform (no camera/depth/SAM3).
 

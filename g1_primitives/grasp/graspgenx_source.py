@@ -6,6 +6,11 @@ single-object cloud, send it to the GraspGenX service, map each returned 6-DoF g
 the fixed grasp->tool transform to a wrist-yaw goal, return ranked by confidence. The service
 centers/uncenters internally, so the cloud is sent in the pelvis frame and grasps come back in
 the pelvis frame (no client centering / normals / table plane).
+
+The grasp TARGET drives segmentation: it is passed to ``segmenter.mask(rgb, text=target)``
+-- auto mode uses it as THE SAM3 text prompt, interactive mode seeds the GUI with it
+(operator refines/overrides), NullSegmenter ignores it. grasp.yaml ``default_prompt`` is
+only the empty-target fallback. So ``robot.grasp(side, "green cylinder")`` means it.
 """
 from __future__ import annotations
 
@@ -25,7 +30,7 @@ class GraspGenXGraspSource(GraspSource):
     def __init__(self, frames, segmenter, client_factory, gcfg: dict, camera_cfg: dict,
                  viz=None):
         self.frames = frames
-        self.segmenter = segmenter                     # perception.segment.Segmenter (.mask(rgb))
+        self.segmenter = segmenter                     # perception.segment.Segmenter (.mask(rgb, text))
         self.client_factory = client_factory           # () -> GraspGenXClient (ctx manager)
         self.gcfg = gcfg
         self.intrinsics = (camera_cfg or {}).get("intrinsics", {})
@@ -51,7 +56,8 @@ class GraspGenXGraspSource(GraspSource):
         T_pc = self.frames.T_pelvis_camera(q14)
 
         try:
-            mask = self.segmenter.mask(rgb)            # (H,W) bool / all-False / None (whole frame)
+            # target drives the prompt (auto: IS the prompt; interactive: seeds the GUI)
+            mask = self.segmenter.mask(rgb, text=target)  # (H,W) bool / all-False / None
         except SegmentationAborted:
             return []                                  # operator aborted -> no grasps (loud)
         snap = SourceSnapshot(target=target, mask=mask)  # mask -> collision_world.exclude_object

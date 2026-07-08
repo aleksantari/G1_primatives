@@ -119,7 +119,9 @@ module-scope cleanliness is what the whole fake pattern depends on.
   `plan_grasp` offsets EVERY goal tool frame, so the grasp planner is a dedicated
   single-tool-frame `MotionPlanner` per side (`_grasp_planner`); a lone candidate is
   duplicated into a 2-row goalset (`warmup` never primes the `num_goalset=1` path).
-  GraspGenX path: head depth → SAM3 mask (ZMQ `:5557`, applied PRE-deproject) →
+  GraspGenX path: head depth → SAM3 mask (ZMQ `:5557`, applied PRE-deproject; the grasp
+  TARGET drives the prompt — auto: IS the text prompt, interactive: seeds the GUI;
+  `default_prompt` = empty-target fallback) →
   `deproject_depth` → pelvis `PointCloud` → GraspGenX ZMQ (`:5556`, protocol v2:
   `infer` → `(grasps, conf, branch_tags)`; `planner` ∈ {diffusion|graspmoe|**topdown**};
   grasp.yaml defaults `topdown` for grab-from-above) → tool transform. `sim_cloud` =
