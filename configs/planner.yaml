@@ -45,11 +45,19 @@ executor:
 solver:
   # num_ik_seeds: 128                  # [32] parallel IK seeds for the goal/goalset pose
   # num_trajopt_seeds: 16              # [4]  parallel trajectory-optimization seeds
-  collision_activation_distance: 0.01  # [0.01] m clearance the OPTIMIZER demands from obstacles.
+  collision_activation_distance: 0.025 # [0.01] m clearance the OPTIMIZER demands from obstacles.
                                        #   NOTE this shapes the optimizer COST only -- the hard
                                        #   pass/fail gate ('Start or End state in collision', IK
                                        #   feasibility) runs at activation 0.0 (cuRobo
                                        #   metrics_base.yml); world_check reports both tiers.
+                                       #   0.025 (2026-07-08): at the cuRobo-default 0.01 a valid
+                                       #   approach may GRAZE the ESDF surface, and the modeling
+                                       #   error budget eats that margin -- ~1cm voxel quantization
+                                       #   + self-filter top-shave + sim tracking slop (abort 0.40
+                                       #   rad) -- observed as a finger nicking the target en route
+                                       #   to the pre-grasp. 2.5cm buys the path real clearance;
+                                       #   trim back toward 0.01 if tight/cluttered scenes start
+                                       #   failing to plan (the strategy sweep absorbs some of it).
   # position_tolerance: 0.005          # [0.005] m goal position tolerance (loosen if barely unreachable)
   # orientation_tolerance: 0.05        # [0.05] rad goal orientation tolerance
 
