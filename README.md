@@ -100,13 +100,44 @@ torch/CUDA/DDS** — heavy stacks load on `connect()` (enforced by `tests/test_i
 ## Environment
 
 The **`g1_curobo`** conda env (Python 3.11, numpy 2, torch 2.9.1+cu128, cuRobo V2 from
-source, cyclonedds, unitree_sdk2py). **No pinocchio.** Build/install is not plain
-`pip install` — see the header of `requirements-curobo.txt`. Always use the lane wrapper:
+source, cyclonedds, unitree_sdk2py). **No pinocchio.** Always use the lane wrapper:
 
 ```bash
 bash -ic 'use_conda g1_curobo && python -m pytest tests/ -q'      # GPU-free suite
 bash -ic 'use_conda g1_curobo && python -c "import g1_primitives"'
 ```
+
+### Replicating the env
+
+Build/install is **not** plain `pip install` — three deps compile against system
+libraries, in this order, *before* the requirements file (which pins everything else,
+including the msgpack ZMQ wire deps). Assumes system CUDA 12.8 at `/usr/local/cuda-12.8`
+(the cuRobo arch flag below targets the RTX 5090, sm_120 — adjust `TORCH_CUDA_ARCH_LIST`
+for another GPU) and the CycloneDDS C lib at `/opt/cyclonedds`.
+
+```bash
+conda create -n g1_curobo python=3.11 -y
+bash -ic 'use_conda g1_curobo && \
+  # 1. CUDA torch (cu128 wheel; sm_120-capable)
+  pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128 && \
+  # 2. cuRobo V2 from source (commit pin in requirements-curobo.txt)
+  git clone https://github.com/NVlabs/curobo ~/repos/curobo ; \
+  CUDA_HOME=/usr/local/cuda-12.8 PATH=/usr/local/cuda-12.8/bin:$PATH \
+    TORCH_CUDA_ARCH_LIST="12.0" pip install -e "~/repos/curobo[cu12]" --no-build-isolation && \
+  # 3. CycloneDDS bindings against the system C lib
+  CYCLONEDDS_HOME=/opt/cyclonedds pip install cyclonedds==0.10.2 && \
+  # 4. Unitree SDK (editable, --no-deps so it cannot downgrade numpy)
+  git clone https://github.com/unitreerobotics/unitree_sdk2_python ~/repos/unitree_sdk2_python ; \
+  pip install -e ~/repos/unitree_sdk2_python --no-deps && \
+  # 5+6. everything else, then this package
+  pip install -r requirements-curobo.txt && pip install -e .'
+```
+
+Verify: the two commands at the top of this section (import check + suite), then
+`scripts/checks/01_dds.py` against the sim. The same recipe lives in the header of
+`requirements-curobo.txt`. The GraspGenX / SAM3 **servers** are separate repos with their
+own envs (see "Grasp pipeline — servers and data flow" below) — this env only ships
+their thin ZMQ clients.
 
 ## Run against the Isaac sim
 

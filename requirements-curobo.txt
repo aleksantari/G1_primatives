@@ -1,18 +1,24 @@
-# g1_curobo env freeze (py3.11, numpy2, torch-cu128, cuRobo). The cuRobo-native
-# repo runs here. Some pieces are NOT plain `pip install` and must be built first:
+# g1_curobo env freeze (py3.11, numpy2, torch-cu128, cuRobo V2). The whole repo runs in
+# this one conda env. Some pieces are NOT plain `pip install` and must be built in order
+# BEFORE installing this file -- full copy-paste recipe in README.md "Replicating the env":
 #   conda create -n g1_curobo python=3.11 -y
-#   # CUDA torch for the RTX 5090 (sm_120):
+#   # 1. CUDA torch for the RTX 5090 (sm_120):
 #   pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
-#   # cuRobo V2 from source (CUDA ext built for sm_120):
+#   # 2. cuRobo V2 from source (CUDA ext built for sm_120; pin below for the exact commit):
 #   git clone https://github.com/NVlabs/curobo ~/repos/curobo
 #   CUDA_HOME=/usr/local/cuda-12.8 PATH=/usr/local/cuda-12.8/bin:$PATH \
 #     TORCH_CUDA_ARCH_LIST="12.0" pip install -e ~/repos/curobo[cu12] --no-build-isolation
-#   # CycloneDDS python bindings built against the system C lib:
+#   # 3. CycloneDDS python bindings built against the system C lib:
 #   CYCLONEDDS_HOME=/opt/cyclonedds pip install cyclonedds==0.10.2
-#   # Unitree SDK (editable, no deps so it can't touch numpy):
+#   # 4. Unitree SDK (editable, --no-deps so it can't downgrade numpy):
+#   git clone https://github.com/unitreerobotics/unitree_sdk2_python ~/repos/unitree_sdk2_python
 #   pip install -e ~/repos/unitree_sdk2_python --no-deps
-# Then: pip install -r requirements-curobo.txt  (the rest, incl. warp-lang/trimesh/scipy).
-# Run everything via the `use_conda g1_curobo` lane wrapper (PYTHONNOUSERSITE=1 isolation).
+#   # 5. everything else (incl. msgpack/msgpack-numpy -- the GraspGenX/SAM3 ZMQ wire deps):
+#   pip install -r requirements-curobo.txt
+#   # 6. this package:
+#   pip install -e .
+# Run everything via the `use_conda g1_curobo` lane wrapper (PYTHONNOUSERSITE=1 isolation);
+# `conda run`/`conda activate` leak ~/.local -- see CLAUDE.md.
 anyio==4.13.0
 attrs==26.1.0
 certifi==2026.5.20
@@ -27,7 +33,6 @@ cycler==0.12.1
 cyclonedds==0.10.2
 embreex==4.4.0
 fonttools==4.63.0
--e /home/santari/repos/G1_classical_manip
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
@@ -45,6 +50,8 @@ markdown-it-py==4.2.0
 matplotlib==3.11.0
 mdurl==0.1.2
 mpmath==1.3.0
+msgpack==1.2.1
+msgpack-numpy==0.4.8
 msgspec==0.21.1
 networkx==3.6.1
 ninja==1.13.0
@@ -59,7 +66,9 @@ nvidia-cudnn-cu12==9.10.2.21
 nvidia-cufft-cu12==11.3.3.83
 nvidia-cufile-cu12==1.13.1.3
 nvidia-curand-cu12==10.3.9.90
--e git+https://github.com/NVlabs/curobo@ec2bfa9f9ea2673abe00cf911ef39353ddb79c29#egg=nvidia_curobo
+# cuRobo: installed in step 2 above (source build needs the CUDA env vars, so it is NOT
+# an install line here). Validated commit pin:
+#   nvidia_curobo @ ec2bfa9f9ea2673abe00cf911ef39353ddb79c29
 nvidia-cusolver-cu12==11.7.3.90
 nvidia-cusparse-cu12==12.5.8.93
 nvidia-cusparselt-cu12==0.7.1
@@ -72,7 +81,6 @@ opencv-python==4.13.0.92
 packaging==26.0
 pillow==12.2.0
 pluggy==1.6.0
-pupil-apriltags==1.0.4.post11
 pycollada==0.9.3
 Pygments==2.20.0
 pyparsing==3.3.2
@@ -97,7 +105,9 @@ tqdm==4.68.2
 trimesh==4.12.2
 triton==3.5.1
 typing_extensions==4.15.0
--e git+https://github.com/unitreerobotics/unitree_sdk2_python@794fb2b3fd9165fd245a7b568698d9e97d8ac0a0#egg=unitree_sdk2py
+# unitree_sdk2py: installed in step 4 above (editable --no-deps so it can't downgrade
+# numpy). Validated commit pin:
+#   unitree_sdk2py @ 794fb2b3fd9165fd245a7b568698d9e97d8ac0a0
 urllib3==2.7.0
 vcs-versioning==1.1.1
 vhacdx==0.0.10
