@@ -12,6 +12,7 @@ velocity/accel limits. Runs in the cuRobo env (numpy2/py3.11/CUDA); no pinocchio
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from typing import List, Optional
 
@@ -52,6 +53,29 @@ _DEX3_GETQ_JOINTS = {
     RIGHT: [f"right_hand_{p}_joint"
             for p in ("thumb_0", "thumb_1", "thumb_2", "index_0", "index_1", "middle_0", "middle_1")],
 }
+
+
+def _portable_robot_cfg(robot_cfg_path: str) -> dict:
+    """Load the cuRobo robot config with MACHINE-PORTABLE asset paths (fresh dict per
+    call -- callers may mutate). ``build_g1_dex3.py`` bakes ABSOLUTE ``urdf_path`` /
+    ``asset_root_path`` into the committed yml (hardware-validated -- never regenerate
+    just to fix paths); on any other machine / clone location those paths don't exist and
+    cuRobo's URDF parse fails at planner build. If a stored path is missing on THIS
+    machine, re-anchor its ``assets/...`` tail to this checkout's repo root, derived from
+    the yml's own location (``<repo>/configs/curobo/<cfg>.yml`` -> two dirs up). Paths
+    that exist (this machine, or a custom config) pass through untouched."""
+    import yaml
+    with open(robot_cfg_path) as f:
+        rcfg = yaml.safe_load(f)
+    kin = rcfg.get("kinematics") or {}
+    repo = os.path.abspath(os.path.join(os.path.dirname(robot_cfg_path), "..", ".."))
+    for key in ("asset_root_path", "urdf_path"):
+        p = kin.get(key)
+        if p and not os.path.exists(p):
+            tail = p.replace("\\", "/").split("/assets/", 1)
+            if len(tail) == 2:
+                kin[key] = os.path.join(repo, "assets", *tail[1].split("/"))
+    return rcfg
 
 
 def _seg_positions(seg_names, q_repo14, hand_q=None):
@@ -124,7 +148,8 @@ class CuroboArmPlanner:
         # goalset path at this size. Default 1 in cuRobo would forbid multi-candidate solves.
         self._max_goalset = int((self.planner_cfg.get("grasp") or {}).get("max_goalset", 128))
         self._mp = MotionPlanner(MotionPlannerCfg.create(
-            robot=robot_cfg_path, max_goalset=self._max_goalset, **self._solver_kwargs()))
+            robot=_portable_robot_cfg(robot_cfg_path),   # yml paths re-anchored per machine
+            max_goalset=self._max_goalset, **self._solver_kwargs()))
         self._mp.warmup(enable_graph=True, num_warmup_iterations=5)
         self._grasp_mp = {}       # lazy per-side single-tool-frame planners for plan_grasp
         self._cw_loaded = set()   # sides whose grasp planner has a LIVE ESDF loaded (vs the empty
@@ -379,10 +404,8 @@ class CuroboArmPlanner:
         unchanged; the idle arm is seed-held by trajopt). First grasp per side pays a warmup."""
         mp = self._grasp_mp.get(side)
         if mp is None:
-            import yaml
             from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
-            with open(self._robot_cfg_path) as f:
-                rcfg = yaml.safe_load(f)
+            rcfg = _portable_robot_cfg(self._robot_cfg_path)
             rcfg["kinematics"]["tool_frames"] = [WRIST_FRAME[side]]
             scene_model = None
             if self._cw_enabled:                 # voxel-capable: allocate the ESDF channel at build
@@ -441,13 +464,11 @@ class CuroboArmPlanner:
         this dedicated model leaves the planner untouched. Returns (segmenter, active_joint_names).
         Mirrors RobotSegmenter.from_robot_file but forces ops_dtype=float32 (the default bfloat16
         trips cuRobo's own check_float32_tensors on the cdist path)."""
-        import copy
-        from curobo._src.util_file import load_yaml
         from curobo._src.types.robot import RobotCfg
         from curobo._src.types.device_cfg import DeviceCfg
         from curobo._src.robot.kinematics.kinematics import Kinematics
         from curobo._src.perception.robot_segmenter import RobotSegmenter
-        cfg = copy.deepcopy(load_yaml(self._robot_cfg_path))
+        cfg = _portable_robot_cfg(self._robot_cfg_path)   # fresh dict; mutation-safe
         lj = cfg["kinematics"].get("lock_joints") or {}
         cfg["kinematics"]["lock_joints"] = {k: v for k, v in lj.items() if "hand" not in k}
         kin = Kinematics(RobotCfg.create(cfg, device_cfg=DeviceCfg()).kinematics)

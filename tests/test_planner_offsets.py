@@ -88,3 +88,47 @@ def test_tool_frame_offset_equals_world_backoff():
             # atol 1e-6: the 7-digit yaml pi (see test above); direction errors would be ~2*dist.
             np.testing.assert_allclose(pre_tool.translation, pre_world.translation, atol=1e-6)
             np.testing.assert_allclose(pre_tool.rotation, pre_world.rotation, atol=1e-12)
+
+
+# --------------------------------------------------- portable robot-config paths
+def test_portable_robot_cfg_reanchors_missing_paths(tmp_path):
+    """The committed curobo yml bakes ABSOLUTE asset paths from the machine that generated
+    it (build_g1_dex3.py). _portable_robot_cfg must re-anchor a missing path's assets/...
+    tail onto THIS checkout (repo root = two dirs above the yml), keep existing paths
+    untouched, and return a fresh dict per call (callers mutate tool_frames)."""
+    import yaml
+    from g1_primitives.motion.planner import _portable_robot_cfg
+
+    cfg_dir = tmp_path / "configs" / "curobo"
+    cfg_dir.mkdir(parents=True)
+    exists = tmp_path / "somewhere.urdf"                    # a path that DOES exist
+    exists.write_text("")
+    yml = cfg_dir / "robot.yml"
+    yml.write_text(yaml.safe_dump({"kinematics": {
+        "urdf_path": "/home/otheruser/repos/G1/assets/g1/g1_29dof_mode_16_dex3.urdf",
+        "asset_root_path": "/home/otheruser/repos/G1/assets/g1",
+        "tool_frames": ["a", "b"]}}))
+
+    kin = _portable_robot_cfg(str(yml))["kinematics"]
+    assert kin["urdf_path"] == str(tmp_path / "assets" / "g1" /
+                                   "g1_29dof_mode_16_dex3.urdf")   # re-anchored
+    assert kin["asset_root_path"] == str(tmp_path / "assets" / "g1")
+
+    yml.write_text(yaml.safe_dump({"kinematics": {"urdf_path": str(exists)}}))
+    assert _portable_robot_cfg(str(yml))["kinematics"]["urdf_path"] == str(exists)
+
+    a, b = _portable_robot_cfg(str(yml)), _portable_robot_cfg(str(yml))
+    a["kinematics"]["tool_frames"] = ["x"]                  # fresh dicts: no cross-talk
+    assert "tool_frames" not in b["kinematics"]
+
+
+def test_portable_robot_cfg_real_config_resolves():
+    """The COMMITTED config must load with both asset paths pointing at real files on
+    this machine, whatever machine generated it."""
+    import os
+    from g1_primitives.motion.planner import _portable_robot_cfg
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    kin = _portable_robot_cfg(
+        os.path.join(here, "configs", "curobo", "g1_dex3_curobo.yml"))["kinematics"]
+    assert os.path.isfile(kin["urdf_path"])
+    assert os.path.isdir(kin["asset_root_path"])
