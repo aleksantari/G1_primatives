@@ -23,6 +23,7 @@ touch DDS (the script warns if it is unset).
 | `checks/05_move.py` | planned home + optional wrist lift | **arms** |
 | `examples/01_hello_motion.py` | home → move → close → open → home | **arms + hands** |
 | `examples/02_pick.py` | full pick-and-lift (grasp source + SAM3 + plan_grasp) | **arms + hands** |
+| `examples/03_playground.py` | interactive viser GUI over every primitive — verb buttons + an agent-wire tool-call box (`grasp {"side": "right"}`) + live scene/log | **arms + hands** (or `--offline`) |
 | `tools/segment.py` | SAM3 mask + object cloud (live / `--frame` / `--image`) | no |
 | `tools/grasp_preview.py` | live SAM3 + GraspGenX preview loop in viser | no |
 | `tools/graspgen_viz.py` | offline cloud → GraspGenX → viser | no |

@@ -169,7 +169,8 @@ python scripts/checks/05_move.py   --target sim   # planned home (add --dz 0.1 f
 
 # then the examples:
 python scripts/examples/01_hello_motion.py --target sim
-python scripts/examples/02_pick.py --target sim --source sim_cloud --visualize
+python scripts/examples/02_pick.py --target sim --visualize
+python scripts/examples/03_playground.py --target sim --source sim_cloud  # interactive GUI
 ```
 `checks/01–03` are read-only (safe first contact); `04/05` and the examples command the
 arms/hands. `scripts/README.md` has the full table (incl. the `tools/`) and the
