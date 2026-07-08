@@ -396,12 +396,16 @@ def ticker(robot, vis, ui, runner, stop: threading.Event):
             for side in (g1.LEFT, g1.RIGHT):
                 T = robot.planner.fk(side, q)
                 h = frames.get(side)
+                if h is not None:
+                    try:
+                        h.wxyz, h.position = (tuple(T.quaternion_wxyz()),
+                                              tuple(T.translation))
+                    except RuntimeError:   # GraspViz.reset() wiped the scene -> recreate
+                        h = None
                 if h is None:
                     frames[side] = vis.scene.add_frame(
                         f"/live/wrist_{side}", axes_length=0.08, axes_radius=0.004,
                         wxyz=tuple(T.quaternion_wxyz()), position=tuple(T.translation))
-                else:
-                    h.wxyz, h.position = tuple(T.quaternion_wxyz()), tuple(T.translation)
             ex = robot.executor
             busy = runner.busy or "idle"
             ui.status.content = (
