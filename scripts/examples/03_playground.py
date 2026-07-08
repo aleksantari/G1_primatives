@@ -445,6 +445,9 @@ def main():
                     help="start with the depth-ESDF collision world ON")
     ap.add_argument("--offline", action="store_true",
                     help="GUI with no DDS/robot (motion tools return an error Result)")
+    ap.add_argument("--speed", type=float, default=None,
+                    help="trajectory playback time-dilation (<1 = slower); the Session "
+                         "slider changes it live")
     ap.add_argument("--no-cloud", action="store_true",
                     help="start with the live camera cloud ticker OFF")
     args = ap.parse_args()
@@ -457,6 +460,8 @@ def main():
         robot.set_grasp_source(args.source)
     if args.segment is not None:
         robot.set_segmenter(args.segment)
+    if args.speed is not None and robot.executor is not None:
+        robot.set_executor(speed=args.speed)     # before UI build -> slider starts here
     robot.set_visualize(True)                    # builds GraspViz -> OUR viser server
     if args.collision_world:
         robot.set_collision_world(True)
