@@ -23,6 +23,7 @@ source, which owns this GUI's viser server.
 """
 import argparse
 import json
+import queue
 import threading
 import time
 import traceback
@@ -98,7 +99,10 @@ class ToolLog:
 
 # ------------------------------------------------------------------ tool runner
 class ToolRunner:
-    """Runs ONE tool call at a time on a worker thread; rejects calls while busy.
+    """Runs ONE tool call at a time on a single PERSISTENT worker thread; rejects calls
+    while busy. One thread for every call matters: the interactive SAM3 cv2 window is
+    display-bound and deadlocks if window ops migrate between threads (GTK per-thread
+    event-loop state) -- a thread-per-call design hung on the second grasp.
     `abort` is checked at grasp phase gates (soft abort: unwind + hold)."""
 
     def __init__(self, log: ToolLog):
@@ -108,6 +112,8 @@ class ToolRunner:
         self.gate = threading.Event()    # CONTINUE button at confirm gates
         self._buttons = []               # disabled while busy (ABORT stays live)
         self._lock = threading.Lock()
+        self._q = queue.Queue()
+        threading.Thread(target=self._worker, daemon=True).start()
 
     def register_buttons(self, handles):
         self._buttons.extend(handles)
@@ -122,7 +128,11 @@ class ToolRunner:
         for b in self._buttons:
             b.disabled = True
         self.log.call(name, args)
-        threading.Thread(target=self._run, args=(name, fn, args), daemon=True).start()
+        self._q.put((name, fn, args))
+
+    def _worker(self):
+        while True:
+            self._run(*self._q.get())
 
     def _run(self, name, fn, args):
         t0 = time.time()
@@ -165,6 +175,14 @@ def build_tools(robot, runner: ToolRunner, ui):
             return {"ok": False, "info": "offline -- no executor/arm connected"}
         return None
 
+    def _seg_hint():
+        """Interactive segmentation blocks on a NATIVE cv2 window (workstation display,
+        not the browser) -- say so in the log or a hidden window reads as a hang."""
+        seg = (robot.cfg.get("grasp", {}) or {}).get("segment") or {}
+        if robot.grasp_source_kind == "graspgenx" and seg.get("mode") == "interactive":
+            runner.log.add("  .. SAM3 refine window opening on the WORKSTATION display "
+                           "(Enter/c = accept, q = abort)")
+
     def home():
         return _need_motion() or result_json(robot.home())
 
@@ -189,6 +207,7 @@ def build_tools(robot, runner: ToolRunner, ui):
         return {"found": True, "label": det.label, "pose": pose_json(det.pose)}
 
     def grasp_candidates(side, target):
+        _seg_hint()
         cands = robot.grasp_candidates(side, target)
         return _clean({
             "n": len(cands),
@@ -201,6 +220,7 @@ def build_tools(robot, runner: ToolRunner, ui):
         err = _need_motion()
         if err:
             return err
+        _seg_hint()
         options = g1.GraspOptions(
             approach=opt.get("approach", True), lift=opt.get("lift", True),
             verify_close=opt.get("verify_close", False),
