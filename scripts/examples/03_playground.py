@@ -8,9 +8,12 @@ GraspOptions controls, a free-text TOOL-CALL box (`grasp {"side": "right"}`), an
 rolling agent-wire log. Buttons and typed tool calls go through the SAME tool registry,
 so the log always shows the exact JSON an agent would receive.
 
+Runs the STANDARD full stack by default (source graspgenx + SAM3 interactive), sim and
+real alike; `--source sim_cloud` is the rarely-used cube-only sim GT fallback.
+
     sim : CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \\
-          bash -ic 'use_conda g1_curobo && python scripts/examples/03_playground.py --target sim --source sim_cloud'
-    real: bash -ic 'use_conda g1_curobo && python scripts/examples/03_playground.py --target real --segment auto'
+          bash -ic 'use_conda g1_curobo && python scripts/examples/03_playground.py --target sim'
+    real: bash -ic 'use_conda g1_curobo && python scripts/examples/03_playground.py --target real'
 
 Safety: one tool runs at a time (buttons grey out); ABORT unwinds a grasp at the next
 phase gate and HOLDS (no recovery motion) -- the hard stop on real remains the e-stop.
@@ -428,10 +431,12 @@ def ticker(robot, vis, ui, runner, stop: threading.Event):
 def main():
     ap = argparse.ArgumentParser()
     console.add_target_arg(ap)
-    ap.add_argument("--source", choices=["graspgenx", "sim_cloud"], default=None,
-                    help="override grasp.yaml source:")
-    ap.add_argument("--segment", choices=["auto", "interactive", "none"], default=None,
-                    help="SAM3 segmentation mode")
+    ap.add_argument("--source", choices=["graspgenx", "sim_cloud"], default="graspgenx",
+                    help="grasp source (DEFAULT graspgenx -- the standard, sim AND real; "
+                         "sim_cloud = rarely-used cube-only sim GT fallback)")
+    ap.add_argument("--segment", choices=["auto", "interactive", "none"], default="interactive",
+                    help="SAM3 mask mode (DEFAULT interactive: cv2 prompt GUI; "
+                         "auto = headless default_prompt)")
     ap.add_argument("--collision-world", action="store_true",
                     help="start with the depth-ESDF collision world ON")
     ap.add_argument("--offline", action="store_true",

@@ -1,23 +1,25 @@
 #!/usr/bin/env python
-"""examples/02 - Pick-and-lift via the Robot facade: grasp source (GraspGenX live depth, or
-the sim_cloud GT path in sim) + optional SAM3 segmentation + cuRobo native plan_grasp.
+"""examples/02 - Pick-and-lift via the Robot facade: the STANDARD full stack -- GraspGenX
+live depth + SAM3 segmentation + cuRobo native plan_grasp -- the SAME pipeline sim and real.
 
     home -> open -> robot.grasp_candidates(object) -> grasp_motion (goalset: cuRobo picks
     the feasible grasp) -> approach -> grasp -> close -> lift -> home
 
-  --source graspgenx    ranked 6-DoF grasps from the GraspGenX ZMQ service (needs the server
-                        up + a head depth stream)
-  --source sim_cloud    sim GT: cube cloud from rt/sim_state -> GraspGenX (no camera/SAM3)
-  --segment auto|interactive|none    SAM3 mask mode (overrides grasp.yaml segment.mode)
+  --source graspgenx    DEFAULT (the standard, sim AND real): ranked 6-DoF grasps from the
+                        GraspGenX ZMQ service (needs the server up + a head depth stream)
+  --source sim_cloud    RARELY USED sim fallback: GT cube cloud from rt/sim_state ->
+                        GraspGenX (no camera/SAM3; cube-only -- isolates perception errors)
+  --segment auto|interactive|none    SAM3 mask mode (DEFAULT interactive: refine the
+                        prompt in the cv2 GUI; auto = headless default_prompt)
   --collision-world     depth-ESDF world so the approach routes around the table/clutter
 
 Operator-gated each step (--no-confirm to skip); on any failure it opens + homes. On real:
 gravity comp + time_dilation apply from config; debug mode is checked/entered on connect.
 Watch the e-stop.
 
-  real: bash -ic 'use_conda g1_curobo && python scripts/examples/02_pick.py --target real --segment interactive'
+  real: bash -ic 'use_conda g1_curobo && python scripts/examples/02_pick.py --target real'
   sim : CYCLONEDDS_URI=file://$PWD/configs/cyclonedds_loopback.xml \
-        bash -ic 'use_conda g1_curobo && python scripts/examples/02_pick.py --target sim --source sim_cloud'
+        bash -ic 'use_conda g1_curobo && python scripts/examples/02_pick.py --target sim --visualize --speed 0.5 --collision-world'
 """
 import argparse
 import sys
@@ -49,9 +51,9 @@ def _finger_contact_check(robot, side, wrist_goal, object_center):
 def main():
     ap = argparse.ArgumentParser()
     console.add_target_arg(ap)
-    ap.add_argument("--source", choices=["graspgenx", "sim_cloud"], default=None,
+    ap.add_argument("--source", choices=["graspgenx", "sim_cloud"], default="graspgenx",
                     help="override grasp.yaml source: (graspgenx = live depth; sim_cloud = sim GT)")
-    ap.add_argument("--segment", choices=["auto", "interactive", "none"], default=None,
+    ap.add_argument("--segment", choices=["auto", "interactive", "none"], default="interactive",
                     help="SAM3 segmentation mode (overrides grasp.yaml segment.mode)")
     ap.add_argument("--visualize", action="store_true",
                     help="show cloud + ranked grasps (+ the ESDF world) in a viser GUI")
