@@ -259,8 +259,6 @@ class UI:
             b_home = gui.add_button("home")
             b_open = gui.add_button("open hand")
             b_close = gui.add_button("close hand")
-            b_det = gui.add_button("detect")
-            b_cand = gui.add_button("grasp candidates")
             b_grasp = gui.add_button("GRASP")
             b_cont = gui.add_button("CONTINUE (gate)")
             b_abort = gui.add_button("ABORT")
@@ -306,8 +304,7 @@ class UI:
             log.attach(gui.add_markdown("```text\n(ready)\n```"))
 
         self.tools = build_tools(robot, runner, self)
-        runner.register_buttons([b_home, b_open, b_close, b_det, b_cand, b_grasp,
-                                 b_move, b_run])
+        runner.register_buttons([b_home, b_open, b_close, b_grasp, b_move, b_run])
 
         # ---- button wiring (buttons collect args from the widgets) ----
         b_home.on_click(lambda _: self._submit("home", {}))
@@ -315,9 +312,6 @@ class UI:
         b_close.on_click(lambda _: self._submit("close_hand", {
             "side": self.side.value, "verify": self.o_verify.value,
             "fraction": float(self.o_frac.value)}))
-        b_det.on_click(lambda _: self._submit("detect", {"target": self.obj.value}))
-        b_cand.on_click(lambda _: self._submit("grasp_candidates", {
-            "side": self.side.value, "target": self.obj.value}))
         b_grasp.on_click(lambda _: self._submit("grasp", self.grasp_args()))
         b_move.on_click(lambda _: self._submit("move", {
             "side": self.side.value, "xyz": list(self.xyz.value),
